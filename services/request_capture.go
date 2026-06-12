@@ -109,17 +109,11 @@ type RequestCaptureContext struct {
 
 type RequestCaptureService struct {
 	appSettings *AppSettingsService
-	baseDir     string
 }
 
 func NewRequestCaptureService(appSettings *AppSettingsService) *RequestCaptureService {
-	home, err := getUserHomeDir()
-	if err != nil {
-		home = "."
-	}
 	return &RequestCaptureService{
 		appSettings: appSettings,
-		baseDir:     filepath.Join(home, appSettingsDir, requestCaptureDirName),
 	}
 }
 
@@ -143,8 +137,12 @@ func (s *RequestCaptureService) Capture(ctx RequestCaptureContext) error {
 		},
 	}
 
+	baseDir, err := s.resolveBaseDir()
+	if err != nil {
+		return fmt.Errorf("解析请求捕获目录失败: %w", err)
+	}
 	dir := filepath.Join(
-		s.baseDir,
+		baseDir,
 		sanitizeCapturePathSegment(record.Platform, "unknown-platform"),
 		sanitizeCapturePathSegment(record.ProjectID, unknownProjectCaptureID),
 		sanitizeCapturePathSegment(record.SessionID, unknownSessionCaptureID),
@@ -169,10 +167,63 @@ func (s *RequestCaptureService) Enabled() bool {
 }
 
 func (s *RequestCaptureService) BaseDir() string {
-	if s == nil {
+	baseDir, err := s.resolveBaseDir()
+	if s == nil || err != nil {
 		return ""
 	}
-	return s.baseDir
+	return baseDir
+}
+
+func (s *RequestCaptureService) resolveBaseDir() (string, error) {
+	defaultDir := defaultRequestCaptureBaseDir()
+	if s == nil || s.appSettings == nil {
+		return defaultDir, nil
+	}
+
+	settings, err := s.appSettings.GetAppSettings()
+	if err != nil {
+		return defaultDir, nil
+	}
+
+	configuredDir, err := normalizeRequestCaptureDir(settings.RequestCaptureDir)
+	if err != nil {
+		return "", err
+	}
+	if configuredDir != "" {
+		return configuredDir, nil
+	}
+	return defaultDir, nil
+}
+
+func defaultRequestCaptureBaseDir() string {
+	home, err := getUserHomeDir()
+	if err != nil {
+		home = "."
+	}
+	return filepath.Join(home, appSettingsDir, requestCaptureDirName)
+}
+
+func normalizeRequestCaptureDir(value string) (string, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "", nil
+	}
+	if !filepath.IsAbs(trimmed) {
+		abs, err := filepath.Abs(trimmed)
+		if err != nil {
+			return "", err
+		}
+		trimmed = abs
+	}
+	cleaned := filepath.Clean(trimmed)
+	if strings.TrimSpace(cleaned) == "" {
+		return "", nil
+	}
+	return cleaned, nil
+}
+
+func NormalizeRequestCaptureDirForSettings(value string) (string, error) {
+	return normalizeRequestCaptureDir(value)
 }
 
 func DetectCaptureScope(headers map[string]string, body []byte) (projectID string, sessionID string) {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { Call } from '@wailsio/runtime'
+import { Call, Dialogs } from '@wailsio/runtime'
 import ListItem from '../Setting/ListRow.vue'
 import LanguageSwitcher from '../Setting/LanguageSwitcher.vue'
 import ThemeSetting from '../Setting/ThemeSetting.vue'
@@ -38,6 +38,7 @@ const switchNotifyEnabled = ref(getCachedValue('switchNotify', true)) // 切换�
 const roundRobinEnabled = ref(getCachedValue('roundRobin', false))    // 同 Level 轮询开关
 const autoUpdateEnabled = ref(getCachedValue('autoUpdate', true))     // 自动更新开关
 const requestCaptureEnabled = ref(getCachedValue('requestCapture', true)) // 请求捕获开关
+const requestCaptureDir = ref(getCachedString('requestCaptureDir', ''))   // 请求捕获存储目录
 const budgetTotal = ref(getCachedNumber('budgetTotal', 0))
 const budgetUsedAdjustment = ref(getCachedNumber('budgetUsedAdjustment', 0))
 const budgetForecastMethod = ref(getCachedString('budgetForecastMethod', 'cycle'))
@@ -115,6 +116,7 @@ const loadAppSettings = async () => {
     roundRobinEnabled.value = data?.enable_round_robin ?? false
     autoUpdateEnabled.value = data?.auto_update ?? true
     requestCaptureEnabled.value = data?.enable_request_capture ?? true
+    requestCaptureDir.value = data?.request_capture_dir ?? ''
 
     // 缓存到 localStorage，下次打开时直接显示正确状态
     localStorage.setItem('app-settings-heatmap', String(heatmapEnabled.value))
@@ -143,6 +145,7 @@ const loadAppSettings = async () => {
     localStorage.setItem('app-settings-roundRobin', String(roundRobinEnabled.value))
     localStorage.setItem('app-settings-autoUpdate', String(autoUpdateEnabled.value))
     localStorage.setItem('app-settings-requestCapture', String(requestCaptureEnabled.value))
+    localStorage.setItem('app-settings-requestCaptureDir', requestCaptureDir.value)
   } catch (error) {
     console.error('failed to load app settings', error)
     heatmapEnabled.value = true
@@ -170,6 +173,7 @@ const loadAppSettings = async () => {
     switchNotifyEnabled.value = true
     roundRobinEnabled.value = false
     requestCaptureEnabled.value = true
+    requestCaptureDir.value = ''
   } finally {
     settingsLoading.value = false
   }
@@ -236,6 +240,7 @@ const persistAppSettings = async () => {
       enable_round_robin: roundRobinEnabled.value,
       auto_update: autoUpdateEnabled.value,
       enable_request_capture: requestCaptureEnabled.value,
+      request_capture_dir: requestCaptureDir.value.trim(),
     }
     await saveAppSettings(payload)
 
@@ -272,12 +277,35 @@ const persistAppSettings = async () => {
     localStorage.setItem('app-settings-roundRobin', String(roundRobinEnabled.value))
     localStorage.setItem('app-settings-autoUpdate', String(autoUpdateEnabled.value))
     localStorage.setItem('app-settings-requestCapture', String(requestCaptureEnabled.value))
+    localStorage.setItem('app-settings-requestCaptureDir', requestCaptureDir.value)
 
     window.dispatchEvent(new CustomEvent('app-settings-updated'))
   } catch (error) {
     console.error('failed to save app settings', error)
   } finally {
     saveBusy.value = false
+  }
+}
+
+const selectRequestCaptureDir = async () => {
+  if (settingsLoading.value || saveBusy.value) return
+  try {
+    const selected = await Dialogs.OpenFile({
+      CanChooseDirectories: true,
+      CanChooseFiles: false,
+      CanCreateDirectories: true,
+      Title: t('components.general.label.requestCaptureDirBrowseTitle'),
+      ButtonText: t('components.general.label.browseDirectory'),
+      Directory: requestCaptureDir.value || undefined,
+    })
+    const directory = Array.isArray(selected) ? selected[0] : selected
+    if (!directory || !directory.trim()) {
+      return
+    }
+    requestCaptureDir.value = directory.trim()
+    await persistAppSettings()
+  } catch (error) {
+    console.error('failed to select request capture directory', error)
   }
 }
 
@@ -510,6 +538,26 @@ onMounted(async () => {
                 <span></span>
               </label>
               <span class="hint-text">{{ $t('components.general.label.requestCaptureHint') }}</span>
+            </div>
+          </ListItem>
+          <ListItem :label="$t('components.general.label.requestCaptureDir')">
+            <div class="capture-dir-controls">
+              <input
+                type="text"
+                :disabled="settingsLoading || saveBusy"
+                v-model="requestCaptureDir"
+                :placeholder="$t('components.general.label.requestCaptureDirPlaceholder')"
+                @change="persistAppSettings"
+                class="mac-input capture-dir-input"
+              />
+              <button
+                type="button"
+                class="secondary-btn capture-dir-button"
+                :disabled="settingsLoading || saveBusy"
+                @click="selectRequestCaptureDir">
+                {{ $t('components.general.label.browseDirectory') }}
+              </button>
+              <span class="hint-text">{{ $t('components.general.label.requestCaptureDirHint') }}</span>
             </div>
           </ListItem>
         </div>
@@ -990,6 +1038,22 @@ onMounted(async () => {
 .budget-unit {
   font-size: 12px;
   color: var(--mac-text-secondary);
+}
+
+.capture-dir-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.capture-dir-input {
+  width: 320px;
+  font-size: 12px;
+}
+
+.capture-dir-button {
+  min-width: 96px;
 }
 
 .import-path-input {

@@ -24,6 +24,33 @@ func TestAppSettings_DefaultEnableRequestCapture(t *testing.T) {
 	if !got.EnableRequestCapture {
 		t.Fatal("默认应开启 enable_request_capture")
 	}
+	if got.RequestCaptureDir != "" {
+		t.Fatalf("默认 request_capture_dir = %q，期望空字符串", got.RequestCaptureDir)
+	}
+}
+
+func TestAppSettings_SaveNormalizesRequestCaptureDir(t *testing.T) {
+	tmpHome := setupRenameTestEnv(t)
+	t.Setenv("USERPROFILE", tmpHome)
+
+	settingsService := NewAppSettingsService(NewAutoStartService())
+	settings, err := settingsService.GetAppSettings()
+	if err != nil {
+		t.Fatalf("GetAppSettings 失败: %v", err)
+	}
+
+	settings.RequestCaptureDir = `captures\requests`
+	saved, err := settingsService.SaveAppSettings(settings)
+	if err != nil {
+		t.Fatalf("SaveAppSettings 失败: %v", err)
+	}
+
+	if !filepath.IsAbs(saved.RequestCaptureDir) {
+		t.Fatalf("request_capture_dir = %q，期望绝对路径", saved.RequestCaptureDir)
+	}
+	if !strings.HasSuffix(saved.RequestCaptureDir, filepath.Join("captures", "requests")) {
+		t.Fatalf("request_capture_dir = %q，期望以 captures\\requests 结尾", saved.RequestCaptureDir)
+	}
 }
 
 func TestRequestCaptureService_CaptureWritesMinimalRecord(t *testing.T) {
@@ -84,6 +111,40 @@ func TestRequestCaptureService_CaptureWritesMinimalRecord(t *testing.T) {
 	}
 	if bodyMap["project"] != "demo-project" {
 		t.Fatalf("body.project = %#v，期望 demo-project", bodyMap["project"])
+	}
+}
+
+func TestRequestCaptureService_CaptureWritesToConfiguredDirectory(t *testing.T) {
+	tmpHome := setupRenameTestEnv(t)
+	t.Setenv("USERPROFILE", tmpHome)
+
+	appSettings := NewAppSettingsService(NewAutoStartService())
+	settings, err := appSettings.GetAppSettings()
+	if err != nil {
+		t.Fatalf("GetAppSettings 失败: %v", err)
+	}
+	settings.RequestCaptureDir = filepath.Join(tmpHome, "custom-captures")
+	if _, err := appSettings.SaveAppSettings(settings); err != nil {
+		t.Fatalf("SaveAppSettings 失败: %v", err)
+	}
+
+	service := NewRequestCaptureService(appSettings)
+	err = service.Capture(RequestCaptureContext{
+		Platform: "codex",
+		Method:   http.MethodPost,
+		Endpoint: "/responses",
+		Headers: map[string]string{
+			"Session-Id": "sess-custom",
+		},
+		Body: []byte(`{"project":"custom-project","model":"gpt-5-codex"}`),
+	})
+	if err != nil {
+		t.Fatalf("Capture 失败: %v", err)
+	}
+
+	files := collectCaptureFiles(t, filepath.Join(tmpHome, "custom-captures"))
+	if len(files) != 1 {
+		t.Fatalf("期望自定义目录下 1 个捕获文件，实际 %d", len(files))
 	}
 }
 

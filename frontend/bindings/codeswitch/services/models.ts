@@ -49,6 +49,11 @@ export class AppSettings {
      */
     "enable_request_capture": boolean;
 
+    /**
+     * 请求捕获存储根目录，留空使用默认目录
+     */
+    "request_capture_dir": string;
+
     /** Creates a new AppSettings instance. */
     constructor($$source: Partial<AppSettings> = {}) {
         if (!("show_heatmap" in $$source)) {
@@ -128,6 +133,9 @@ export class AppSettings {
         }
         if (!("enable_request_capture" in $$source)) {
             this["enable_request_capture"] = false;
+        }
+        if (!("request_capture_dir" in $$source)) {
+            this["request_capture_dir"] = "";
         }
 
         Object.assign(this, $$source);
