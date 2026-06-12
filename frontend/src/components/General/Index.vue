@@ -7,10 +7,10 @@ import LanguageSwitcher from '../Setting/LanguageSwitcher.vue'
 import ThemeSetting from '../Setting/ThemeSetting.vue'
 import NetworkWslSettings from '../Setting/NetworkWslSettings.vue'
 import { fetchAppSettings, saveAppSettings, type AppSettings } from '../../services/appSettings'
+import { fetchModelInstructionsFile, saveModelInstructionsFile } from '../../services/codexConfig'
 import { getBlacklistSettings, updateBlacklistSettings, getLevelBlacklistEnabled, setLevelBlacklistEnabled, getBlacklistEnabled, setBlacklistEnabled, type BlacklistSettings } from '../../services/settings'
 import { fetchConfigImportStatus, importFromPath, type ConfigImportStatus } from '../../services/configImport'
 import { useI18n } from 'vue-i18n'
-import { extractErrorMessage } from '../../utils/error'
 
 const { t } = useI18n()
 
@@ -39,6 +39,7 @@ const roundRobinEnabled = ref(getCachedValue('roundRobin', false))    // 同 Lev
 const autoUpdateEnabled = ref(getCachedValue('autoUpdate', true))     // 自动更新开关
 const requestCaptureEnabled = ref(getCachedValue('requestCapture', true)) // 请求捕获开关
 const requestCaptureDir = ref(getCachedString('requestCaptureDir', ''))   // 请求捕获存储目录
+const modelInstructionsFile = ref(getCachedString('modelInstructionsFile', '')) // Codex model_instructions_file
 const budgetTotal = ref(getCachedNumber('budgetTotal', 0))
 const budgetUsedAdjustment = ref(getCachedNumber('budgetUsedAdjustment', 0))
 const budgetForecastMethod = ref(getCachedString('budgetForecastMethod', 'cycle'))
@@ -59,6 +60,7 @@ const budgetShowCountdownCodex = ref(getCachedValue('budgetShowCountdownCodex', 
 const budgetShowForecastCodex = ref(getCachedValue('budgetShowForecastCodex', false))
 const settingsLoading = ref(true)
 const saveBusy = ref(false)
+const modelInstructionsSaving = ref(false)
 
 // 拉黑配置相关状态
 const blacklistEnabled = ref(false)  // 拉黑功能总开关
@@ -287,6 +289,46 @@ const persistAppSettings = async () => {
   }
 }
 
+const loadModelInstructionsFile = async () => {
+  try {
+    const path = await fetchModelInstructionsFile()
+    modelInstructionsFile.value = path
+    localStorage.setItem('app-settings-modelInstructionsFile', path)
+  } catch (error) {
+    console.error('failed to load codex model instructions file', error)
+    modelInstructionsFile.value = ''
+    localStorage.removeItem('app-settings-modelInstructionsFile')
+  }
+}
+
+const persistModelInstructionsFile = async () => {
+  if (settingsLoading.value || modelInstructionsSaving.value) return
+  modelInstructionsSaving.value = true
+  try {
+    const normalizedPath = modelInstructionsFile.value.trim()
+    modelInstructionsFile.value = normalizedPath
+    await saveModelInstructionsFile(normalizedPath)
+    localStorage.setItem('app-settings-modelInstructionsFile', normalizedPath)
+  } catch (error) {
+    console.error('failed to save codex model instructions file', error)
+  } finally {
+    modelInstructionsSaving.value = false
+  }
+}
+
+const resolveDialogDirectory = (path: string): string | undefined => {
+  const trimmed = path.trim()
+  if (!trimmed) {
+    return undefined
+  }
+  const normalized = trimmed.replace(/\\/g, '/')
+  const lastSlashIndex = normalized.lastIndexOf('/')
+  if (lastSlashIndex <= 0) {
+    return undefined
+  }
+  return normalized.slice(0, lastSlashIndex)
+}
+
 const selectRequestCaptureDir = async () => {
   if (settingsLoading.value || saveBusy.value) return
   try {
@@ -306,6 +348,32 @@ const selectRequestCaptureDir = async () => {
     await persistAppSettings()
   } catch (error) {
     console.error('failed to select request capture directory', error)
+  }
+}
+
+const selectModelInstructionsFile = async () => {
+  if (settingsLoading.value || modelInstructionsSaving.value) return
+  try {
+    const selected = await Dialogs.OpenFile({
+      AllowsMultipleSelection: false,
+      CanChooseDirectories: false,
+      CanChooseFiles: true,
+      Title: t('components.general.label.modelInstructionsFileBrowseTitle'),
+      ButtonText: t('components.general.label.browseFile'),
+      Directory: resolveDialogDirectory(modelInstructionsFile.value),
+      Filters: [{
+        DisplayName: 'Markdown / Text / TOML',
+        Pattern: '*.md;*.txt;*.toml',
+      }],
+    })
+    const file = Array.isArray(selected) ? selected[0] : selected
+    if (!file || !file.trim()) {
+      return
+    }
+    modelInstructionsFile.value = file.trim()
+    await persistModelInstructionsFile()
+  } catch (error) {
+    console.error('failed to select codex model instructions file', error)
   }
 }
 
@@ -434,6 +502,7 @@ const handleImport = async () => {
 
 onMounted(async () => {
   await loadAppSettings()
+  await loadModelInstructionsFile()
 
   // 加载拉黑配置
   await loadBlacklistSettings()
@@ -558,6 +627,26 @@ onMounted(async () => {
                 {{ $t('components.general.label.browseDirectory') }}
               </button>
               <span class="hint-text">{{ $t('components.general.label.requestCaptureDirHint') }}</span>
+            </div>
+          </ListItem>
+          <ListItem :label="$t('components.general.label.modelInstructionsFile')">
+            <div class="capture-dir-controls">
+              <input
+                type="text"
+                :disabled="settingsLoading || modelInstructionsSaving"
+                v-model="modelInstructionsFile"
+                :placeholder="$t('components.general.label.modelInstructionsFilePlaceholder')"
+                @change="persistModelInstructionsFile"
+                class="mac-input capture-dir-input"
+              />
+              <button
+                type="button"
+                class="secondary-btn capture-dir-button"
+                :disabled="settingsLoading || modelInstructionsSaving"
+                @click="selectModelInstructionsFile">
+                {{ $t('components.general.label.browseFile') }}
+              </button>
+              <span class="hint-text">{{ $t('components.general.label.modelInstructionsFileHint') }}</span>
             </div>
           </ListItem>
         </div>

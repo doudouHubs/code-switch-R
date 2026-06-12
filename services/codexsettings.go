@@ -491,6 +491,7 @@ type codexConfig struct {
 	PreferredAuthMethod string                   `toml:"preferred_auth_method"`
 	Model               string                   `toml:"model"`
 	ModelProvider       string                   `toml:"model_provider"`
+	ModelInstructions   string                   `toml:"model_instructions_file"`
 	ModelProviders      map[string]codexProvider `toml:"model_providers"`
 }
 
@@ -808,4 +809,68 @@ func (css *CodexSettingsService) readAuthKey() string {
 		}
 	}
 	return ""
+}
+
+// GetModelInstructionsFile 返回当前 Codex config.toml 中配置的 model_instructions_file。
+// 若配置文件不存在或未配置该字段，则返回空字符串。
+func (css *CodexSettingsService) GetModelInstructionsFile() (string, error) {
+	config, err := css.readConfig()
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", nil
+		}
+		return "", err
+	}
+	return strings.TrimSpace(config.ModelInstructions), nil
+}
+
+// SetModelInstructionsFile 写入 Codex config.toml 的 model_instructions_file。
+// 空字符串表示删除该字段；相对路径会在保存前归一化为绝对路径。
+func (css *CodexSettingsService) SetModelInstructionsFile(path string) error {
+	settingsPath, _, err := css.paths()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		return err
+	}
+
+	raw := make(map[string]any)
+	if content, readErr := os.ReadFile(settingsPath); readErr == nil {
+		if err := toml.Unmarshal(content, &raw); err != nil {
+			return fmt.Errorf("config.toml 解析失败，请检查文件格式: %w", err)
+		}
+	} else if !errors.Is(readErr, os.ErrNotExist) {
+		return readErr
+	}
+	if raw == nil {
+		raw = make(map[string]any)
+	}
+
+	normalizedPath, err := normalizeCodexModelInstructionsFile(path)
+	if err != nil {
+		return err
+	}
+	if normalizedPath == "" {
+		delete(raw, "model_instructions_file")
+	} else {
+		raw["model_instructions_file"] = normalizedPath
+	}
+
+	return css.writeConfigToml(settingsPath, raw)
+}
+
+func normalizeCodexModelInstructionsFile(path string) (string, error) {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return "", nil
+	}
+	if !filepath.IsAbs(trimmed) {
+		abs, err := filepath.Abs(trimmed)
+		if err != nil {
+			return "", err
+		}
+		trimmed = abs
+	}
+	return filepath.Clean(trimmed), nil
 }

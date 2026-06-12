@@ -33,10 +33,26 @@ export function GetDirectAppliedProviderID(): $CancellablePromise<number | null>
     return $Call.ByID(853555268);
 }
 
+/**
+ * GetModelInstructionsFile 返回当前 Codex config.toml 中配置的 model_instructions_file。
+ * 若配置文件不存在或未配置该字段，则返回空字符串。
+ */
+export function GetModelInstructionsFile(): $CancellablePromise<string> {
+    return $Call.ByID(3474225876);
+}
+
 export function ProxyStatus(): $CancellablePromise<$models.ClaudeProxyStatus> {
     return $Call.ByID(419975348).then(($result: any) => {
         return $$createType0($result);
     });
+}
+
+/**
+ * SetModelInstructionsFile 写入 Codex config.toml 的 model_instructions_file。
+ * 空字符串表示删除该字段；相对路径会在保存前归一化为绝对路径。
+ */
+export function SetModelInstructionsFile(path: string): $CancellablePromise<void> {
+    return $Call.ByID(24852744, path);
 }
 
 // Private type creation functions
