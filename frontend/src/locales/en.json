@@ -597,6 +597,8 @@
         "switchNotifyHint": "Send system notification when provider switches or gets blacklisted",
         "roundRobin": "Same-Level Round Robin",
         "roundRobinHint": "When enabled, providers at the same Level take turns handling requests; when disabled, always starts from the first",
+        "requestCapture": "Capture Agent Requests",
+        "requestCaptureHint": "Save each request endpoint and parameters sent through the local relay to the local cache directory without storing responses",
         "autoUpdate": "Automatic update",
         "autoConnectivityTest": "Auto Availability Monitoring",
         "autoConnectivityTestHint": "Automatically check availability of monitored providers every minute",

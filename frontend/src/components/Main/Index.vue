@@ -1022,7 +1022,7 @@ import { Listbox, ListboxButton, ListboxOptions, ListboxOption } from '@headless
 import { Browser, Call, Events } from '@wailsio/runtime'
 import { type UsageHeatmapDay } from '../../data/usageHeatmap'
 import { useAdaptiveHeatmap } from '../../composables/useAdaptiveHeatmap'
-import { automationCardGroups, createAutomationCards, type AutomationCard } from '../../data/cards'
+import { createAutomationCards, type AutomationCard } from '../../data/cards'
 import lobeIcons from '../../icons/lobeIconMap'
 import BaseButton from '../common/BaseButton.vue'
 import BaseModal from '../common/BaseModal.vue'
@@ -1513,8 +1513,8 @@ type ProviderTab = (typeof tabs)[number]['id']
 const providerTabIds = tabs.map((tab) => tab.id) as ProviderTab[]
 
 const cards = reactive<Record<ProviderTab, AutomationCard[]>>({
-  claude: createAutomationCards(automationCardGroups.claude),
-  codex: createAutomationCards(automationCardGroups.codex),
+  claude: [],
+  codex: [],
   gemini: [],
   others: [],
 })
@@ -2186,16 +2186,16 @@ const switchToTabAndHighlight = (platform: string, providerName: string) => {
 
 // 处理供应商切换事件
 // @author sm
-const handleProviderSwitched = (event: { data: { platform: string; toProvider: string } }) => {
-  const { platform, toProvider } = event.data
+const handleProviderSwitched: Events.WailsEventCallback<'provider:switched'> = event => {
+  const { platform, toProvider } = event.data as { platform: string; toProvider: string }
   console.log('[Event] provider:switched', platform, toProvider)
   switchToTabAndHighlight(platform, toProvider)
 }
 
 // 处理供应商拉黑事件
 // @author sm
-const handleProviderBlacklisted = (event: { data: { platform: string; providerName: string } }) => {
-  const { platform, providerName } = event.data
+const handleProviderBlacklisted: Events.WailsEventCallback<'provider:blacklisted'> = event => {
+  const { platform, providerName } = event.data as { platform: string; providerName: string }
   console.log('[Event] provider:blacklisted', platform, providerName)
   switchToTabAndHighlight(platform, providerName)
 }
@@ -2279,8 +2279,8 @@ onMounted(async () => {
   await loadLastUsedProviders()
 
   // 监听供应商切换和拉黑事件
-  unsubscribeSwitched = Events.On('provider:switched', handleProviderSwitched as Events.Callback)
-  unsubscribeBlacklisted = Events.On('provider:blacklisted', handleProviderBlacklisted as Events.Callback)
+  unsubscribeSwitched = Events.On('provider:switched', handleProviderSwitched)
+  unsubscribeBlacklisted = Events.On('provider:blacklisted', handleProviderBlacklisted)
 })
 
 onUnmounted(() => {

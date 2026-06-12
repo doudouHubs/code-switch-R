@@ -4,6 +4,10 @@
     "useDefineForClassFields": true,
     "module": "ESNext",
     "moduleResolution": "Node",
+    "baseUrl": ".",
+    "paths": {
+      "@wailsio/runtime": ["./src/wails-runtime-compat/index.ts"]
+    },
     "strict": true,
     "noUnusedParameters": false,
     "noImplicitAny": false,

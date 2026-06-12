@@ -1,0 +1,265 @@
+package services
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/gin-gonic/gin"
+)
+
+func TestAppSettings_DefaultEnableRequestCapture(t *testing.T) {
+	tmpHome := setupRenameTestEnv(t)
+	t.Setenv("USERPROFILE", tmpHome)
+
+	settings := NewAppSettingsService(NewAutoStartService())
+	got, err := settings.GetAppSettings()
+	if err != nil {
+		t.Fatalf("GetAppSettings 失败: %v", err)
+	}
+	if !got.EnableRequestCapture {
+		t.Fatal("默认应开启 enable_request_capture")
+	}
+}
+
+func TestRequestCaptureService_CaptureWritesMinimalRecord(t *testing.T) {
+	tmpHome := setupRenameTestEnv(t)
+	t.Setenv("USERPROFILE", tmpHome)
+
+	appSettings := NewAppSettingsService(NewAutoStartService())
+	service := NewRequestCaptureService(appSettings)
+	err := service.Capture(RequestCaptureContext{
+		Platform: "claude",
+		Method:   http.MethodPost,
+		Endpoint: "/v1/messages",
+		Query: map[string]string{
+			"trace": "1",
+		},
+		Headers: map[string]string{
+			"X-Session-Id": "sess-123",
+		},
+		Body: []byte(`{"project":"demo-project","model":"claude-sonnet-4","messages":[{"role":"user","content":"hello"}]}`),
+	})
+	if err != nil {
+		t.Fatalf("Capture 失败: %v", err)
+	}
+
+	files := collectCaptureFiles(t, filepath.Join(tmpHome, ".code-switch", requestCaptureDirName))
+	if len(files) != 1 {
+		t.Fatalf("期望 1 个捕获文件，实际 %d", len(files))
+	}
+
+	data, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatalf("读取捕获文件失败: %v", err)
+	}
+
+	var record RequestCaptureRecord
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatalf("解析捕获文件失败: %v", err)
+	}
+
+	if record.Platform != "claude" {
+		t.Fatalf("platform = %q，期望 claude", record.Platform)
+	}
+	if record.ProjectID != "demo-project" {
+		t.Fatalf("project_id = %q，期望 demo-project", record.ProjectID)
+	}
+	if record.SessionID != "sess-123" {
+		t.Fatalf("session_id = %q，期望 sess-123", record.SessionID)
+	}
+	if record.Request.Endpoint != "/v1/messages" {
+		t.Fatalf("endpoint = %q，期望 /v1/messages", record.Request.Endpoint)
+	}
+	if record.Request.Method != http.MethodPost {
+		t.Fatalf("method = %q，期望 POST", record.Request.Method)
+	}
+	bodyMap, ok := record.Request.Body.(map[string]any)
+	if !ok {
+		t.Fatalf("body 应为 JSON 对象，实际 %#v", record.Request.Body)
+	}
+	if bodyMap["project"] != "demo-project" {
+		t.Fatalf("body.project = %#v，期望 demo-project", bodyMap["project"])
+	}
+}
+
+func TestRequestCaptureService_DisabledSkipsWrite(t *testing.T) {
+	tmpHome := setupRenameTestEnv(t)
+	t.Setenv("USERPROFILE", tmpHome)
+
+	appSettings := NewAppSettingsService(NewAutoStartService())
+	settings, err := appSettings.GetAppSettings()
+	if err != nil {
+		t.Fatalf("GetAppSettings 失败: %v", err)
+	}
+	settings.EnableRequestCapture = false
+	if _, err := appSettings.SaveAppSettings(settings); err != nil {
+		t.Fatalf("SaveAppSettings 失败: %v", err)
+	}
+
+	service := NewRequestCaptureService(appSettings)
+	if err := service.Capture(RequestCaptureContext{
+		Platform: "claude",
+		Method:   http.MethodPost,
+		Endpoint: "/v1/messages",
+		Body:     []byte(`{"project":"demo"}`),
+	}); err != nil {
+		t.Fatalf("Capture 失败: %v", err)
+	}
+
+	files := collectCaptureFiles(t, filepath.Join(tmpHome, ".code-switch", requestCaptureDirName))
+	if len(files) != 0 {
+		t.Fatalf("关闭开关后不应写文件，实际 %d 个", len(files))
+	}
+}
+
+func TestProviderRelay_CapturesOncePerIncomingRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tmpHome := setupRenameTestEnv(t)
+	t.Setenv("USERPROFILE", tmpHome)
+
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"ok","type":"message","usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer upstreamServer.Close()
+
+	providerService := NewProviderService()
+	err := providerService.SaveProviders("claude", []Provider{{
+		ID:      1,
+		Name:    "CaptureProvider",
+		APIURL:  upstreamServer.URL,
+		APIKey:  "test-api-key",
+		Enabled: true,
+		Level:   1,
+	}})
+	if err != nil {
+		t.Fatalf("SaveProviders 失败: %v", err)
+	}
+
+	relayService := newTestRelayService(providerService)
+	router := gin.New()
+	relayService.registerRoutes(router)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages?debug=1", strings.NewReader(`{"project":"relay-project","session_id":"relay-session","model":"claude-sonnet-4","messages":[{"role":"user","content":"hello"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("状态码 = %d，期望 200，响应体: %s", w.Code, w.Body.String())
+	}
+
+	files := collectCaptureFiles(t, filepath.Join(tmpHome, ".code-switch", requestCaptureDirName))
+	if len(files) != 1 {
+		t.Fatalf("期望仅写 1 个捕获文件，实际 %d", len(files))
+	}
+}
+
+func TestDetectCaptureScope_UsesCodexHeadersAndMetadata(t *testing.T) {
+	projectID, sessionID := DetectCaptureScope(map[string]string{
+		"Session-Id":            "sess-header",
+		"Thread-Id":             "thread-header",
+		"X-Client-Request-Id":   "client-request",
+		"X-Codex-Turn-Metadata": `{"session_id":"sess-meta","thread_id":"thread-meta","workspaces":{"F:\\GitlabProjects\\code-switch-R":{"has_changes":true}}}`,
+	}, []byte(`{"model":"gpt-5-codex"}`))
+
+	if projectID != `F:\GitlabProjects\code-switch-R` {
+		t.Fatalf("project_id = %q，期望 F:\\GitlabProjects\\code-switch-R", projectID)
+	}
+	if sessionID != "sess-header" {
+		t.Fatalf("session_id = %q，期望 sess-header", sessionID)
+	}
+}
+
+func TestDetectCaptureScope_UsesCodexMetadataSessionWhenHeadersMissing(t *testing.T) {
+	projectID, sessionID := DetectCaptureScope(map[string]string{
+		"X-Codex-Turn-Metadata": `{"session_id":"sess-meta","thread_id":"thread-meta","workspaces":{"F:\\GitlabProjects\\code-switch-R":{"has_changes":true}}}`,
+	}, []byte(`{"model":"gpt-5-codex"}`))
+
+	if projectID != `F:\GitlabProjects\code-switch-R` {
+		t.Fatalf("project_id = %q，期望 F:\\GitlabProjects\\code-switch-R", projectID)
+	}
+	if sessionID != "sess-meta" {
+		t.Fatalf("session_id = %q，期望 sess-meta", sessionID)
+	}
+}
+
+func TestDetectCaptureScope_UsesProjectRootPathAndWorkdir(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "project_root_path",
+			body: `{"tool":{"arguments":{"project_root_path":"F:\\GitlabProjects\\code-switch-R"}}}`,
+			want: `F:\GitlabProjects\code-switch-R`,
+		},
+		{
+			name: "workdir",
+			body: `{"tool":{"arguments":"{\"workdir\":\"F:\\\\GitlabProjects\\\\code-switch-R\"}"}}`,
+			want: `F:\GitlabProjects\code-switch-R`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			projectID, sessionID := DetectCaptureScope(nil, []byte(tt.body))
+			if projectID != tt.want {
+				t.Fatalf("project_id = %q，期望 %q", projectID, tt.want)
+			}
+			if sessionID != unknownSessionCaptureID {
+				t.Fatalf("session_id = %q，期望 %q", sessionID, unknownSessionCaptureID)
+			}
+		})
+	}
+}
+
+func TestDetectCaptureScope_UsesEnvironmentContextTextFallback(t *testing.T) {
+	body := `{"input":[{"content":[{"type":"input_text","text":"<environment_context><cwd>F:\\GitlabProjects\\code-switch-R</cwd><workspace_roots><root>F:\\GitlabProjects\\code-switch-R</root></workspace_roots></environment_context>"}]}]}`
+	projectID, sessionID := DetectCaptureScope(nil, []byte(body))
+
+	if projectID != `F:\GitlabProjects\code-switch-R` {
+		t.Fatalf("project_id = %q，期望 F:\\GitlabProjects\\code-switch-R", projectID)
+	}
+	if sessionID != unknownSessionCaptureID {
+		t.Fatalf("session_id = %q，期望 %q", sessionID, unknownSessionCaptureID)
+	}
+}
+
+func TestDetectCaptureScope_FallsBackToUnknown(t *testing.T) {
+	projectID, sessionID := DetectCaptureScope(nil, []byte(`{"model":"gpt-5-codex","input":[{"role":"user","content":"hello"}]}`))
+
+	if projectID != unknownProjectCaptureID {
+		t.Fatalf("project_id = %q，期望 %q", projectID, unknownProjectCaptureID)
+	}
+	if sessionID != unknownSessionCaptureID {
+		t.Fatalf("session_id = %q，期望 %q", sessionID, unknownSessionCaptureID)
+	}
+}
+
+func collectCaptureFiles(t *testing.T, root string) []string {
+	t.Helper()
+
+	files := make([]string, 0)
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info == nil || info.IsDir() {
+			return nil
+		}
+		if filepath.Ext(path) == ".json" {
+			files = append(files, path)
+		}
+		return nil
+	})
+	return files
+}

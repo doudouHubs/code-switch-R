@@ -51,6 +51,7 @@ type ProviderRelayService struct {
 	blacklistService    *BlacklistService
 	notificationService *NotificationService
 	appSettings         *AppSettingsService // 应用设置服务（用于获取轮询开关状态）
+	requestCapture      *RequestCaptureService
 	server              *http.Server
 	addr                string
 	lastUsed            map[string]*LastUsedProvider // 各平台最后使用的供应商
@@ -76,6 +77,7 @@ func NewProviderRelayService(providerService *ProviderService, geminiService *Ge
 		blacklistService:    blacklistService,
 		notificationService: notificationService,
 		appSettings:         appSettings,
+		requestCapture:      NewRequestCaptureService(appSettings),
 		addr:                addr,
 		lastUsed: map[string]*LastUsedProvider{
 			"claude": nil,
@@ -454,6 +456,14 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 
 		query := flattenQuery(c.Request.URL.Query())
 		clientHeaders := cloneHeaders(c.Request.Header)
+		prs.captureRequest(RequestCaptureContext{
+			Platform: kind,
+			Method:   c.Request.Method,
+			Endpoint: c.Request.URL.Path,
+			Query:    query,
+			Headers:  clientHeaders,
+			Body:     append([]byte(nil), bodyBytes...),
+		})
 
 		// 获取拉黑功能开关状态
 		blacklistEnabled := prs.blacklistService.ShouldUseFixedMode()
@@ -1052,6 +1062,15 @@ func joinURL(base string, endpoint string) string {
 	return base + endpoint
 }
 
+func (prs *ProviderRelayService) captureRequest(ctx RequestCaptureContext) {
+	if prs == nil || prs.requestCapture == nil {
+		return
+	}
+	if err := prs.requestCapture.Capture(ctx); err != nil {
+		fmt.Printf("[WARN] 请求捕获失败: %v\n", err)
+	}
+}
+
 func boolToInt(b bool) int {
 	if b {
 		return 1
@@ -1474,6 +1493,14 @@ func (prs *ProviderRelayService) geminiProxyHandler(apiVersion string) gin.Handl
 
 		// 判断是否为流式请求
 		isStream := strings.Contains(endpoint, ":streamGenerateContent") || strings.Contains(query, "alt=sse")
+		prs.captureRequest(RequestCaptureContext{
+			Platform: "gemini",
+			Method:   c.Request.Method,
+			Endpoint: c.Request.URL.Path,
+			Query:    flattenQuery(c.Request.URL.Query()),
+			Headers:  cloneHeaders(c.Request.Header),
+			Body:     append([]byte(nil), bodyBytes...),
+		})
 
 		// 加载 Gemini providers
 		providers := prs.geminiService.GetProviders()
@@ -1989,6 +2016,14 @@ func (prs *ProviderRelayService) customCliProxyHandler() gin.HandlerFunc {
 
 		query := flattenQuery(c.Request.URL.Query())
 		clientHeaders := cloneHeaders(c.Request.Header)
+		prs.captureRequest(RequestCaptureContext{
+			Platform: kind,
+			Method:   c.Request.Method,
+			Endpoint: c.Request.URL.Path,
+			Query:    query,
+			Headers:  clientHeaders,
+			Body:     append([]byte(nil), bodyBytes...),
+		})
 
 		// 获取拉黑功能开关状态
 		blacklistEnabled := prs.blacklistService.ShouldUseFixedMode()

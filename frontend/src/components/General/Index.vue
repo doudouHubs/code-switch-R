@@ -37,6 +37,7 @@ const autoConnectivityTestEnabled = ref(getCachedValue('autoConnectivityTest', f
 const switchNotifyEnabled = ref(getCachedValue('switchNotify', true)) // 切换通知开关
 const roundRobinEnabled = ref(getCachedValue('roundRobin', false))    // 同 Level 轮询开关
 const autoUpdateEnabled = ref(getCachedValue('autoUpdate', true))     // 自动更新开关
+const requestCaptureEnabled = ref(getCachedValue('requestCapture', true)) // 请求捕获开关
 const budgetTotal = ref(getCachedNumber('budgetTotal', 0))
 const budgetUsedAdjustment = ref(getCachedNumber('budgetUsedAdjustment', 0))
 const budgetForecastMethod = ref(getCachedString('budgetForecastMethod', 'cycle'))
@@ -113,6 +114,7 @@ const loadAppSettings = async () => {
     switchNotifyEnabled.value = data?.enable_switch_notify ?? true
     roundRobinEnabled.value = data?.enable_round_robin ?? false
     autoUpdateEnabled.value = data?.auto_update ?? true
+    requestCaptureEnabled.value = data?.enable_request_capture ?? true
 
     // 缓存到 localStorage，下次打开时直接显示正确状态
     localStorage.setItem('app-settings-heatmap', String(heatmapEnabled.value))
@@ -140,6 +142,7 @@ const loadAppSettings = async () => {
     localStorage.setItem('app-settings-switchNotify', String(switchNotifyEnabled.value))
     localStorage.setItem('app-settings-roundRobin', String(roundRobinEnabled.value))
     localStorage.setItem('app-settings-autoUpdate', String(autoUpdateEnabled.value))
+    localStorage.setItem('app-settings-requestCapture', String(requestCaptureEnabled.value))
   } catch (error) {
     console.error('failed to load app settings', error)
     heatmapEnabled.value = true
@@ -166,6 +169,7 @@ const loadAppSettings = async () => {
     autoConnectivityTestEnabled.value = false
     switchNotifyEnabled.value = true
     roundRobinEnabled.value = false
+    requestCaptureEnabled.value = true
   } finally {
     settingsLoading.value = false
   }
@@ -231,6 +235,7 @@ const persistAppSettings = async () => {
       enable_switch_notify: switchNotifyEnabled.value,
       enable_round_robin: roundRobinEnabled.value,
       auto_update: autoUpdateEnabled.value,
+      enable_request_capture: requestCaptureEnabled.value,
     }
     await saveAppSettings(payload)
 
@@ -266,6 +271,7 @@ const persistAppSettings = async () => {
     localStorage.setItem('app-settings-switchNotify', String(switchNotifyEnabled.value))
     localStorage.setItem('app-settings-roundRobin', String(roundRobinEnabled.value))
     localStorage.setItem('app-settings-autoUpdate', String(autoUpdateEnabled.value))
+    localStorage.setItem('app-settings-requestCapture', String(requestCaptureEnabled.value))
 
     window.dispatchEvent(new CustomEvent('app-settings-updated'))
   } catch (error) {
@@ -490,6 +496,20 @@ onMounted(async () => {
                 <span></span>
               </label>
               <span class="hint-text">{{ $t('components.general.label.roundRobinHint') }}</span>
+            </div>
+          </ListItem>
+          <ListItem :label="$t('components.general.label.requestCapture')">
+            <div class="toggle-with-hint">
+              <label class="mac-switch">
+                <input
+                  type="checkbox"
+                  :disabled="settingsLoading || saveBusy"
+                  v-model="requestCaptureEnabled"
+                  @change="persistAppSettings"
+                />
+                <span></span>
+              </label>
+              <span class="hint-text">{{ $t('components.general.label.requestCaptureHint') }}</span>
             </div>
           </ListItem>
         </div>
