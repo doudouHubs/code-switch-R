@@ -9,11 +9,12 @@ type ProjectManagerCardMenuAction = {
   accent?: boolean
 }
 
-defineProps<{
+const props = defineProps<{
   sessions: SessionSummary[]
   formatUpdatedAt: (timestamp: number) => string
   resolveSummary: (session: SessionSummary) => string
   showProjectNameTag: boolean
+  isSessionOpening: (sessionId: string) => boolean
 }>()
 
 const emit = defineEmits<{
@@ -36,6 +37,13 @@ const handleSessionAction = (session: SessionSummary, actionKey: string) => {
     return
   }
 }
+
+const emitOpenSession = (session: SessionSummary) => {
+  if (props.isSessionOpening(session.id)) {
+    return
+  }
+  emit('open-session', session)
+}
 </script>
 
 <template>
@@ -43,8 +51,8 @@ const handleSessionAction = (session: SessionSummary, actionKey: string) => {
     <article
       v-for="session in sessions"
       :key="session.id"
-      class="session-card"
-      @click="emit('open-session', session)"
+      :class="['session-card', { 'is-opening': isSessionOpening(session.id) }]"
+      @click="emitOpenSession(session)"
     >
       <div class="card-topline">
         <h3 class="card-title">{{ session.display_name }}</h3>
@@ -62,11 +70,17 @@ const handleSessionAction = (session: SessionSummary, actionKey: string) => {
       <div class="card-footer">
         <span class="card-time">{{ formatUpdatedAt(session.updated_at) }}</span>
         <button
-          class="card-footer-action"
+          :class="['card-footer-action', { 'is-loading': isSessionOpening(session.id) }]"
           type="button"
-          @click.stop="emit('open-session', session)"
+          :disabled="isSessionOpening(session.id)"
+          @click.stop="emitOpenSession(session)"
         >
-          {{ t('components.projectManager.card.openSession') }}
+          <span
+            v-if="isSessionOpening(session.id)"
+            class="card-footer-spinner"
+            aria-hidden="true"
+          ></span>
+          <span>{{ t('components.projectManager.card.openSession') }}</span>
         </button>
       </div>
     </article>

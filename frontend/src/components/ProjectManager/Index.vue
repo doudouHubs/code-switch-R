@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Dialogs } from '@wailsio/runtime'
 import { useI18n } from 'vue-i18n'
 import ProjectManagerBreadcrumb from './ProjectManagerBreadcrumb.vue'
@@ -28,6 +28,7 @@ const { t, locale } = useI18n()
 const loading = ref(false)
 const refreshing = ref(false)
 const renameSaving = ref(false)
+const openingSessionIds = ref<string[]>([])
 const snapshotProjects = ref<ProjectSummary[]>([])
 const snapshotSessions = ref<SessionSummary[]>([])
 const selectedProjectId = ref('')
@@ -37,6 +38,9 @@ const renameModalOpen = ref(false)
 const renameTargetType = ref<ProjectManagerRenameTarget>('project')
 const renameTargetId = ref('')
 const renameValue = ref('')
+
+const projectManagerOpenTimeoutMs = 5000
+const openingSessionTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 const dateFormatter = computed(() =>
   new Intl.DateTimeFormat(locale.value === 'zh' ? 'zh-CN' : 'en-US', {
@@ -216,13 +220,41 @@ const handleOpenProjectFolder = async (project: ProjectSummary) => {
 }
 
 const handleOpenSession = async (session: SessionSummary) => {
+  if (openingSessionIds.value.includes(session.id)) {
+    return
+  }
+
+  // 点击打开终端必须立刻给出反馈，不然用户只会觉得按钮死了。
+  // 这里把 loading 做成会话级别，避免一个请求把所有卡片都锁住。
+  openingSessionIds.value = [...openingSessionIds.value, session.id]
+  const timeoutId = setTimeout(() => {
+    clearOpeningSession(session.id)
+  }, projectManagerOpenTimeoutMs)
+  openingSessionTimers.set(session.id, timeoutId)
+
   try {
     await openSessionTerminal(session.id)
   } catch (error) {
     console.error('failed to open session terminal', error)
     showToast(extractErrorMessage(error), 'error')
+  } finally {
+    clearOpeningSession(session.id)
   }
 }
+
+const clearOpeningSession = (sessionID: string) => {
+  const timeoutId = openingSessionTimers.get(sessionID)
+  if (timeoutId) {
+    clearTimeout(timeoutId)
+    openingSessionTimers.delete(sessionID)
+  }
+  if (!openingSessionIds.value.includes(sessionID)) {
+    return
+  }
+  openingSessionIds.value = openingSessionIds.value.filter(id => id !== sessionID)
+}
+
+const isSessionOpening = (sessionID: string) => openingSessionIds.value.includes(sessionID)
 
 const resolveSessionSummary = (session: SessionSummary) =>
   session.summary || t('components.projectManager.common.emptySummary')
@@ -236,6 +268,13 @@ const viewProjectRawPath = async (project: ProjectSummary) => {
 
 onMounted(() => {
   loadSnapshot()
+})
+
+onBeforeUnmount(() => {
+  openingSessionTimers.forEach(timeoutId => {
+    clearTimeout(timeoutId)
+  })
+  openingSessionTimers.clear()
 })
 </script>
 
@@ -278,6 +317,7 @@ onMounted(() => {
       :format-updated-at="formatUpdatedAt"
       :resolve-summary="resolveSessionSummary"
       :show-project-name-tag="activeMode === 'session'"
+      :is-session-opening="isSessionOpening"
       @rename="openRenameModal('session', $event)"
       @open-session="handleOpenSession"
     />

@@ -511,6 +511,7 @@
         "rename": "重命名",
         "openFolder": "打开目录",
         "openSession": "打开终端",
+        "openingSession": "打开中...",
         "pathDetail": "看路径"
       },
       "rename": {

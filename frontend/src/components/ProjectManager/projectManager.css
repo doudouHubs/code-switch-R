@@ -250,6 +250,14 @@
   border-color: rgba(47, 123, 248, 0.35);
 }
 
+.project-manager-page .session-card.is-opening {
+  cursor: progress;
+}
+
+.project-manager-page .session-card.is-opening:hover {
+  transform: none;
+}
+
 .project-manager-page .card-topline {
   display: flex;
   align-items: flex-start;
@@ -431,6 +439,10 @@
   font-size: 0.78rem;
   font-weight: 700;
   line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   cursor: pointer;
   transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease;
 }
@@ -438,6 +450,29 @@
 .project-manager-page .card-footer-action:hover {
   background: rgba(37, 99, 235, 0.18);
   transform: translateY(-1px);
+}
+
+.project-manager-page .card-footer-action:disabled,
+.project-manager-page .card-footer-action.is-loading {
+  cursor: progress;
+  opacity: 0.72;
+  transform: none;
+}
+
+.project-manager-page .card-footer-action:disabled:hover,
+.project-manager-page .card-footer-action.is-loading:hover {
+  background: rgba(37, 99, 235, 0.12);
+  transform: none;
+}
+
+.project-manager-page .card-footer-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  border: 1.8px solid currentColor;
+  border-right-color: transparent;
+  animation: pm-spin 0.8s linear infinite;
+  flex: 0 0 auto;
 }
 
 .dark .project-manager-page .card-footer-action {

@@ -510,6 +510,7 @@
         "rename": "Rename",
         "openFolder": "Open Folder",
         "openSession": "Open Terminal",
+        "openingSession": "Opening...",
         "pathDetail": "Path"
       },
       "rename": {
