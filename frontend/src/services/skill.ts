@@ -10,6 +10,7 @@ export type SkillSummary = {
 
   // 新增字段
   enabled: boolean
+  inject_enabled: boolean
   license_file?: string
   platform: 'claude' | 'codex' | ''
   install_location: 'user' | 'project' | ''
@@ -68,13 +69,28 @@ export const uninstallSkillEx = async (
 }
 
 // 切换技能启用状态
-export const toggleSkill = async (
+export const toggleSkillEnabled = async (
   directory: string,
   platform: string,
   location: string,
   enabled: boolean
 ): Promise<void> => {
-  await Call.ByName('codeswitch/services.SkillService.ToggleSkill', directory, platform, location, enabled)
+  await Call.ByName('codeswitch/services.SkillService.ToggleSkillEnabled', directory, platform, location, enabled)
+}
+
+export const toggleSkillInjection = async (
+  directory: string,
+  platform: string,
+  location: string,
+  injectEnabled: boolean
+): Promise<void> => {
+  await Call.ByName(
+    'codeswitch/services.SkillService.ToggleSkillInjection',
+    directory,
+    platform,
+    location,
+    injectEnabled
+  )
 }
 
 // 获取技能内容

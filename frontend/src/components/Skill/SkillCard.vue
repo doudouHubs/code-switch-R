@@ -1,18 +1,6 @@
 <template>
   <article class="skill-card-installed">
     <div class="skill-card-header">
-      <div class="skill-card-toggle">
-        <button
-          type="button"
-          :class="['toggle-switch', { enabled: skill.enabled }]"
-          :disabled="toggling"
-          :title="t('components.skill.actions.toggle')"
-          @click="$emit('toggle', skill, !skill.enabled)"
-        >
-          <span class="toggle-slider" :class="{ toggling: toggling }"></span>
-        </button>
-      </div>
-
       <div class="skill-card-info">
         <div class="skill-card-meta">
           <p class="skill-card-eyebrow">{{ skill.directory }}</p>
@@ -21,6 +9,32 @@
         <p class="skill-card-desc">
           {{ skill.description || t('components.skill.list.noDescription') }}
         </p>
+        <div class="skill-card-toggle-row">
+          <div class="toggle-chip">
+            <span class="toggle-label">{{ t('components.skill.actions.enable') }}</span>
+            <button
+              type="button"
+              :class="['toggle-switch', { enabled: skill.enabled }]"
+              :disabled="togglingEnabled"
+              :title="t('components.skill.actions.enable')"
+              @click="$emit('toggle-enabled', skill, !skill.enabled)"
+            >
+              <span class="toggle-slider" :class="{ toggling: togglingEnabled }"></span>
+            </button>
+          </div>
+          <div v-if="showInjectToggle" class="toggle-chip">
+            <span class="toggle-label">{{ t('components.skill.actions.inject') }}</span>
+            <button
+              type="button"
+              :class="['toggle-switch', { enabled: skill.inject_enabled }]"
+              :disabled="togglingInject || !skill.enabled"
+              :title="t('components.skill.actions.inject')"
+              @click="$emit('toggle-inject', skill, !skill.inject_enabled)"
+            >
+              <span class="toggle-slider" :class="{ toggling: togglingInject }"></span>
+            </button>
+          </div>
+        </div>
         <div class="skill-card-badges">
           <span v-if="skill.license_file" class="skill-badge license">
             {{ t('components.skill.license.complete', { file: skill.license_file }) }}
@@ -90,25 +104,28 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getSkillContent, type SkillSummary } from '../../services/skill'
 
 const props = defineProps<{
   skill: SkillSummary
   expanded: boolean
-  toggling: boolean
+  togglingEnabled: boolean
+  togglingInject: boolean
   uninstalling: boolean
 }>()
 
 defineEmits<{
-  toggle: [skill: SkillSummary, enabled: boolean]
+  'toggle-enabled': [skill: SkillSummary, enabled: boolean]
+  'toggle-inject': [skill: SkillSummary, injectEnabled: boolean]
   expand: [skill: SkillSummary]
   uninstall: [skill: SkillSummary]
   view: [url: string]
 }>()
 
 const { t } = useI18n()
+const showInjectToggle = computed(() => props.skill.platform === 'codex')
 
 const content = ref('')
 const loadingContent = ref(false)
@@ -149,9 +166,28 @@ watch(() => props.expanded, async (isExpanded) => {
   padding: 16px 20px;
 }
 
-.skill-card-toggle {
-  flex-shrink: 0;
-  padding-top: 4px;
+.skill-card-toggle-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 0 0 10px;
+}
+
+.toggle-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: var(--mac-surface);
+  border: 1px solid color-mix(in srgb, var(--mac-border) 85%, transparent);
+}
+
+.toggle-label {
+  font-size: 0.72rem;
+  line-height: 1;
+  color: var(--mac-text-secondary);
+  white-space: nowrap;
 }
 
 .toggle-switch {

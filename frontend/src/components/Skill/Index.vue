@@ -83,9 +83,11 @@
                 :key="skill.key"
                 :skill="skill"
                 :expanded="expandedSkills.has(skill.key)"
-                :toggling="togglingSkill === skill.key"
+                :toggling-enabled="togglingEnabledSkill === skill.key"
+                :toggling-inject="togglingInjectSkill === skill.key"
                 :uninstalling="processingSkill === uninstallProcessingKey(skill)"
-                @toggle="handleToggle"
+                @toggle-enabled="handleToggleEnabled"
+                @toggle-inject="handleToggleInject"
                 @expand="toggleExpand"
                 @uninstall="handleUninstall"
                 @view="openGithub"
@@ -117,9 +119,11 @@
                 :key="skill.key"
                 :skill="skill"
                 :expanded="expandedSkills.has(skill.key)"
-                :toggling="togglingSkill === skill.key"
+                :toggling-enabled="togglingEnabledSkill === skill.key"
+                :toggling-inject="togglingInjectSkill === skill.key"
                 :uninstalling="processingSkill === uninstallProcessingKey(skill)"
-                @toggle="handleToggle"
+                @toggle-enabled="handleToggleEnabled"
+                @toggle-inject="handleToggleInject"
                 @expand="toggleExpand"
                 @uninstall="handleUninstall"
                 @view="openGithub"
@@ -176,8 +180,12 @@
             </div>
           </div>
 
+          <div v-if="catalogLoading && availableSkills.length === 0" class="skill-empty">
+            {{ t('components.skill.list.catalogLoading') }}
+          </div>
+
           <!-- Empty State -->
-          <div v-if="skills.length === 0" class="skill-empty">
+          <div v-if="skills.length === 0 && !catalogLoading" class="skill-empty">
             {{ t('components.skill.list.empty') }}
           </div>
         </template>
@@ -305,7 +313,8 @@ import {
   fetchSkillsForPlatform,
   installSkill,
   uninstallSkillEx,
-  toggleSkill,
+  toggleSkillEnabled,
+  toggleSkillInjection,
   getSkillContent,
   openSkillFolder,
   fetchSkillRepos,
@@ -319,6 +328,7 @@ import SkillCard from './SkillCard.vue'
 
 const router = useRouter()
 const { t } = useI18n()
+const SKILL_PLATFORM_STORAGE_KEY = 'skill-active-platform'
 
 // Platform definitions (use computed for i18n reactivity)
 const platforms = computed(() => [
@@ -327,15 +337,26 @@ const platforms = computed(() => [
 ])
 
 // State
-const activePlatform = ref<'claude' | 'codex'>('claude')
+const readStoredPlatform = (): 'claude' | 'codex' => {
+  try {
+    const saved = localStorage.getItem(SKILL_PLATFORM_STORAGE_KEY)
+    return saved === 'codex' ? 'codex' : 'claude'
+  } catch {
+    return 'claude'
+  }
+}
+
+const activePlatform = ref<'claude' | 'codex'>(readStoredPlatform())
 const skills = ref<SkillSummary[]>([])
 const repoList = ref<SkillRepoConfig[]>([])
 const loading = ref(false)
+const catalogLoading = ref(false)
 const repoLoading = ref(false)
 const skillsError = ref('')
 const repoError = ref('')
 const processingSkill = ref('')
-const togglingSkill = ref('')
+const togglingEnabledSkill = ref('')
+const togglingInjectSkill = ref('')
 const repoBusy = ref(false)
 const repoForm = reactive({ url: '', branch: 'main' })
 const repoModalOpen = ref(false)
@@ -349,7 +370,7 @@ const installing = ref(false)
 // Expanded skills
 const expandedSkills = ref<Set<string>>(new Set())
 
-const refreshing = computed(() => loading.value || repoLoading.value)
+const refreshing = computed(() => loading.value || catalogLoading.value || repoLoading.value)
 
 // Computed: Split skills by location
 const installedSkills = computed(() =>
@@ -378,44 +399,116 @@ const uninstallProcessingKey = (skill: SkillSummary) => `uninstall:${skillIdenti
 const isInstallingSkill = (skill: SkillSummary) => processingSkill.value === installProcessingKey(skill)
 const canInstallSkill = (skill: SkillSummary) => Boolean(skill.repo_owner && skill.repo_name)
 
+const persistActivePlatform = (platform: 'claude' | 'codex') => {
+  try {
+    localStorage.setItem(SKILL_PLATFORM_STORAGE_KEY, platform)
+  } catch (error) {
+    console.warn('failed to persist active skill platform', error)
+  }
+}
+
+const normalizeAvailableSkills = (available: SkillSummary[]) =>
+  available
+    .filter(s => s.repo_owner && s.repo_name)
+    .map(s => ({
+      ...s,
+      installed: false,
+      install_location: '' as const,
+      platform: '' as const
+    }))
+
+const mergeInstalledAndAvailableSkills = (
+  installed: SkillSummary[],
+  available: SkillSummary[]
+) => {
+  const installedDirs = new Set(installed.map(s => s.directory.toLowerCase()))
+  const filtered = available.filter(s => !installedDirs.has(s.directory.toLowerCase()))
+  return [...installed, ...filtered]
+}
+
+const availableSkillCache = ref<SkillSummary[] | null>(null)
+let availableSkillPromise: Promise<SkillSummary[]> | null = null
+let platformLoadSequence = 0
+
+const loadAvailableSkillCatalog = async (forceReload = false): Promise<SkillSummary[]> => {
+  if (!forceReload && availableSkillCache.value) {
+    return availableSkillCache.value
+  }
+  if (!forceReload && availableSkillPromise) {
+    return availableSkillPromise
+  }
+
+  catalogLoading.value = true
+  const request = (async () => {
+    const available = await fetchSkills()
+    const normalized = normalizeAvailableSkills(available)
+    availableSkillCache.value = normalized
+    return normalized
+  })()
+
+  availableSkillPromise = request
+  try {
+    return await request
+  } finally {
+    if (availableSkillPromise === request) {
+      availableSkillPromise = null
+    }
+    catalogLoading.value = false
+  }
+}
+
 // Platform switching
 const switchPlatform = async (platform: 'claude' | 'codex') => {
   activePlatform.value = platform
+  persistActivePlatform(platform)
   await loadSkillsForPlatform()
 }
 
 // Load skills for current platform
-const loadSkillsForPlatform = async () => {
+const loadSkillsForPlatform = async (options: { forceCatalogReload?: boolean } = {}) => {
+  const forceCatalogReload = options.forceCatalogReload ?? false
+  const loadId = ++platformLoadSequence
+
   loading.value = true
   skillsError.value = ''
+
+  if (forceCatalogReload) {
+    availableSkillCache.value = null
+  }
+
   try {
-    // Load installed skills for this platform (has correct install_location)
     const installed = await fetchSkillsForPlatform(activePlatform.value)
-    // Also load available skills from repos
-    const available = await fetchSkills()
+    if (loadId !== platformLoadSequence) {
+      return
+    }
 
-    // FIX: Only keep repo skills that can be installed (have repo info)
-    // Force installed=false to avoid "gap" where skills fall into neither group
-    const availableClean = available
-      .filter(s => s.repo_owner && s.repo_name)  // Only installable repo skills
-      .map(s => ({
-        ...s,
-        installed: false,  // Force to false - actual status from fetchSkillsForPlatform
-        install_location: '' as const,
-        platform: '' as const
-      }))
+    const cachedAvailable = availableSkillCache.value ?? []
+    skills.value = mergeInstalledAndAvailableSkills(installed, cachedAvailable)
 
-    // Merge: installed skills take precedence by directory name
-    const installedDirs = new Set(installed.map(s => s.directory.toLowerCase()))
-    const filtered = availableClean.filter(s => !installedDirs.has(s.directory.toLowerCase()))
-
-    skills.value = [...installed, ...filtered]
+    if (forceCatalogReload || availableSkillCache.value === null) {
+      void loadAvailableSkillCatalog(forceCatalogReload)
+        .then((available) => {
+          if (loadId !== platformLoadSequence) {
+            return
+          }
+          skills.value = mergeInstalledAndAvailableSkills(installed, available)
+        })
+        .catch((error) => {
+          console.error('failed to load skill catalog', error)
+          if (!availableSkillCache.value && installed.length === 0) {
+            skillsError.value = t('components.skill.list.error')
+          }
+        })
+    }
   } catch (error) {
     console.error('failed to load skills', error)
+    skills.value = []
     skillsError.value = t('components.skill.list.error')
   } finally {
-    loading.value = false
-    processingSkill.value = ''
+    if (loadId === platformLoadSequence) {
+      loading.value = false
+      processingSkill.value = ''
+    }
   }
 }
 
@@ -433,14 +526,14 @@ const loadRepos = async () => {
 }
 
 const refresh = () => {
-  void Promise.all([loadRepos(), loadSkillsForPlatform()])
+  void Promise.all([loadRepos(), loadSkillsForPlatform({ forceCatalogReload: true })])
 }
 
 // Toggle skill enabled status
-const handleToggle = async (skill: SkillSummary, enabled: boolean) => {
-  togglingSkill.value = skill.key
+const handleToggleEnabled = async (skill: SkillSummary, enabled: boolean) => {
+  togglingEnabledSkill.value = skill.key
   try {
-    await toggleSkill(
+    await toggleSkillEnabled(
       skill.directory,
       skill.platform || activePlatform.value,
       skill.install_location || 'user',
@@ -452,10 +545,31 @@ const handleToggle = async (skill: SkillSummary, enabled: boolean) => {
       target.enabled = enabled
     }
   } catch (error) {
-    console.error('failed to toggle skill', error)
-    skillsError.value = t('components.skill.actions.toggleError')
+    console.error('failed to toggle skill enabled', error)
+    skillsError.value = t('components.skill.actions.enableError')
   } finally {
-    togglingSkill.value = ''
+    togglingEnabledSkill.value = ''
+  }
+}
+
+const handleToggleInject = async (skill: SkillSummary, injectEnabled: boolean) => {
+  togglingInjectSkill.value = skill.key
+  try {
+    await toggleSkillInjection(
+      skill.directory,
+      skill.platform || activePlatform.value,
+      skill.install_location || 'user',
+      injectEnabled
+    )
+    const target = skills.value.find(s => s.key === skill.key)
+    if (target) {
+      target.inject_enabled = injectEnabled
+    }
+  } catch (error) {
+    console.error('failed to toggle skill injection', error)
+    skillsError.value = t('components.skill.actions.injectError')
+  } finally {
+    togglingInjectSkill.value = ''
   }
 }
 
@@ -606,7 +720,7 @@ const submitRepo = async () => {
     })
     repoForm.url = ''
     repoForm.branch = 'main'
-    await loadSkillsForPlatform()
+    await loadSkillsForPlatform({ forceCatalogReload: true })
   } catch (error) {
     console.error('failed to add skill repo', error)
     repoError.value = t('components.skill.repos.addError')
@@ -620,7 +734,7 @@ const removeRepo = async (repo: SkillRepoConfig) => {
   repoError.value = ''
   try {
     repoList.value = await removeSkillRepo(repo.owner, repo.name)
-    await loadSkillsForPlatform()
+    await loadSkillsForPlatform({ forceCatalogReload: true })
   } catch (error) {
     console.error('failed to remove skill repo', error)
     repoError.value = t('components.skill.repos.removeError')

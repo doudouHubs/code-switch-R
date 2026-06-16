@@ -67,6 +67,7 @@
     "availability": "可用性",
     "speedtest": "测速",
     "env": "环境",
+    "projects": "项目管理",
     "logs": "日志",
     "console": "控制台",
     "settings": "设置"
@@ -479,6 +480,60 @@
         "loadProvidersFailed": "加载 {tab} 标签页的供应商失败"
       }
     },
+    "projectManager": {
+      "hero": {
+        "eyebrow": "Codex 工作台",
+        "title": "项目与会话管理",
+        "lead": "把 Codex 真正干过活的项目和会话拎出来，按项目浏览，或者直接按最近会话开工。"
+      },
+      "toolbar": {
+        "modeLabel": "项目管理模式",
+        "projectMode": "项目模式",
+        "sessionMode": "会话模式",
+        "searchPlaceholder": "搜索项目名、路径、会话标题或概要",
+        "refresh": "更新",
+        "refreshing": "同步中...",
+        "backToProjects": "返回项目列表"
+      },
+      "stats": {
+        "visibleCount": "当前展示",
+        "totalProjects": "项目总数",
+        "totalSessions": "会话总数"
+      },
+      "states": {
+        "loading": "正在扫描 Codex 项目和会话...",
+        "emptyProjects": "当前没有可展示的项目记录，先让 Codex 在本机干点活再说。",
+        "emptySessions": "这里暂时没有会话记录。"
+      },
+      "card": {
+        "projectTag": "Project",
+        "sessionTag": "Session",
+        "sessionCount": "{count} 个会话",
+        "rename": "重命名",
+        "openFolder": "打开目录",
+        "openSession": "打开终端",
+        "pathDetail": "看路径"
+      },
+      "rename": {
+        "projectTitle": "重命名项目",
+        "sessionTitle": "重命名会话",
+        "hint": "项目名只改管理器里的显示别名；会话名会优先尝试回写 Codex 标题，失败时至少保住本地显示名。",
+        "placeholder": "输入新的显示名称",
+        "cancel": "取消",
+        "save": "保存",
+        "saving": "保存中...",
+        "saved": "名称已更新",
+        "emptyName": "名字不能为空，别整那没字儿的。"
+      },
+      "common": {
+        "path": "项目路径",
+        "unknownTime": "未知时间",
+        "emptySummary": "这会话没抓到可读概要，点开终端自己看现场吧。"
+      },
+      "errors": {
+        "projectNotFound": "项目不存在或已被移除"
+      }
+    },
     "logs": {
       "eyebrow": "请求追踪",
       "title": "代理请求日志",
@@ -867,16 +922,21 @@
         "installError": "安装 {name} 失败，请重试",
         "uninstallError": "卸载 {name} 失败，请重试",
         "toggle": "启用/禁用",
+        "enable": "启用",
+        "inject": "注入",
         "viewContent": "查看内容",
         "hideContent": "收起内容",
         "openFolder": "打开文件夹",
         "loadFailed": "加载内容失败",
-        "toggleError": "切换技能状态失败"
+        "toggleError": "切换技能状态失败",
+        "enableError": "切换技能启用状态失败",
+        "injectError": "切换技能注入状态失败"
       },
       "list": {
         "title": "可用技能",
         "subtitle": "描述信息来源于各目录内 SKILL.md 的 front matter。",
         "loading": "正在加载技能...",
+        "catalogLoading": "仓库技能正在后台加载...",
         "empty": "仓库中没有可用技能。",
         "error": "技能列表加载失败，请检查网络后重试。",
         "noDescription": "SKILL.md 未提供描述",

@@ -17,6 +17,7 @@ import * as ImportService from "./importservice.js";
 import * as LogService from "./logservice.js";
 import * as MCPService from "./mcpservice.js";
 import * as NetworkService from "./networkservice.js";
+import * as ProjectManagerService from "./projectmanagerservice.js";
 import * as PromptService from "./promptservice.js";
 import * as ProviderService from "./providerservice.js";
 import * as SettingsService from "./settingsservice.js";
@@ -41,6 +42,7 @@ export {
     LogService,
     MCPService,
     NetworkService,
+    ProjectManagerService,
     PromptService,
     ProviderService,
     SettingsService,
@@ -90,6 +92,8 @@ export {
     MCPServer,
     ManualTestResult,
     NetworkSettings,
+    ProjectManagerSnapshot,
+    ProjectSummary,
     Prompt,
     Provider,
     ProviderDailyStat,
@@ -97,6 +101,7 @@ export {
     ProxyInjection,
     ReqeustLog,
     RetryConfig,
+    SessionSummary,
     Skill,
     TargetCli,
     UpdateInfo,

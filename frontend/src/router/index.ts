@@ -10,6 +10,7 @@ import EnvCheckPage from '../components/EnvCheck/Index.vue'
 import ConsolePage from '../components/Console/Index.vue'
 import AvailabilityPage from '../components/Availability/Index.vue'
 import TrayPage from '../components/Tray/Index.vue'
+import ProjectManagerPage from '../components/ProjectManager/Index.vue'
 
 const routes = [
   { path: '/', component: MainPage },
@@ -21,6 +22,7 @@ const routes = [
   { path: '/env', component: EnvCheckPage },
   { path: '/logs', component: LogsPage },
   { path: '/console', component: ConsolePage },
+  { path: '/projects', component: ProjectManagerPage },
   { path: '/settings', component: GeneralPage },
   { path: '/tray', component: TrayPage },
 ]

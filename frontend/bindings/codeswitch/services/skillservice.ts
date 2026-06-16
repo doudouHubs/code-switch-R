@@ -74,12 +74,16 @@ export function SaveSkillContent(directory: string, platform: string, location: 
     return $Call.ByID(3441672290, directory, platform, location, content);
 }
 
-/**
- * ToggleSkill 切换技能的启用状态
- * 通过修改 SKILL.md 的 disable-model-invocation 字段实现
- */
 export function ToggleSkill(directory: string, platform: string, location: string, enabled: boolean): $CancellablePromise<void> {
     return $Call.ByID(2154856646, directory, platform, location, enabled);
+}
+
+export function ToggleSkillEnabled(directory: string, platform: string, location: string, enabled: boolean): $CancellablePromise<void> {
+    return $Call.ByID(3133699123, directory, platform, location, enabled);
+}
+
+export function ToggleSkillInjection(directory: string, platform: string, location: string, injectEnabled: boolean): $CancellablePromise<void> {
+    return $Call.ByID(4290718375, directory, platform, location, injectEnabled);
 }
 
 export function UninstallSkill(directory: string): $CancellablePromise<void> {

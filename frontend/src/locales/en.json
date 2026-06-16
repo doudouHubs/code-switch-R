@@ -67,6 +67,7 @@
     "availability": "Availability",
     "speedtest": "Speed Test",
     "env": "Env Check",
+    "projects": "Projects",
     "logs": "Logs",
     "console": "Console",
     "settings": "Settings"
@@ -478,6 +479,60 @@
         "loadProvidersFailed": "Failed to load providers for {tab} tab"
       }
     },
+    "projectManager": {
+      "hero": {
+        "eyebrow": "Codex Workspace",
+        "title": "Project & Session Manager",
+        "lead": "Surface the local directories Codex actually touched, browse by project, or jump straight into the freshest sessions."
+      },
+      "toolbar": {
+        "modeLabel": "Project manager mode",
+        "projectMode": "Project Mode",
+        "sessionMode": "Session Mode",
+        "searchPlaceholder": "Search project names, paths, session titles, or summaries",
+        "refresh": "Refresh",
+        "refreshing": "Syncing...",
+        "backToProjects": "Back to project list"
+      },
+      "stats": {
+        "visibleCount": "Visible now",
+        "totalProjects": "Projects",
+        "totalSessions": "Sessions"
+      },
+      "states": {
+        "loading": "Scanning Codex projects and sessions...",
+        "emptyProjects": "No projects to show yet. Let Codex touch a local workspace first.",
+        "emptySessions": "No sessions are available here yet."
+      },
+      "card": {
+        "projectTag": "Project",
+        "sessionTag": "Session",
+        "sessionCount": "{count} sessions",
+        "rename": "Rename",
+        "openFolder": "Open Folder",
+        "openSession": "Open Terminal",
+        "pathDetail": "Path"
+      },
+      "rename": {
+        "projectTitle": "Rename Project",
+        "sessionTitle": "Rename Session",
+        "hint": "Project renaming only changes the display alias here. Session renaming tries to write back to Codex first and keeps the local alias even if upstream write-back fails.",
+        "placeholder": "Enter a new display name",
+        "cancel": "Cancel",
+        "save": "Save",
+        "saving": "Saving...",
+        "saved": "Name updated",
+        "emptyName": "Name cannot be empty."
+      },
+      "common": {
+        "path": "Project Path",
+        "unknownTime": "Unknown time",
+        "emptySummary": "No readable summary was captured for this session yet."
+      },
+      "errors": {
+        "projectNotFound": "Project no longer exists"
+      }
+    },
     "logs": {
       "eyebrow": "Request diagnostics",
       "title": "Request logs",
@@ -866,16 +921,21 @@
         "installError": "Failed to install {name}. Please retry",
         "uninstallError": "Failed to uninstall {name}. Please retry",
         "toggle": "Enable/Disable",
+        "enable": "Enable",
+        "inject": "Inject",
         "viewContent": "View Content",
         "hideContent": "Hide Content",
         "openFolder": "Open Folder",
         "loadFailed": "Failed to load content",
-        "toggleError": "Failed to toggle skill status"
+        "toggleError": "Failed to toggle skill status",
+        "enableError": "Failed to toggle skill enable state",
+        "injectError": "Failed to toggle skill injection state"
       },
       "list": {
         "title": "Available skills",
         "subtitle": "Metadata is parsed from each SKILL.md front matter.",
         "loading": "Loading skills...",
+        "catalogLoading": "Loading repository skills in the background...",
         "empty": "No skills detected in the repository.",
         "error": "Failed to load skills. Please check your network and retry.",
         "noDescription": "SKILL.md does not include a description",

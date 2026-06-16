@@ -1950,6 +1950,80 @@ export class NetworkSettings {
     }
 }
 
+export class ProjectManagerSnapshot {
+    "projects": ProjectSummary[];
+    "sessions": SessionSummary[];
+
+    /** Creates a new ProjectManagerSnapshot instance. */
+    constructor($$source: Partial<ProjectManagerSnapshot> = {}) {
+        if (!("projects" in $$source)) {
+            this["projects"] = [];
+        }
+        if (!("sessions" in $$source)) {
+            this["sessions"] = [];
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ProjectManagerSnapshot instance from a string or object.
+     */
+    static createFrom($$source: any = {}): ProjectManagerSnapshot {
+        const $$createField0_0 = $$createType21;
+        const $$createField1_0 = $$createType23;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("projects" in $$parsedSource) {
+            $$parsedSource["projects"] = $$createField0_0($$parsedSource["projects"]);
+        }
+        if ("sessions" in $$parsedSource) {
+            $$parsedSource["sessions"] = $$createField1_0($$parsedSource["sessions"]);
+        }
+        return new ProjectManagerSnapshot($$parsedSource as Partial<ProjectManagerSnapshot>);
+    }
+}
+
+export class ProjectSummary {
+    "id": string;
+    "path": string;
+    "source_name": string;
+    "display_name": string;
+    "updated_at": number;
+    "session_count": number;
+
+    /** Creates a new ProjectSummary instance. */
+    constructor($$source: Partial<ProjectSummary> = {}) {
+        if (!("id" in $$source)) {
+            this["id"] = "";
+        }
+        if (!("path" in $$source)) {
+            this["path"] = "";
+        }
+        if (!("source_name" in $$source)) {
+            this["source_name"] = "";
+        }
+        if (!("display_name" in $$source)) {
+            this["display_name"] = "";
+        }
+        if (!("updated_at" in $$source)) {
+            this["updated_at"] = 0;
+        }
+        if (!("session_count" in $$source)) {
+            this["session_count"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ProjectSummary instance from a string or object.
+     */
+    static createFrom($$source: any = {}): ProjectSummary {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new ProjectSummary($$parsedSource as Partial<ProjectSummary>);
+    }
+}
+
 /**
  * Prompt 自定义提示词
  */
@@ -2112,9 +2186,9 @@ export class Provider {
      * Creates a new Provider instance from a string or object.
      */
     static createFrom($$source: any = {}): Provider {
-        const $$createField10_0 = $$createType20;
+        const $$createField10_0 = $$createType24;
         const $$createField11_0 = $$createType4;
-        const $$createField15_0 = $$createType22;
+        const $$createField15_0 = $$createType26;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("supportedModels" in $$parsedSource) {
             $$parsedSource["supportedModels"] = $$createField10_0($$parsedSource["supportedModels"]);
@@ -2262,7 +2336,7 @@ export class ProviderTimeline {
      * Creates a new ProviderTimeline instance from a string or object.
      */
     static createFrom($$source: any = {}): ProviderTimeline {
-        const $$createField5_0 = $$createType22;
+        const $$createField5_0 = $$createType26;
         const $$createField6_0 = $$createType12;
         const $$createField7_0 = $$createType13;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
@@ -2485,6 +2559,71 @@ export class RetryConfig {
     }
 }
 
+export class SessionSummary {
+    "id": string;
+    "project_id": string;
+    "project_path": string;
+    "project_name": string;
+    "source_name": string;
+    "display_name": string;
+    "summary": string;
+    "updated_at": number;
+    "window_id": string;
+    "cwd": string;
+    "last_capture_path": string;
+    "project_source_hint": string;
+
+    /** Creates a new SessionSummary instance. */
+    constructor($$source: Partial<SessionSummary> = {}) {
+        if (!("id" in $$source)) {
+            this["id"] = "";
+        }
+        if (!("project_id" in $$source)) {
+            this["project_id"] = "";
+        }
+        if (!("project_path" in $$source)) {
+            this["project_path"] = "";
+        }
+        if (!("project_name" in $$source)) {
+            this["project_name"] = "";
+        }
+        if (!("source_name" in $$source)) {
+            this["source_name"] = "";
+        }
+        if (!("display_name" in $$source)) {
+            this["display_name"] = "";
+        }
+        if (!("summary" in $$source)) {
+            this["summary"] = "";
+        }
+        if (!("updated_at" in $$source)) {
+            this["updated_at"] = 0;
+        }
+        if (!("window_id" in $$source)) {
+            this["window_id"] = "";
+        }
+        if (!("cwd" in $$source)) {
+            this["cwd"] = "";
+        }
+        if (!("last_capture_path" in $$source)) {
+            this["last_capture_path"] = "";
+        }
+        if (!("project_source_hint" in $$source)) {
+            this["project_source_hint"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new SessionSummary instance from a string or object.
+     */
+    static createFrom($$source: any = {}): SessionSummary {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new SessionSummary($$parsedSource as Partial<SessionSummary>);
+    }
+}
+
 export class Skill {
     "key": string;
     "name": string;
@@ -2495,9 +2634,14 @@ export class Skill {
 
     /**
      * 新增字段
-     * 是否启用（从 SKILL.md 读取）
+     * 是否启用
      */
     "enabled": boolean;
+
+    /**
+     * 是否允许自动注入
+     */
+    "inject_enabled": boolean;
 
     /**
      * 许可证文件路径
@@ -2543,6 +2687,9 @@ export class Skill {
         }
         if (!("enabled" in $$source)) {
             this["enabled"] = false;
+        }
+        if (!("inject_enabled" in $$source)) {
+            this["inject_enabled"] = false;
         }
 
         Object.assign(this, $$source);
@@ -2870,6 +3017,10 @@ const $$createType16 = MCPServer.createFrom;
 const $$createType17 = $Create.Array($$createType16);
 const $$createType18 = $Create.Array($Create.Any);
 const $$createType19 = TargetCli.createFrom;
-const $$createType20 = $Create.Map($Create.Any, $Create.Any);
-const $$createType21 = AvailabilityConfig.createFrom;
-const $$createType22 = $Create.Nullable($$createType21);
+const $$createType20 = ProjectSummary.createFrom;
+const $$createType21 = $Create.Array($$createType20);
+const $$createType22 = SessionSummary.createFrom;
+const $$createType23 = $Create.Array($$createType22);
+const $$createType24 = $Create.Map($Create.Any, $Create.Any);
+const $$createType25 = AvailabilityConfig.createFrom;
+const $$createType26 = $Create.Nullable($$createType25);

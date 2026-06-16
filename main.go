@@ -129,6 +129,7 @@ func main() {
 	consoleService := services.NewConsoleService()
 	customCliService := services.NewCustomCliService(providerRelay.Addr())
 	networkService := services.NewNetworkService(providerRelay.Addr(), claudeSettings, codexSettings, geminiService)
+	projectManagerService := services.NewProjectManagerService()
 
 	go func() {
 		if err := providerRelay.Start(); err != nil {
@@ -214,6 +215,7 @@ func main() {
 			application.NewService(consoleService),
 			application.NewService(customCliService),
 			application.NewService(networkService),
+			application.NewService(projectManagerService),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
@@ -334,25 +336,25 @@ func main() {
 
 	if runtime.GOOS == "darwin" {
 		trayWindow = app.Window.NewWithOptions(application.WebviewWindowOptions{
-			Title:       "Code Switch Tray",
-			Name:        "tray",
-			Width:       trayWindowWidth,
-			Height:      trayWindowMinHeight,
-			MinWidth:    trayWindowWidth,
-			MaxWidth:    trayWindowWidth,
-			MinHeight:   trayWindowMinHeight,
-			MaxHeight:   trayWindowMaxHeight,
-			AlwaysOnTop: true,
-			DisableResize: true,
-			Frameless:     true,
-			Hidden:        true,
-			BackgroundType: application.BackgroundTypeTransparent,
+			Title:            "Code Switch Tray",
+			Name:             "tray",
+			Width:            trayWindowWidth,
+			Height:           trayWindowMinHeight,
+			MinWidth:         trayWindowWidth,
+			MaxWidth:         trayWindowWidth,
+			MinHeight:        trayWindowMinHeight,
+			MaxHeight:        trayWindowMaxHeight,
+			AlwaysOnTop:      true,
+			DisableResize:    true,
+			Frameless:        true,
+			Hidden:           true,
+			BackgroundType:   application.BackgroundTypeTransparent,
 			BackgroundColour: application.NewRGBA(0, 0, 0, 0),
 			Mac: application.MacWindow{
-				Backdrop:     application.MacBackdropTransparent,
-				TitleBar:     application.MacTitleBarHidden,
+				Backdrop:      application.MacBackdropTransparent,
+				TitleBar:      application.MacTitleBarHidden,
 				DisableShadow: true,
-				WindowLevel:  application.MacWindowLevelPopUpMenu,
+				WindowLevel:   application.MacWindowLevelPopUpMenu,
 			},
 			URL: "/#/tray",
 		})
@@ -454,9 +456,9 @@ func handleDockVisibility(service *dock.DockService, show bool) {
 }
 
 const (
-	trayWindowWidth     = 360
-	trayWindowMinHeight = 120
-	trayWindowMaxHeight = 420
+	trayWindowWidth      = 360
+	trayWindowMinHeight  = 120
+	trayWindowMaxHeight  = 420
 	trayProgressBarWidth = 28
 )
 
@@ -536,4 +538,3 @@ func trayProgressLabel(used float64, total float64) string {
 func formatCurrency(value float64) string {
 	return fmt.Sprintf("$%.2f", value)
 }
-

@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pelletier/go-toml/v2"
 	"gopkg.in/yaml.v3"
 )
 
@@ -49,7 +50,8 @@ type Skill struct {
 	Installed   bool   `json:"installed"`
 
 	// 新增字段
-	Enabled         bool   `json:"enabled"`                     // 是否启用（从 SKILL.md 读取）
+	Enabled         bool   `json:"enabled"`                     // 是否启用
+	InjectEnabled   bool   `json:"inject_enabled"`              // 是否允许自动注入
 	LicenseFile     string `json:"license_file,omitempty"`      // 许可证文件路径
 	Platform        string `json:"platform,omitempty"`          // "claude" | "codex"
 	InstallLocation string `json:"install_location,omitempty"`  // "user" | "project"
@@ -71,6 +73,26 @@ type skillMetadataExtended struct {
 	Description            string `yaml:"description"`
 	DisableModelInvocation bool   `yaml:"disable-model-invocation"`
 	UserInvocable          *bool  `yaml:"user-invocable"`
+	Policy                 struct {
+		AllowImplicitInvocation *bool `yaml:"allow_implicit_invocation"`
+	} `yaml:"policy"`
+}
+
+type codexSkillMetadataFile struct {
+	Interface struct {
+		DisplayName      string `yaml:"display_name"`
+		ShortDescription string `yaml:"short_description"`
+		DefaultPrompt    string `yaml:"default_prompt"`
+	} `yaml:"interface"`
+	Policy struct {
+		AllowImplicitInvocation *bool `yaml:"allow_implicit_invocation"`
+	} `yaml:"policy"`
+}
+
+type codexSkillConfigEntry struct {
+	Path    string `toml:"path,omitempty"`
+	Name    string `toml:"name,omitempty"`
+	Enabled bool   `toml:"enabled"`
 }
 
 type skillStore struct {
@@ -163,18 +185,30 @@ func (ss *SkillService) ListSkillsForPlatform(platform string) ([]Skill, error) 
 	}
 
 	var allSkills []Skill
+	codexEnabledByPath := map[string]bool{}
+	if platform == skillPlatformCodex {
+		for _, location := range []string{skillLocationUser, skillLocationProject} {
+			overrides, err := ss.loadCodexSkillEnabledOverrides(location)
+			if err != nil {
+				continue
+			}
+			for path, enabled := range overrides {
+				codexEnabledByPath[path] = enabled
+			}
+		}
+	}
 
 	// 扫描用户级目录
 	userPath, err := ss.getInstallPath(platform, skillLocationUser)
 	if err == nil {
-		userSkills := ss.scanSkillsDirectory(userPath, platform, skillLocationUser)
+		userSkills := ss.scanSkillsDirectory(userPath, platform, skillLocationUser, codexEnabledByPath)
 		allSkills = append(allSkills, userSkills...)
 	}
 
 	// 扫描项目级目录
 	projectPath, err := ss.getInstallPath(platform, skillLocationProject)
 	if err == nil {
-		projectSkills := ss.scanSkillsDirectory(projectPath, platform, skillLocationProject)
+		projectSkills := ss.scanSkillsDirectory(projectPath, platform, skillLocationProject, codexEnabledByPath)
 		allSkills = append(allSkills, projectSkills...)
 	}
 
@@ -187,7 +221,7 @@ func (ss *SkillService) ListSkillsForPlatform(platform string) ([]Skill, error) 
 }
 
 // scanSkillsDirectory 扫描目录中的技能
-func (ss *SkillService) scanSkillsDirectory(dir, platform, location string) []Skill {
+func (ss *SkillService) scanSkillsDirectory(dir, platform, location string, codexEnabledByPath map[string]bool) []Skill {
 	var skills []Skill
 
 	entries, err := os.ReadDir(dir)
@@ -209,7 +243,7 @@ func (ss *SkillService) scanSkillsDirectory(dir, platform, location string) []Sk
 		}
 
 		// 读取元数据
-		meta, enabled, err := ss.readSkillMetadataExtended(skillPath)
+		meta, injectEnabled, err := ss.readSkillMetadataExtended(skillPath, platform)
 		if err != nil {
 			continue
 		}
@@ -228,6 +262,8 @@ func (ss *SkillService) scanSkillsDirectory(dir, platform, location string) []Sk
 			}
 		}
 
+		enabled := ss.resolveSkillEnabled(platform, skillPath, codexEnabledByPath, meta)
+
 		skill := Skill{
 			Key:             fmt.Sprintf("%s:%s:%s", platform, location, entry.Name()),
 			Name:            name,
@@ -235,6 +271,7 @@ func (ss *SkillService) scanSkillsDirectory(dir, platform, location string) []Sk
 			Directory:       entry.Name(),
 			Installed:       true,
 			Enabled:         enabled,
+			InjectEnabled:   injectEnabled,
 			LicenseFile:     licenseFile,
 			Platform:        platform,
 			InstallLocation: location,
@@ -246,8 +283,8 @@ func (ss *SkillService) scanSkillsDirectory(dir, platform, location string) []Sk
 	return skills
 }
 
-// readSkillMetadataExtended 读取技能元数据（包括 enabled 状态）
-func (ss *SkillService) readSkillMetadataExtended(dir string) (skillMetadataExtended, bool, error) {
+// readSkillMetadataExtended 读取技能元数据（包括 enabled/inject 状态）
+func (ss *SkillService) readSkillMetadataExtended(dir, platform string) (skillMetadataExtended, bool, error) {
 	data, err := os.ReadFile(filepath.Join(dir, "SKILL.md"))
 	if err != nil {
 		return skillMetadataExtended{}, false, err
@@ -258,10 +295,18 @@ func (ss *SkillService) readSkillMetadataExtended(dir string) (skillMetadataExte
 		return skillMetadataExtended{}, false, err
 	}
 
-	// enabled = NOT disable-model-invocation
-	enabled := !meta.DisableModelInvocation
+	injectEnabled := true
+	if platform == skillPlatformCodex {
+		if injected, ok, err := ss.readCodexInjectEnabled(dir); err == nil && ok {
+			injectEnabled = injected
+		} else if err != nil {
+			return skillMetadataExtended{}, false, err
+		}
+	} else if meta.Policy.AllowImplicitInvocation != nil {
+		injectEnabled = *meta.Policy.AllowImplicitInvocation
+	}
 
-	return meta, enabled, nil
+	return meta, injectEnabled, nil
 }
 
 // parseSkillMetadataExtended 解析扩展元数据
@@ -280,6 +325,327 @@ func parseSkillMetadataExtended(content string) (skillMetadataExtended, error) {
 		return meta, err
 	}
 	return meta, nil
+}
+
+func (ss *SkillService) readCodexInjectEnabled(dir string) (bool, bool, error) {
+	metadataPath := filepath.Join(dir, "agents", "openai.yaml")
+	data, err := os.ReadFile(metadataPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return true, false, nil
+		}
+		return false, false, fmt.Errorf("读取 openai.yaml 失败: %w", err)
+	}
+
+	var meta codexSkillMetadataFile
+	if err := yaml.Unmarshal(data, &meta); err != nil {
+		return false, false, fmt.Errorf("解析 openai.yaml 失败: %w", err)
+	}
+	if meta.Policy.AllowImplicitInvocation == nil {
+		return true, false, nil
+	}
+	return *meta.Policy.AllowImplicitInvocation, true, nil
+}
+
+func (ss *SkillService) resolveSkillEnabled(
+	platform string,
+	skillPath string,
+	codexEnabledByPath map[string]bool,
+	meta skillMetadataExtended,
+) bool {
+	if platform == skillPlatformCodex {
+		normalized := normalizePathKey(skillPath)
+		if enabled, ok := codexEnabledByPath[normalized]; ok {
+			return enabled
+		}
+		return true
+	}
+	return !meta.DisableModelInvocation
+}
+
+func normalizePathKey(path string) string {
+	cleaned := filepath.Clean(strings.TrimSpace(path))
+	if cleaned == "" {
+		return ""
+	}
+	return strings.ToLower(cleaned)
+}
+
+func (ss *SkillService) loadCodexSkillEnabledOverrides(location string) (map[string]bool, error) {
+	configPath, err := ss.getCodexConfigPath(location)
+	if err != nil {
+		return nil, err
+	}
+
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return map[string]bool{}, nil
+		}
+		return nil, err
+	}
+
+	var raw map[string]any
+	if len(content) > 0 {
+		if err := toml.Unmarshal(content, &raw); err != nil {
+			return nil, fmt.Errorf("解析 Codex config.toml 失败: %w", err)
+		}
+	}
+	if raw == nil {
+		return map[string]bool{}, nil
+	}
+
+	skillsRaw, ok := raw["skills"].(map[string]any)
+	if !ok || skillsRaw == nil {
+		return map[string]bool{}, nil
+	}
+
+	configsRaw, ok := skillsRaw["config"]
+	if !ok {
+		return map[string]bool{}, nil
+	}
+
+	items := normalizeTomlArray(configsRaw)
+	result := make(map[string]bool, len(items))
+	for _, item := range items {
+		entryMap, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		pathValue, ok := entryMap["path"].(string)
+		if !ok || strings.TrimSpace(pathValue) == "" {
+			continue
+		}
+		enabledValue, ok := entryMap["enabled"].(bool)
+		if !ok {
+			continue
+		}
+		result[normalizePathKey(pathValue)] = enabledValue
+	}
+	return result, nil
+}
+
+func (ss *SkillService) getCodexConfigPath(location string) (string, error) {
+	var basePath string
+	switch location {
+	case skillLocationProject:
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("获取工作目录失败: %w", err)
+		}
+		basePath = cwd
+	default:
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("获取用户目录失败: %w", err)
+		}
+		basePath = home
+	}
+	return filepath.Join(basePath, codexSettingsDir, codexConfigFileName), nil
+}
+
+func (ss *SkillService) ToggleSkillEnabled(directory, platform, location string, enabled bool) error {
+	directory = strings.TrimSpace(directory)
+	if directory == "" {
+		return errors.New("skill directory 不能为空")
+	}
+
+	if platform == "" {
+		platform = skillPlatformClaude
+	}
+	if location == "" {
+		location = skillLocationUser
+	}
+
+	if platform != skillPlatformCodex {
+		return ss.toggleSkillLegacy(directory, platform, location, enabled)
+	}
+
+	skillPath, err := ss.getInstalledSkillPath(directory, platform, location)
+	if err != nil {
+		return err
+	}
+
+	configPath, err := ss.getCodexConfigPath(location)
+	if err != nil {
+		return err
+	}
+
+	raw := make(map[string]any)
+	if content, readErr := os.ReadFile(configPath); readErr == nil {
+		if err := toml.Unmarshal(content, &raw); err != nil {
+			return fmt.Errorf("config.toml 解析失败，请检查文件格式: %w", err)
+		}
+	} else if !errors.Is(readErr, os.ErrNotExist) {
+		return readErr
+	}
+	if raw == nil {
+		raw = make(map[string]any)
+	}
+
+	ss.upsertCodexSkillConfig(raw, skillPath, enabled)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		return err
+	}
+
+	css := NewCodexSettingsService("")
+	return css.writeConfigToml(configPath, raw)
+}
+
+func (ss *SkillService) ToggleSkillInjection(directory, platform, location string, injectEnabled bool) error {
+	directory = strings.TrimSpace(directory)
+	if directory == "" {
+		return errors.New("skill directory 不能为空")
+	}
+
+	if platform == "" {
+		platform = skillPlatformClaude
+	}
+	if location == "" {
+		location = skillLocationUser
+	}
+
+	if platform != skillPlatformCodex {
+		return errors.New("当前仅 Codex 平台支持注入开关")
+	}
+
+	installPath, err := ss.getInstallPath(platform, location)
+	if err != nil {
+		return err
+	}
+	metadataPath := filepath.Join(installPath, directory, "agents", "openai.yaml")
+
+	data, err := os.ReadFile(metadataPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			content := buildCodexInjectMetadata(injectEnabled)
+			return AtomicWriteBytes(metadataPath, []byte(content))
+		}
+		return fmt.Errorf("读取 openai.yaml 失败: %w", err)
+	}
+
+	newContent, changed, err := patchNestedYamlBool(
+		string(data),
+		[]string{"policy", "allow_implicit_invocation"},
+		injectEnabled,
+	)
+	if err != nil {
+		return fmt.Errorf("修改 openai.yaml 失败: %w", err)
+	}
+	if !changed {
+		return nil
+	}
+
+	return AtomicWriteBytes(metadataPath, []byte(newContent))
+}
+
+func buildCodexInjectMetadata(injectEnabled bool) string {
+	desired := "false"
+	if injectEnabled {
+		desired = "true"
+	}
+	return "policy:\n  allow_implicit_invocation: " + desired + "\n"
+}
+
+func (ss *SkillService) ToggleSkill(directory, platform, location string, enabled bool) error {
+	return ss.ToggleSkillEnabled(directory, platform, location, enabled)
+}
+
+func (ss *SkillService) toggleSkillLegacy(directory, platform, location string, enabled bool) error {
+	installPath, err := ss.getInstallPath(platform, location)
+	if err != nil {
+		return err
+	}
+
+	skillMDPath := filepath.Join(installPath, directory, "SKILL.md")
+	data, err := os.ReadFile(skillMDPath)
+	if err != nil {
+		return fmt.Errorf("读取 SKILL.md 失败: %w", err)
+	}
+
+	newContent, changed, err := patchSkillFrontMatterBool(
+		string(data),
+		"disable-model-invocation",
+		!enabled,
+	)
+	if err != nil {
+		return fmt.Errorf("修改 SKILL.md 失败: %w", err)
+	}
+	if !changed {
+		return nil
+	}
+
+	return AtomicWriteBytes(skillMDPath, []byte(newContent))
+}
+
+func (ss *SkillService) getInstalledSkillPath(directory, platform, location string) (string, error) {
+	installPath, err := ss.getInstallPath(platform, location)
+	if err != nil {
+		return "", err
+	}
+	skillPath := filepath.Join(installPath, directory)
+	if _, err := os.Stat(filepath.Join(skillPath, "SKILL.md")); err != nil {
+		return "", fmt.Errorf("未找到技能 %s: %w", directory, err)
+	}
+	return skillPath, nil
+}
+
+func (ss *SkillService) upsertCodexSkillConfig(raw map[string]any, skillPath string, enabled bool) {
+	skillsTable, ok := raw["skills"].(map[string]any)
+	if !ok || skillsTable == nil {
+		skillsTable = make(map[string]any)
+		raw["skills"] = skillsTable
+	}
+
+	configList := normalizeTomlArray(skillsTable["config"])
+
+	normalizedPath := normalizePathKey(skillPath)
+	filtered := make([]any, 0, len(configList))
+	for _, item := range configList {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			filtered = append(filtered, item)
+			continue
+		}
+		pathValue, _ := entry["path"].(string)
+		if normalizePathKey(pathValue) == normalizedPath {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+
+	if !enabled {
+		filtered = append(filtered, map[string]any{
+			"path":    skillPath,
+			"enabled": false,
+		})
+	}
+
+	if len(filtered) == 0 {
+		delete(skillsTable, "config")
+	} else {
+		skillsTable["config"] = filtered
+	}
+	if len(skillsTable) == 0 {
+		delete(raw, "skills")
+	}
+}
+
+func normalizeTomlArray(value any) []any {
+	switch typed := value.(type) {
+	case nil:
+		return []any{}
+	case []any:
+		return append([]any(nil), typed...)
+	case []map[string]any:
+		result := make([]any, 0, len(typed))
+		for _, item := range typed {
+			result = append(result, item)
+		}
+		return result
+	default:
+		return []any{}
+	}
 }
 
 // ListSkills aggregates skills from configured repositories and the local install directory.
@@ -507,44 +873,6 @@ func (ss *SkillService) UninstallSkillEx(directory, platform, location string) e
 	return ss.saveStoreLocked(store)
 }
 
-// ToggleSkill 切换技能的启用状态
-// 通过修改 SKILL.md 的 disable-model-invocation 字段实现
-func (ss *SkillService) ToggleSkill(directory, platform, location string, enabled bool) error {
-	if directory == "" {
-		return errors.New("skill directory 不能为空")
-	}
-
-	installPath, err := ss.getInstallPath(platform, location)
-	if err != nil {
-		return err
-	}
-
-	skillMDPath := filepath.Join(installPath, directory, "SKILL.md")
-
-	// 读取文件
-	data, err := os.ReadFile(skillMDPath)
-	if err != nil {
-		return fmt.Errorf("读取 SKILL.md 失败: %w", err)
-	}
-
-	// 使用最小文本补丁修改
-	newContent, changed, err := patchSkillFrontMatterBool(
-		string(data),
-		"disable-model-invocation",
-		!enabled, // enabled=true → disable-model-invocation=false
-	)
-	if err != nil {
-		return fmt.Errorf("修改 SKILL.md 失败: %w", err)
-	}
-
-	if !changed {
-		return nil // 无需修改
-	}
-
-	// 原子写入
-	return AtomicWriteBytes(skillMDPath, []byte(newContent))
-}
-
 // splitFrontMatter 使用行首匹配 ^---\s*$ 来分割 front matter
 // 返回 (prefix, frontMatterLines, body, error)
 // prefix: 开始 --- 之前的行
@@ -699,6 +1027,140 @@ func patchSkillFrontMatterBool(markdown, key string, desired bool) (string, bool
 	}
 
 	return result, modified, nil
+}
+
+func patchNestedYamlBool(content string, keyPath []string, desired bool) (string, bool, error) {
+	if len(keyPath) != 2 {
+		return "", false, errors.New("仅支持两级嵌套 key")
+	}
+
+	hasBOM := false
+	if strings.HasPrefix(content, "\ufeff") {
+		hasBOM = true
+		content = strings.TrimPrefix(content, "\ufeff")
+	}
+
+	hasCRLF := strings.Contains(content, "\r\n")
+	normalized := strings.ReplaceAll(content, "\r\n", "\n")
+	lines := strings.Split(normalized, "\n")
+
+	parentKey := keyPath[0]
+	childKey := keyPath[1]
+	desiredStr := "false"
+	if desired {
+		desiredStr = "true"
+	}
+
+	parentIndex := -1
+	parentIndent := 0
+	childFound := false
+	modified := false
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+
+		indentLen := len(line) - len(strings.TrimLeft(line, " \t"))
+		if parentIndex == -1 {
+			if indentLen == 0 && strings.HasPrefix(trimmed, parentKey+":") {
+				parentIndex = i
+				parentIndent = indentLen
+			}
+			continue
+		}
+
+		if indentLen <= parentIndent {
+			break
+		}
+
+		expectedPrefix := childKey + ":"
+		if indentLen == parentIndent+2 && strings.HasPrefix(strings.TrimSpace(line), expectedPrefix) {
+			childFound = true
+			currentTrimmed := strings.TrimSpace(line)
+			colonIdx := strings.Index(currentTrimmed, ":")
+			valuePart := strings.TrimSpace(currentTrimmed[colonIdx+1:])
+			comment := ""
+			hashIdx := strings.Index(valuePart, "#")
+			if hashIdx != -1 {
+				comment = valuePart[hashIdx:]
+				valuePart = strings.TrimSpace(valuePart[:hashIdx])
+			}
+			currentBool := strings.EqualFold(valuePart, "true")
+			if currentBool == desired {
+				break
+			}
+
+			newLine := strings.Repeat(" ", parentIndent+2) + childKey + ": " + desiredStr
+			if comment != "" {
+				newLine += " " + comment
+			}
+			lines[i] = newLine
+			modified = true
+			break
+		}
+	}
+
+	if parentIndex == -1 {
+		insertBlock := []string{
+			parentKey + ":",
+			"  " + childKey + ": " + desiredStr,
+		}
+		insertIdx := len(lines)
+		for insertIdx > 0 && strings.TrimSpace(lines[insertIdx-1]) == "" {
+			insertIdx--
+		}
+		newLines := make([]string, 0, len(lines)+len(insertBlock)+1)
+		newLines = append(newLines, lines[:insertIdx]...)
+		if insertIdx > 0 && strings.TrimSpace(lines[insertIdx-1]) != "" {
+			newLines = append(newLines, "")
+		}
+		newLines = append(newLines, insertBlock...)
+		newLines = append(newLines, lines[insertIdx:]...)
+		lines = newLines
+		modified = true
+	} else if !childFound {
+		insertIdx := parentIndex + 1
+		for insertIdx < len(lines) {
+			trimmed := strings.TrimSpace(lines[insertIdx])
+			if trimmed == "" {
+				insertIdx++
+				continue
+			}
+			indentLen := len(lines[insertIdx]) - len(strings.TrimLeft(lines[insertIdx], " \t"))
+			if indentLen <= parentIndent {
+				break
+			}
+			insertIdx++
+		}
+
+		newLine := strings.Repeat(" ", parentIndent+2) + childKey + ": " + desiredStr
+		newLines := make([]string, 0, len(lines)+1)
+		newLines = append(newLines, lines[:insertIdx]...)
+		newLines = append(newLines, newLine)
+		newLines = append(newLines, lines[insertIdx:]...)
+		lines = newLines
+		modified = true
+	}
+
+	result := strings.Join(lines, "\n")
+	if !modified {
+		return restoreTextFormatting(result, hasCRLF, hasBOM), false, nil
+	}
+
+	return restoreTextFormatting(result, hasCRLF, hasBOM), true, nil
+}
+
+func restoreTextFormatting(result string, hasCRLF, hasBOM bool) string {
+	if hasCRLF {
+		result = strings.ReplaceAll(result, "\r\n", "\n")
+		result = strings.ReplaceAll(result, "\n", "\r\n")
+	}
+	if hasBOM {
+		result = "\ufeff" + result
+	}
+	return result
 }
 
 // GetSkillContent 获取技能的 SKILL.md 内容

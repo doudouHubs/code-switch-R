@@ -80,6 +80,7 @@ const navItems: NavItem[] = [
   { path: '/availability', icon: 'activity', labelKey: 'sidebar.availability', isNew: true },
   { path: '/speedtest', icon: 'zap', labelKey: 'sidebar.speedtest', isNew: true },
   { path: '/env', icon: 'search', labelKey: 'sidebar.env', isNew: true },
+  { path: '/projects', icon: 'grid', labelKey: 'sidebar.projects', isNew: true },
   { path: '/logs', icon: 'bar-chart', labelKey: 'sidebar.logs' },
   { path: '/console', icon: 'terminal', labelKey: 'sidebar.console' },
   { path: '/settings', icon: 'settings', labelKey: 'sidebar.settings' },
@@ -155,6 +156,14 @@ const navigate = (path: string) => {
         <svg v-else-if="item.icon === 'search'" class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="11" cy="11" r="8"></circle>
           <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+
+        <!-- Grid -->
+        <svg v-else-if="item.icon === 'grid'" class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="7" height="7" rx="1.5"></rect>
+          <rect x="14" y="3" width="7" height="7" rx="1.5"></rect>
+          <rect x="3" y="14" width="7" height="7" rx="1.5"></rect>
+          <rect x="14" y="14" width="7" height="7" rx="1.5"></rect>
         </svg>
 
         <!-- Bar Chart -->

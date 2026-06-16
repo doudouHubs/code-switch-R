@@ -1,0 +1,415 @@
+.project-manager-page {
+  min-height: 100%;
+  /* 这里把页面横向 gutter 收窄，解决头部左侧第一眼就能看到的空白过大问题。 */
+  padding: 24px 18px 28px;
+  background:
+    radial-gradient(circle at top right, rgba(255, 181, 138, 0.35), transparent 28%),
+    radial-gradient(circle at top left, rgba(120, 179, 255, 0.24), transparent 24%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(245, 247, 251, 0.95));
+}
+
+.dark .project-manager-page {
+  background:
+    radial-gradient(circle at top right, rgba(240, 137, 65, 0.18), transparent 28%),
+    radial-gradient(circle at top left, rgba(76, 128, 214, 0.22), transparent 24%),
+    linear-gradient(180deg, rgba(12, 16, 24, 0.98), rgba(18, 24, 35, 1));
+}
+
+.project-manager-page .toolbar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 16px 24px;
+  margin-top: 0;
+}
+
+.project-manager-page .mode-switch {
+  display: inline-flex;
+  gap: 10px;
+  padding: 0;
+  border-radius: 999px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  justify-self: start;
+  width: auto;
+  max-width: 100%;
+  align-items: center;
+  flex-wrap: nowrap;
+  overflow: visible;
+  white-space: nowrap;
+  margin: 0;
+}
+
+.dark .project-manager-page .mode-switch {
+  background: transparent;
+  border: none;
+}
+
+.project-manager-page .mode-pill {
+  position: relative;
+  min-width: max-content;
+  min-height: 42px;
+  padding: 0 20px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--mac-text-secondary);
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.2s ease;
+  isolation: isolate;
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.project-manager-page .mode-pill::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: transparent;
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+  z-index: -1;
+}
+
+.project-manager-page .mode-pill.active {
+  color: var(--mac-text);
+}
+
+.project-manager-page .mode-pill.active::before {
+  background: rgba(10, 132, 255, 0.08);
+  background: color-mix(in srgb, var(--mac-accent) 6%, var(--mac-surface-strong));
+  box-shadow: inset 0 0 0 1px rgba(10, 132, 255, 0.25);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mac-accent) 25%, transparent);
+}
+
+.project-manager-page .toolbar-actions {
+  display: grid;
+  grid-template-columns: minmax(280px, 460px) auto;
+  justify-content: end;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+}
+
+.project-manager-page .search-shell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(22, 34, 56, 0.08);
+}
+
+.dark .project-manager-page .search-shell {
+  background: rgba(17, 23, 34, 0.85);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.project-manager-page .search-shell svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  color: var(--mac-text-secondary);
+}
+
+.project-manager-page .search-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+.project-manager-page .search-input:focus {
+  box-shadow: none;
+}
+
+.project-manager-page .clear-btn {
+  border: none;
+  background: transparent;
+  color: var(--mac-text-secondary);
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+.project-manager-page .project-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 22px;
+  padding: 16px 18px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(17, 28, 47, 0.08);
+}
+
+.dark .project-manager-page .project-breadcrumb {
+  background: rgba(18, 25, 38, 0.86);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.project-manager-page .back-chip {
+  border: none;
+  padding: 10px 14px;
+  border-radius: 999px;
+  background: rgba(41, 98, 255, 0.12);
+  color: #2563eb;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.project-manager-page .breadcrumb-copy h2 {
+  margin: 0;
+  font-size: 1.18rem;
+  color: var(--mac-text);
+}
+
+.project-manager-page .breadcrumb-copy p {
+  margin: 6px 0 0;
+  font-size: 0.86rem;
+  color: var(--mac-text-secondary);
+}
+
+.project-manager-page .state-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  min-height: 320px;
+  margin-top: 20px;
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px dashed rgba(17, 28, 47, 0.12);
+  color: var(--mac-text-secondary);
+}
+
+.dark .project-manager-page .state-panel {
+  background: rgba(18, 25, 38, 0.82);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.project-manager-page .state-orb {
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  border: 3px solid rgba(37, 99, 235, 0.18);
+  border-top-color: #3b82f6;
+  animation: pm-spin 1s linear infinite;
+}
+
+.project-manager-page .project-grid,
+.project-manager-page .session-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 18px;
+  margin-top: 20px;
+}
+
+.project-manager-page .project-card,
+.project-manager-page .session-card {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 22px;
+  border-radius: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.52);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(246, 248, 253, 0.82));
+  box-shadow: 0 18px 38px rgba(32, 45, 69, 0.12);
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  animation: pm-card-rise 0.32s ease both;
+}
+
+.dark .project-manager-page .project-card,
+.dark .project-manager-page .session-card {
+  border-color: rgba(255, 255, 255, 0.06);
+  background:
+    linear-gradient(180deg, rgba(20, 27, 40, 0.94), rgba(14, 18, 28, 0.88));
+  box-shadow: 0 20px 42px rgba(0, 0, 0, 0.28);
+}
+
+.project-manager-page .project-card:hover,
+.project-manager-page .session-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 26px 48px rgba(32, 45, 69, 0.18);
+  border-color: rgba(47, 123, 248, 0.35);
+}
+
+.project-manager-page .card-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.project-manager-page .card-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(47, 123, 248, 0.1);
+  color: #2563eb;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.project-manager-page .card-time {
+  font-size: 0.76rem;
+  color: var(--mac-text-secondary);
+}
+
+.project-manager-page .card-title {
+  margin: 0;
+  font-size: 1.22rem;
+  line-height: 1.18;
+  color: var(--mac-text);
+}
+
+.project-manager-page .card-path,
+.project-manager-page .card-summary {
+  margin: 0;
+  line-height: 1.6;
+  color: var(--mac-text-secondary);
+  word-break: break-word;
+}
+
+.project-manager-page .card-path.small {
+  font-size: 0.82rem;
+}
+
+.project-manager-page .card-summary {
+  flex: 1;
+  min-height: 74px;
+  color: var(--mac-text);
+}
+
+.project-manager-page .card-metrics {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  font-size: 0.84rem;
+  color: var(--mac-text-secondary);
+}
+
+.project-manager-page .project-card .card-metrics {
+  /* 项目卡片操作区固定贴底，避免标题长短不同把按钮顶得忽上忽下。 */
+  margin-top: auto;
+}
+
+.project-manager-page .metric-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.project-manager-page .project-card .metric-actions {
+  /* 这里强制单行是为了让三个操作按钮形成稳定的底部操作带，不跟会话卡片共用换行策略。 */
+  flex-wrap: nowrap;
+}
+
+.project-manager-page .project-card .mini-action {
+  /* 项目卡片最小宽度有限，略收按钮横向留白，避免英文文案时挤爆换行。 */
+  padding-inline: 9px;
+}
+
+.project-manager-page .mini-action {
+  border: none;
+  padding: 8px 10px;
+  border-radius: 999px;
+  background: rgba(12, 22, 40, 0.06);
+  color: var(--mac-text);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.dark .project-manager-page .mini-action {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.project-manager-page .mini-action.accent {
+  background: rgba(37, 99, 235, 0.12);
+  color: #2563eb;
+}
+
+.project-manager-page .rename-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.project-manager-page .rename-hint {
+  margin: 0;
+  color: var(--mac-text-secondary);
+  line-height: 1.6;
+}
+
+.project-manager-page .rename-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+@keyframes pm-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pm-card-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 920px) {
+  .project-manager-page {
+    padding: 16px 14px 18px;
+  }
+
+  .project-manager-page .toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .project-manager-page .toolbar-actions {
+    grid-template-columns: minmax(0, 1fr) auto;
+    justify-content: stretch;
+  }
+
+  .project-manager-page .search-shell {
+    min-width: 100%;
+  }
+}
+
+@media (max-width: 640px) {
+  .project-manager-page .toolbar-actions {
+    grid-template-columns: 1fr;
+  }
+}
