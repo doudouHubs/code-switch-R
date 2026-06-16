@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"reflect"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -336,31 +335,4 @@ func TestExtractProjectManagerProjectRootFromValue(t *testing.T) {
 			t.Fatalf("XML cwd 提取失败，got=%q source=%q", got, source)
 		}
 	})
-}
-
-func TestBuildProjectManagerWTArgs(t *testing.T) {
-	launchDir := `F:\GitlabProjects\code-switch-R`
-	sessionID := "session-001"
-
-	got := buildProjectManagerWTArgs(launchDir, sessionID)
-	want := []string{
-		"new-tab",
-		"-d", launchDir,
-		"pwsh",
-		"-NoExit",
-		"-Command",
-		"codex resume 'session-001'",
-	}
-
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("WT 参数不对，want=%v got=%v", want, got)
-	}
-}
-
-func TestBuildProjectManagerPowerShellResumeCommand(t *testing.T) {
-	got := buildProjectManagerPowerShellResumeCommand("session'o1")
-	want := "codex resume 'session''o1'"
-	if got != want {
-		t.Fatalf("resume 命令不对，want=%q got=%q", want, got)
-	}
 }

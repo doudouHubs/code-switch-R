@@ -1,6 +1,13 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
+import ProjectManagerCardMenu from './ProjectManagerCardMenu.vue'
 import type { SessionSummary } from '../../services/projectManager'
+
+type ProjectManagerCardMenuAction = {
+  key: string
+  label: string
+  accent?: boolean
+}
 
 defineProps<{
   sessions: SessionSummary[]
@@ -15,6 +22,20 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+
+const resolveSessionActions = (session: SessionSummary): ProjectManagerCardMenuAction[] => [
+  {
+    key: `rename:${session.id}`,
+    label: t('components.projectManager.card.rename'),
+  },
+]
+
+const handleSessionAction = (session: SessionSummary, actionKey: string) => {
+  if (actionKey.startsWith('rename:')) {
+    emit('rename', session)
+    return
+  }
+}
 </script>
 
 <template>
@@ -26,23 +47,27 @@ const { t } = useI18n()
       @click="emit('open-session', session)"
     >
       <div class="card-topline">
-        <span class="card-tag">
-          {{ showProjectNameTag ? session.project_name : t('components.projectManager.card.sessionTag') }}
-        </span>
-        <span class="card-time">{{ formatUpdatedAt(session.updated_at) }}</span>
+        <h3 class="card-title">{{ session.display_name }}</h3>
+        <ProjectManagerCardMenu
+          :label="t('components.projectManager.card.moreActions')"
+          :actions="resolveSessionActions(session)"
+          @select="handleSessionAction(session, $event)"
+        />
       </div>
-      <h3 class="card-title">{{ session.display_name }}</h3>
-      <p class="card-summary">{{ resolveSummary(session) }}</p>
-      <p class="card-path small">{{ showProjectNameTag ? session.project_path : (session.cwd || session.project_path) }}</p>
-      <div class="card-metrics" @click.stop>
-        <div class="metric-actions">
-          <button class="mini-action" type="button" @click="emit('rename', session)">
-            {{ t('components.projectManager.card.rename') }}
-          </button>
-          <button class="mini-action accent" type="button" @click="emit('open-session', session)">
-            {{ t('components.projectManager.card.openSession') }}
-          </button>
-        </div>
+      <div class="card-copy">
+        <p v-if="showProjectNameTag" class="card-eyebrow">{{ session.project_name }}</p>
+        <p class="card-summary">{{ resolveSummary(session) }}</p>
+        <p class="card-path small">{{ showProjectNameTag ? session.project_path : (session.cwd || session.project_path) }}</p>
+      </div>
+      <div class="card-footer">
+        <span class="card-time">{{ formatUpdatedAt(session.updated_at) }}</span>
+        <button
+          class="card-footer-action"
+          type="button"
+          @click.stop="emit('open-session', session)"
+        >
+          {{ t('components.projectManager.card.openSession') }}
+        </button>
       </div>
     </article>
   </section>

@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
+import ProjectManagerCardMenu from './ProjectManagerCardMenu.vue'
 import type { ProjectSummary } from '../../services/projectManager'
+
+type ProjectManagerCardMenuAction = {
+  key: string
+  label: string
+}
 
 defineProps<{
   projects: ProjectSummary[]
@@ -15,6 +21,29 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+
+const resolveProjectActions = (project: ProjectSummary): ProjectManagerCardMenuAction[] => [
+  {
+    key: `rename:${project.id}`,
+    label: t('components.projectManager.card.rename'),
+  },
+  {
+    key: `view-path:${project.id}`,
+    label: t('components.projectManager.card.pathDetail'),
+  },
+]
+
+const handleProjectAction = (project: ProjectSummary, actionKey: string) => {
+  if (actionKey.startsWith('rename:')) {
+    emit('rename', project)
+    return
+  }
+  if (actionKey.startsWith('open-folder:')) {
+    emit('open-folder', project)
+    return
+  }
+  emit('view-path', project)
+}
 </script>
 
 <template>
@@ -26,23 +55,25 @@ const { t } = useI18n()
       @click="emit('enter', project)"
     >
       <div class="card-topline">
-        <span class="card-tag">{{ t('components.projectManager.card.projectTag') }}</span>
-        <span class="card-time">{{ formatUpdatedAt(project.updated_at) }}</span>
+        <h3 class="card-title">{{ project.display_name }}</h3>
+        <ProjectManagerCardMenu
+          :label="t('components.projectManager.card.moreActions')"
+          :actions="resolveProjectActions(project)"
+          @select="handleProjectAction(project, $event)"
+        />
       </div>
-      <h3 class="card-title">{{ project.display_name }}</h3>
-      <p class="card-path">{{ project.path }}</p>
-      <div class="card-metrics">
-        <div class="metric-actions" @click.stop>
-          <button class="mini-action" type="button" @click="emit('rename', project)">
-            {{ t('components.projectManager.card.rename') }}
-          </button>
-          <button class="mini-action" type="button" @click="emit('open-folder', project)">
-            {{ t('components.projectManager.card.openFolder') }}
-          </button>
-          <button class="mini-action" type="button" @click="emit('view-path', project)">
-            {{ t('components.projectManager.card.pathDetail') }}
-          </button>
-        </div>
+      <div class="card-copy">
+        <p class="card-path">{{ project.path }}</p>
+      </div>
+      <div class="card-footer">
+        <span class="card-time">{{ formatUpdatedAt(project.updated_at) }}</span>
+        <button
+          class="card-footer-action"
+          type="button"
+          @click.stop="emit('open-folder', project)"
+        >
+          {{ t('components.projectManager.card.openFolder') }}
+        </button>
       </div>
     </article>
   </section>

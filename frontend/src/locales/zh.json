@@ -506,9 +506,8 @@
         "emptySessions": "这里暂时没有会话记录。"
       },
       "card": {
-        "projectTag": "Project",
-        "sessionTag": "Session",
         "sessionCount": "{count} 个会话",
+        "moreActions": "更多操作",
         "rename": "重命名",
         "openFolder": "打开目录",
         "openSession": "打开终端",

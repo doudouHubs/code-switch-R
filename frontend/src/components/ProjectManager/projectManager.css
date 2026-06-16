@@ -220,7 +220,7 @@
 .project-manager-page .project-card,
 .project-manager-page .session-card {
   position: relative;
-  overflow: hidden;
+  overflow: visible;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -252,34 +252,40 @@
 
 .project-manager-page .card-topline {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 10px;
+  gap: 12px;
 }
 
-.project-manager-page .card-tag {
-  display: inline-flex;
-  align-items: center;
-  padding: 6px 10px;
-  border-radius: 999px;
-  background: rgba(47, 123, 248, 0.1);
-  color: #2563eb;
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+.project-manager-page .card-copy {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .project-manager-page .card-time {
-  font-size: 0.76rem;
+  font-size: 0.74rem;
+  line-height: 1;
   color: var(--mac-text-secondary);
 }
 
 .project-manager-page .card-title {
   margin: 0;
+  flex: 1;
+  min-width: 0;
   font-size: 1.22rem;
   line-height: 1.18;
   color: var(--mac-text);
+}
+
+.project-manager-page .card-eyebrow {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  font-weight: 600;
+  color: var(--mac-text-secondary);
 }
 
 .project-manager-page .card-path,
@@ -300,55 +306,143 @@
   color: var(--mac-text);
 }
 
-.project-manager-page .card-metrics {
+.project-manager-page .card-footer {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 12px;
-  font-size: 0.84rem;
-  color: var(--mac-text-secondary);
-}
-
-.project-manager-page .project-card .card-metrics {
-  /* 项目卡片操作区固定贴底，避免标题长短不同把按钮顶得忽上忽下。 */
+  justify-content: space-between;
   margin-top: auto;
+  gap: 14px;
 }
 
-.project-manager-page .metric-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  justify-content: flex-end;
+.project-manager-page .card-action-menu {
+  position: relative;
+  z-index: 3;
+  margin-left: auto;
+  margin-right: -2px;
+  flex: 0 0 auto;
 }
 
-.project-manager-page .project-card .metric-actions {
-  /* 这里强制单行是为了让三个操作按钮形成稳定的底部操作带，不跟会话卡片共用换行策略。 */
-  flex-wrap: nowrap;
-}
-
-.project-manager-page .project-card .mini-action {
-  /* 项目卡片最小宽度有限，略收按钮横向留白，避免英文文案时挤爆换行。 */
-  padding-inline: 9px;
-}
-
-.project-manager-page .mini-action {
+.project-manager-page .card-menu-trigger {
   border: none;
-  padding: 8px 10px;
-  border-radius: 999px;
-  background: rgba(12, 22, 40, 0.06);
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--mac-text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, transform 0.2s ease;
+}
+
+.project-manager-page .card-menu-trigger:hover {
+  background: transparent;
+  color: #2563eb;
+  transform: translateY(-1px);
+}
+
+.project-manager-page .card-menu-trigger:focus,
+.project-manager-page .card-menu-trigger:focus-visible,
+.project-manager-page .card-menu-trigger:active {
+  background: transparent;
+}
+
+.project-manager-page .card-menu-trigger svg {
+  width: 18px;
+  height: 18px;
+}
+
+.dark .project-manager-page .card-menu-trigger {
+  background: transparent;
+}
+
+.project-manager-page .card-menu-popover {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  min-width: 148px;
+  padding: 8px;
+  border-radius: 18px;
+  border: 1px solid rgba(17, 28, 47, 0.08);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 20px 40px rgba(24, 39, 63, 0.18);
+  display: grid;
+  gap: 4px;
+  backdrop-filter: blur(18px);
+}
+
+.dark .project-manager-page .card-menu-popover {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(18, 25, 38, 0.95);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.34);
+}
+
+.project-manager-page .card-menu-item {
+  border: none;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: transparent;
   color: var(--mac-text);
-  font-size: 0.78rem;
+  text-align: left;
+  font-size: 0.82rem;
   font-weight: 600;
   cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease;
 }
 
-.dark .project-manager-page .mini-action {
+.project-manager-page .card-menu-item.active {
+  background: rgba(17, 28, 47, 0.06);
+}
+
+.dark .project-manager-page .card-menu-item.active {
   background: rgba(255, 255, 255, 0.08);
 }
 
-.project-manager-page .mini-action.accent {
+.project-manager-page .card-menu-item.accent {
+  color: #2563eb;
+}
+
+.project-manager-page .card-menu-enter,
+.project-manager-page .card-menu-leave {
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.project-manager-page .card-menu-enter-from,
+.project-manager-page .card-menu-leave-to {
+  opacity: 0;
+  transform: translateY(-6px) scale(0.97);
+}
+
+.project-manager-page .card-menu-enter-to,
+.project-manager-page .card-menu-leave-from {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.project-manager-page .card-footer-action {
+  border: none;
+  padding: 8px 12px;
+  border-radius: 999px;
   background: rgba(37, 99, 235, 0.12);
   color: #2563eb;
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease;
+}
+
+.project-manager-page .card-footer-action:hover {
+  background: rgba(37, 99, 235, 0.18);
+  transform: translateY(-1px);
+}
+
+.dark .project-manager-page .card-footer-action {
+  background: rgba(76, 128, 214, 0.2);
+  color: #7db5ff;
 }
 
 .project-manager-page .rename-body {
