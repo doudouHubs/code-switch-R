@@ -258,6 +258,23 @@
   transform: none;
 }
 
+.project-manager-page .project-card.is-deleting,
+.project-manager-page .session-card.is-deleting {
+  cursor: progress;
+  opacity: 0.62;
+  filter: saturate(0.72) brightness(0.9);
+  pointer-events: none;
+  transform: none;
+  box-shadow: 0 12px 24px rgba(32, 45, 69, 0.1);
+}
+
+.project-manager-page .project-card.is-deleting:hover,
+.project-manager-page .session-card.is-deleting:hover {
+  transform: none;
+  box-shadow: 0 12px 24px rgba(32, 45, 69, 0.1);
+  border-color: rgba(17, 28, 47, 0.08);
+}
+
 .project-manager-page .card-topline {
   display: flex;
   align-items: flex-start;
@@ -312,6 +329,10 @@
   flex: 1;
   min-height: 74px;
   color: var(--mac-text);
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
 }
 
 .project-manager-page .card-footer {
@@ -360,6 +381,19 @@
 .project-manager-page .card-menu-trigger svg {
   width: 18px;
   height: 18px;
+}
+
+.project-manager-page .card-menu-trigger.is-loading {
+  cursor: progress;
+}
+
+.project-manager-page .card-menu-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  animation: pm-spin 0.72s linear infinite;
 }
 
 .dark .project-manager-page .card-menu-trigger {

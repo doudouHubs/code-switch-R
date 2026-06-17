@@ -11,6 +11,8 @@ interface ProjectManagerCardMenuAction {
 defineProps<{
   label: string
   actions: ProjectManagerCardMenuAction[]
+  loading?: boolean
+  disabled?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -20,8 +22,13 @@ const emit = defineEmits<{
 
 <template>
   <Menu as="div" class="card-action-menu" @click.stop>
-    <MenuButton class="card-menu-trigger" type="button" :aria-label="label" :title="label">
-      <svg viewBox="0 0 24 24" aria-hidden="true">
+    <MenuButton class="card-menu-trigger" :class="{ 'is-loading': loading }" type="button" :aria-label="label" :title="label" :disabled="disabled || loading">
+      <span
+        v-if="loading"
+        class="card-menu-spinner"
+        aria-hidden="true"
+      ></span>
+      <svg v-else viewBox="0 0 24 24" aria-hidden="true">
         <circle cx="12" cy="5" r="1.8" fill="currentColor" />
         <circle cx="12" cy="12" r="1.8" fill="currentColor" />
         <circle cx="12" cy="19" r="1.8" fill="currentColor" />
@@ -36,7 +43,7 @@ const emit = defineEmits<{
       leave-from-class="card-menu-leave-from"
       leave-to-class="card-menu-leave-to"
     >
-      <MenuItems class="card-menu-popover">
+      <MenuItems v-if="!loading" class="card-menu-popover">
         <MenuItem
           v-for="action in actions"
           :key="action.key"

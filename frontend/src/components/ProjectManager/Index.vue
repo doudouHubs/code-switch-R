@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { Dialogs } from '@wailsio/runtime'
 import { useI18n } from 'vue-i18n'
 import BaseButton from '../common/BaseButton.vue'
 import BaseModal from '../common/BaseModal.vue'
@@ -34,8 +33,9 @@ const router = useRouter()
 const loading = ref(false)
 const refreshing = ref(false)
 const renameSaving = ref(false)
-const deleting = ref(false)
 const openingSessionIds = ref<string[]>([])
+const deletingProjectIds = ref<string[]>([])
+const deletingSessionIds = ref<string[]>([])
 const snapshotProjects = ref<ProjectSummary[]>([])
 const snapshotSessions = ref<SessionSummary[]>([])
 const selectedProjectId = ref('')
@@ -196,6 +196,12 @@ const closeRenameModal = () => {
 }
 
 const openDeleteModal = (type: 'project' | 'session', payload: ProjectSummary | SessionSummary) => {
+  if (type === 'project' && deletingProjectIds.value.includes(payload.id)) {
+    return
+  }
+  if (type === 'session' && deletingSessionIds.value.includes(payload.id)) {
+    return
+  }
   deleteState.targetType = type
   deleteState.targetId = payload.id
   deleteState.targetName = payload.display_name
@@ -206,9 +212,6 @@ const openDeleteModal = (type: 'project' | 'session', payload: ProjectSummary | 
 }
 
 const closeDeleteModal = () => {
-  if (deleting.value) {
-    return
-  }
   deleteState.open = false
 }
 
@@ -242,29 +245,68 @@ const saveRename = async () => {
 }
 
 const confirmDelete = async () => {
-  deleting.value = true
+  const targetType = deleteState.targetType
+  const targetId = deleteState.targetId
+  const targetName = deleteState.targetName
+  const projectTarget = targetType === 'project'
+    ? snapshotProjects.value.find(project => project.id === targetId) ?? null
+    : null
+  const sessionTarget = targetType === 'session'
+    ? snapshotSessions.value.find(session => session.id === targetId) ?? null
+    : null
+
+  deleteState.open = false
+
+  if (targetType === 'project') {
+    if (!projectTarget) {
+      showToast(t('components.projectManager.errors.projectNotFound'), 'error')
+      return
+    }
+    deletingProjectIds.value = [...deletingProjectIds.value, targetId]
+  } else {
+    if (!sessionTarget) {
+      showToast(t('components.projectManager.errors.sessionNotFound'), 'error')
+      return
+    }
+    deletingSessionIds.value = [...deletingSessionIds.value, targetId]
+  }
+
   try {
-    if (deleteState.targetType === 'project') {
-      const target = snapshotProjects.value.find(project => project.id === deleteState.targetId)
-      if (!target) {
-        throw new Error(t('components.projectManager.errors.projectNotFound'))
-      }
-      await deleteProject(target.path)
-      if (selectedProjectId.value === target.id) {
+    if (targetType === 'project' && projectTarget) {
+      await deleteProject(projectTarget.path)
+      snapshotProjects.value = snapshotProjects.value.filter(project => project.id !== projectTarget.id)
+      snapshotSessions.value = snapshotSessions.value.filter(session => session.project_id !== projectTarget.id)
+      if (selectedProjectId.value === projectTarget.id) {
         selectedProjectId.value = ''
       }
       showToast(t('components.projectManager.delete.projectDeleted'), 'success')
-    } else {
-      await deleteSession(deleteState.targetId)
+    } else if (sessionTarget) {
+      await deleteSession(sessionTarget.id)
+      snapshotSessions.value = snapshotSessions.value.filter(session => session.id !== sessionTarget.id)
+      snapshotProjects.value = snapshotProjects.value.map(project => {
+        if (project.id !== sessionTarget.project_id) {
+          return project
+        }
+        return {
+          ...project,
+          session_count: Math.max(0, project.session_count - 1),
+        }
+      })
       showToast(t('components.projectManager.delete.sessionDeleted'), 'success')
     }
-    deleteState.open = false
-    await loadSnapshot(true)
   } catch (error) {
     console.error('failed to delete entity', error)
-    showToast(extractErrorMessage(error), 'error')
+    if (targetType === 'project') {
+      showToast(targetName ? `${targetName}: ${extractErrorMessage(error)}` : extractErrorMessage(error), 'error')
+    } else {
+      showToast(targetName ? `${targetName}: ${extractErrorMessage(error)}` : extractErrorMessage(error), 'error')
+    }
   } finally {
-    deleting.value = false
+    if (targetType === 'project') {
+      deletingProjectIds.value = deletingProjectIds.value.filter(id => id !== targetId)
+    } else {
+      deletingSessionIds.value = deletingSessionIds.value.filter(id => id !== targetId)
+    }
   }
 }
 
@@ -317,16 +359,11 @@ const clearOpeningSession = (sessionID: string) => {
 }
 
 const isSessionOpening = (sessionID: string) => openingSessionIds.value.includes(sessionID)
+const isProjectDeleting = (projectID: string) => deletingProjectIds.value.includes(projectID)
+const isSessionDeleting = (sessionID: string) => deletingSessionIds.value.includes(sessionID)
 
 const resolveSessionSummary = (session: SessionSummary) =>
   session.summary || t('components.projectManager.common.emptySummary')
-
-const viewProjectRawPath = async (project: ProjectSummary) => {
-  await Dialogs.Info({
-    Title: t('components.projectManager.common.path'),
-    Message: project.path,
-  })
-}
 
 onMounted(() => {
   loadSnapshot()
@@ -367,11 +404,10 @@ onBeforeUnmount(() => {
       v-else-if="showProjectGrid"
       :projects="projectCards"
       :format-updated-at="formatUpdatedAt"
+      :is-project-deleting="isProjectDeleting"
       @enter="enterProject"
       @delete="openDeleteModal('project', $event)"
-      @rename="openRenameModal('project', $event)"
       @open-folder="handleOpenProjectFolder"
-      @view-path="viewProjectRawPath"
     />
 
     <ProjectManagerSessionGrid
@@ -381,6 +417,7 @@ onBeforeUnmount(() => {
       :resolve-summary="resolveSessionSummary"
       :show-project-name-tag="activeMode === 'session'"
       :is-session-opening="isSessionOpening"
+      :is-session-deleting="isSessionDeleting"
       @delete="openDeleteModal('session', $event)"
       @rename="openRenameModal('session', $event)"
       @open-session="handleOpenSession"
@@ -415,10 +452,10 @@ onBeforeUnmount(() => {
           <p class="detail-delete-hint">{{ t('components.projectManager.delete.hint') }}</p>
         </div>
         <footer class="form-actions confirm-actions">
-          <BaseButton variant="outline" type="button" :disabled="deleting" @click="closeDeleteModal">
+          <BaseButton variant="outline" type="button" @click="closeDeleteModal">
             {{ t('components.projectManager.rename.cancel') }}
           </BaseButton>
-          <BaseButton variant="danger" type="button" :disabled="deleting" :loading="deleting" @click="confirmDelete">
+          <BaseButton variant="danger" type="button" @click="confirmDelete">
             {{ t('components.projectManager.delete.confirmAction') }}
           </BaseButton>
         </footer>

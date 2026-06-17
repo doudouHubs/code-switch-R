@@ -60,6 +60,7 @@
   },
   "sidebar": {
     "home": "首页",
+    "projects": "项目管理",
     "prompts": "提示词",
     "mcp": "MCP",
     "skill": "技能",
@@ -67,7 +68,6 @@
     "availability": "可用性",
     "speedtest": "测速",
     "env": "环境",
-    "projects": "项目管理",
     "logs": "日志",
     "console": "控制台",
     "settings": "设置"

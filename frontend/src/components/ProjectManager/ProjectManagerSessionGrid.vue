@@ -16,6 +16,7 @@ const props = defineProps<{
   resolveSummary: (session: SessionSummary) => string
   showProjectNameTag: boolean
   isSessionOpening: (sessionId: string) => boolean
+  isSessionDeleting: (sessionId: string) => boolean
 }>()
 
 const emit = defineEmits<{
@@ -51,13 +52,16 @@ const handleSessionAction = (session: SessionSummary, actionKey: string) => {
 }
 
 const emitOpenSession = (session: SessionSummary) => {
-  if (props.isSessionOpening(session.id)) {
+  if (props.isSessionOpening(session.id) || props.isSessionDeleting(session.id)) {
     return
   }
   emit('open-session', session)
 }
 
 const emitOpenDetail = (session: SessionSummary) => {
+  if (props.isSessionDeleting(session.id)) {
+    return
+  }
   emit('open-detail', session)
 }
 </script>
@@ -67,7 +71,7 @@ const emitOpenDetail = (session: SessionSummary) => {
     <article
       v-for="session in sessions"
       :key="session.id"
-      :class="['session-card', { 'is-opening': isSessionOpening(session.id) }]"
+      :class="['session-card', { 'is-opening': isSessionOpening(session.id), 'is-deleting': isSessionDeleting(session.id) }]"
       @click="emitOpenDetail(session)"
     >
       <div class="card-topline">
@@ -75,6 +79,8 @@ const emitOpenDetail = (session: SessionSummary) => {
         <ProjectManagerCardMenu
           :label="t('components.projectManager.card.moreActions')"
           :actions="resolveSessionActions(session)"
+          :loading="isSessionDeleting(session.id)"
+          :disabled="isSessionDeleting(session.id)"
           @select="handleSessionAction(session, $event)"
         />
       </div>
@@ -88,7 +94,7 @@ const emitOpenDetail = (session: SessionSummary) => {
         <button
           :class="['card-footer-action', { 'is-loading': isSessionOpening(session.id) }]"
           type="button"
-          :disabled="isSessionOpening(session.id)"
+          :disabled="isSessionOpening(session.id) || isSessionDeleting(session.id)"
           @click.stop="emitOpenSession(session)"
         >
           <span

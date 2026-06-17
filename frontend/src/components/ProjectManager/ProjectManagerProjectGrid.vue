@@ -13,27 +13,18 @@ type ProjectManagerCardMenuAction = {
 defineProps<{
   projects: ProjectSummary[]
   formatUpdatedAt: (timestamp: number) => string
+  isProjectDeleting: (projectId: string) => boolean
 }>()
 
 const emit = defineEmits<{
   enter: [project: ProjectSummary]
-  rename: [project: ProjectSummary]
   delete: [project: ProjectSummary]
   'open-folder': [project: ProjectSummary]
-  'view-path': [project: ProjectSummary]
 }>()
 
 const { t } = useI18n()
 
 const resolveProjectActions = (project: ProjectSummary): ProjectManagerCardMenuAction[] => [
-  {
-    key: `rename:${project.id}`,
-    label: t('components.projectManager.card.rename'),
-  },
-  {
-    key: `view-path:${project.id}`,
-    label: t('components.projectManager.card.pathDetail'),
-  },
   {
     key: `delete:${project.id}`,
     label: t('components.projectManager.card.deleteProject'),
@@ -42,19 +33,13 @@ const resolveProjectActions = (project: ProjectSummary): ProjectManagerCardMenuA
 ]
 
 const handleProjectAction = (project: ProjectSummary, actionKey: string) => {
-  if (actionKey.startsWith('rename:')) {
-    emit('rename', project)
-    return
-  }
   if (actionKey.startsWith('open-folder:')) {
     emit('open-folder', project)
     return
   }
   if (actionKey.startsWith('delete:')) {
     emit('delete', project)
-    return
   }
-  emit('view-path', project)
 }
 </script>
 
@@ -63,14 +48,16 @@ const handleProjectAction = (project: ProjectSummary, actionKey: string) => {
     <article
       v-for="project in projects"
       :key="project.id"
-      class="project-card"
-      @click="emit('enter', project)"
+      :class="['project-card', { 'is-deleting': isProjectDeleting(project.id) }]"
+      @click="!isProjectDeleting(project.id) && emit('enter', project)"
     >
       <div class="card-topline">
         <h3 class="card-title">{{ project.display_name }}</h3>
         <ProjectManagerCardMenu
           :label="t('components.projectManager.card.moreActions')"
           :actions="resolveProjectActions(project)"
+          :loading="isProjectDeleting(project.id)"
+          :disabled="isProjectDeleting(project.id)"
           @select="handleProjectAction(project, $event)"
         />
       </div>
@@ -82,6 +69,7 @@ const handleProjectAction = (project: ProjectSummary, actionKey: string) => {
         <button
           class="card-footer-action"
           type="button"
+          :disabled="isProjectDeleting(project.id)"
           @click.stop="emit('open-folder', project)"
         >
           {{ t('components.projectManager.card.openFolder') }}
