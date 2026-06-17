@@ -67,8 +67,8 @@ const keywordModel = computed({
           ×
         </button>
       </div>
-      <BaseButton variant="outline" :disabled="refreshing" @click="emit('refresh')">
-        {{ refreshing ? t('components.projectManager.toolbar.refreshing') : t('components.projectManager.toolbar.refresh') }}
+      <BaseButton variant="outline" :disabled="refreshing" :loading="refreshing" @click="emit('refresh')">
+        {{ t('components.projectManager.toolbar.refresh') }}
       </BaseButton>
     </div>
   </section>

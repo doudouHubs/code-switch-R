@@ -2559,6 +2559,88 @@ export class RetryConfig {
     }
 }
 
+export class SessionConversationDetail {
+    "session": SessionSummary;
+    "items": SessionConversationItem[];
+
+    /** Creates a new SessionConversationDetail instance. */
+    constructor($$source: Partial<SessionConversationDetail> = {}) {
+        if (!("session" in $$source)) {
+            this["session"] = (new SessionSummary());
+        }
+        if (!("items" in $$source)) {
+            this["items"] = [];
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new SessionConversationDetail instance from a string or object.
+     */
+    static createFrom($$source: any = {}): SessionConversationDetail {
+        const $$createField0_0 = $$createType22;
+        const $$createField1_0 = $$createType28;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("session" in $$parsedSource) {
+            $$parsedSource["session"] = $$createField0_0($$parsedSource["session"]);
+        }
+        if ("items" in $$parsedSource) {
+            $$parsedSource["items"] = $$createField1_0($$parsedSource["items"]);
+        }
+        return new SessionConversationDetail($$parsedSource as Partial<SessionConversationDetail>);
+    }
+}
+
+export class SessionConversationItem {
+    "id": string;
+    "session_id": string;
+    "role": string;
+    "content": string;
+    "timestamp": number;
+    "reply_for": string;
+    "source_file": string;
+    "source_line": number;
+
+    /** Creates a new SessionConversationItem instance. */
+    constructor($$source: Partial<SessionConversationItem> = {}) {
+        if (!("id" in $$source)) {
+            this["id"] = "";
+        }
+        if (!("session_id" in $$source)) {
+            this["session_id"] = "";
+        }
+        if (!("role" in $$source)) {
+            this["role"] = "";
+        }
+        if (!("content" in $$source)) {
+            this["content"] = "";
+        }
+        if (!("timestamp" in $$source)) {
+            this["timestamp"] = 0;
+        }
+        if (!("reply_for" in $$source)) {
+            this["reply_for"] = "";
+        }
+        if (!("source_file" in $$source)) {
+            this["source_file"] = "";
+        }
+        if (!("source_line" in $$source)) {
+            this["source_line"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new SessionConversationItem instance from a string or object.
+     */
+    static createFrom($$source: any = {}): SessionConversationItem {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new SessionConversationItem($$parsedSource as Partial<SessionConversationItem>);
+    }
+}
+
 export class SessionSummary {
     "id": string;
     "project_id": string;
@@ -3024,3 +3106,5 @@ const $$createType23 = $Create.Array($$createType22);
 const $$createType24 = $Create.Map($Create.Any, $Create.Any);
 const $$createType25 = AvailabilityConfig.createFrom;
 const $$createType26 = $Create.Nullable($$createType25);
+const $$createType27 = SessionConversationItem.createFrom;
+const $$createType28 = $Create.Array($$createType27);

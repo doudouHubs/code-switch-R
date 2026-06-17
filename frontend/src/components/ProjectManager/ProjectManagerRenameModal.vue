@@ -46,8 +46,8 @@ const renameModel = computed({
         <BaseButton variant="outline" @click="emit('close')">
           {{ t('components.projectManager.rename.cancel') }}
         </BaseButton>
-        <BaseButton :disabled="saving" @click="emit('save')">
-          {{ saving ? t('components.projectManager.rename.saving') : t('components.projectManager.rename.save') }}
+        <BaseButton :disabled="saving" :loading="saving" @click="emit('save')">
+          {{ t('components.projectManager.rename.save') }}
         </BaseButton>
       </div>
     </div>

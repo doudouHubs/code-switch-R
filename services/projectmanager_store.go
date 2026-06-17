@@ -24,6 +24,7 @@ type projectManagerSessionMeta struct {
 	DisplayName string `json:"display_name"`
 	Summary     string `json:"summary"`
 	WindowID    string `json:"window_id"`
+	Hidden      bool   `json:"hidden,omitempty"`
 }
 
 type projectManagerStoreService struct {
@@ -71,6 +72,24 @@ func (s *projectManagerStoreService) saveProjectDisplayName(projectPath string, 
 	return s.saveLocked(store)
 }
 
+func (s *projectManagerStoreService) deleteProject(projectPath string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	store, err := s.loadLocked()
+	if err != nil {
+		return err
+	}
+
+	key := normalizeProjectManagerProjectPath(projectPath)
+	if key == "" {
+		return errors.New("项目路径不能为空")
+	}
+
+	delete(store.Projects, key)
+	return s.saveLocked(store)
+}
+
 func (s *projectManagerStoreService) saveSessionMetadata(sessionID string, mutate func(*projectManagerSessionMeta) bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -90,13 +109,51 @@ func (s *projectManagerStoreService) saveSessionMetadata(sessionID string, mutat
 		return nil
 	}
 
-	if meta.DisplayName == "" && meta.Summary == "" && meta.WindowID == "" {
+	if !meta.Hidden && meta.DisplayName == "" && meta.Summary == "" && meta.WindowID == "" {
 		delete(store.Sessions, sessionID)
 	} else {
 		store.Sessions[sessionID] = meta
 	}
 
 	return s.saveLocked(store)
+}
+
+func (s *projectManagerStoreService) deleteSession(sessionID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	store, err := s.loadLocked()
+	if err != nil {
+		return err
+	}
+
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return errors.New("会话 ID 不能为空")
+	}
+
+	delete(store.Sessions, sessionID)
+	return s.saveLocked(store)
+}
+
+func (s *projectManagerStoreService) hideSession(sessionID string) error {
+	return s.saveSessionMetadata(sessionID, func(meta *projectManagerSessionMeta) bool {
+		changed := meta.DisplayName != "" || meta.Summary != "" || meta.WindowID != "" || !meta.Hidden
+		meta.DisplayName = ""
+		meta.Summary = ""
+		meta.WindowID = ""
+		meta.Hidden = true
+		return changed
+	})
+}
+
+func projectManagerSessionIsHidden(store projectManagerStore, sessionID string) bool {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return false
+	}
+	meta, ok := store.Sessions[sessionID]
+	return ok && meta.Hidden
 }
 
 func (s *projectManagerStoreService) loadLocked() (projectManagerStore, error) {

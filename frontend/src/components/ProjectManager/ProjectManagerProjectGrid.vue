@@ -6,6 +6,8 @@ import type { ProjectSummary } from '../../services/projectManager'
 type ProjectManagerCardMenuAction = {
   key: string
   label: string
+  accent?: boolean
+  danger?: boolean
 }
 
 defineProps<{
@@ -16,6 +18,7 @@ defineProps<{
 const emit = defineEmits<{
   enter: [project: ProjectSummary]
   rename: [project: ProjectSummary]
+  delete: [project: ProjectSummary]
   'open-folder': [project: ProjectSummary]
   'view-path': [project: ProjectSummary]
 }>()
@@ -31,6 +34,11 @@ const resolveProjectActions = (project: ProjectSummary): ProjectManagerCardMenuA
     key: `view-path:${project.id}`,
     label: t('components.projectManager.card.pathDetail'),
   },
+  {
+    key: `delete:${project.id}`,
+    label: t('components.projectManager.card.deleteProject'),
+    danger: true,
+  },
 ]
 
 const handleProjectAction = (project: ProjectSummary, actionKey: string) => {
@@ -40,6 +48,10 @@ const handleProjectAction = (project: ProjectSummary, actionKey: string) => {
   }
   if (actionKey.startsWith('open-folder:')) {
     emit('open-folder', project)
+    return
+  }
+  if (actionKey.startsWith('delete:')) {
+    emit('delete', project)
     return
   }
   emit('view-path', project)

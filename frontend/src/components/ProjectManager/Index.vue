@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { Dialogs } from '@wailsio/runtime'
 import { useI18n } from 'vue-i18n'
+import BaseButton from '../common/BaseButton.vue'
+import BaseModal from '../common/BaseModal.vue'
 import ProjectManagerBreadcrumb from './ProjectManagerBreadcrumb.vue'
 import ProjectManagerHeroPanel from './ProjectManagerHeroPanel.vue'
 import ProjectManagerProjectGrid from './ProjectManagerProjectGrid.vue'
@@ -10,6 +13,8 @@ import ProjectManagerSessionGrid from './ProjectManagerSessionGrid.vue'
 import ProjectManagerStatePanel from './ProjectManagerStatePanel.vue'
 import './projectManager.css'
 import {
+  deleteProject,
+  deleteSession,
   fetchProjectManagerSnapshot,
   openProjectFolder,
   openSessionTerminal,
@@ -24,10 +29,12 @@ import { showToast } from '../../utils/toast'
 import type { ProjectManagerRenameTarget, ProjectManagerViewMode } from './types'
 
 const { t, locale } = useI18n()
+const router = useRouter()
 
 const loading = ref(false)
 const refreshing = ref(false)
 const renameSaving = ref(false)
+const deleting = ref(false)
 const openingSessionIds = ref<string[]>([])
 const snapshotProjects = ref<ProjectSummary[]>([])
 const snapshotSessions = ref<SessionSummary[]>([])
@@ -38,6 +45,13 @@ const renameModalOpen = ref(false)
 const renameTargetType = ref<ProjectManagerRenameTarget>('project')
 const renameTargetId = ref('')
 const renameValue = ref('')
+const deleteState = reactive({
+  open: false,
+  targetType: 'project' as 'project' | 'session',
+  targetId: '',
+  targetName: '',
+  sessionCount: 0,
+})
 
 const projectManagerOpenTimeoutMs = 5000
 const openingSessionTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -181,6 +195,23 @@ const closeRenameModal = () => {
   renameModalOpen.value = false
 }
 
+const openDeleteModal = (type: 'project' | 'session', payload: ProjectSummary | SessionSummary) => {
+  deleteState.targetType = type
+  deleteState.targetId = payload.id
+  deleteState.targetName = payload.display_name
+  deleteState.sessionCount = type === 'project'
+    ? snapshotSessions.value.filter(session => session.project_id === payload.id).length
+    : 0
+  deleteState.open = true
+}
+
+const closeDeleteModal = () => {
+  if (deleting.value) {
+    return
+  }
+  deleteState.open = false
+}
+
 const saveRename = async () => {
   const value = renameValue.value.trim()
   if (!value) {
@@ -207,6 +238,33 @@ const saveRename = async () => {
     showToast(extractErrorMessage(error), 'error')
   } finally {
     renameSaving.value = false
+  }
+}
+
+const confirmDelete = async () => {
+  deleting.value = true
+  try {
+    if (deleteState.targetType === 'project') {
+      const target = snapshotProjects.value.find(project => project.id === deleteState.targetId)
+      if (!target) {
+        throw new Error(t('components.projectManager.errors.projectNotFound'))
+      }
+      await deleteProject(target.path)
+      if (selectedProjectId.value === target.id) {
+        selectedProjectId.value = ''
+      }
+      showToast(t('components.projectManager.delete.projectDeleted'), 'success')
+    } else {
+      await deleteSession(deleteState.targetId)
+      showToast(t('components.projectManager.delete.sessionDeleted'), 'success')
+    }
+    deleteState.open = false
+    await loadSnapshot(true)
+  } catch (error) {
+    console.error('failed to delete entity', error)
+    showToast(extractErrorMessage(error), 'error')
+  } finally {
+    deleting.value = false
   }
 }
 
@@ -240,6 +298,10 @@ const handleOpenSession = async (session: SessionSummary) => {
   } finally {
     clearOpeningSession(session.id)
   }
+}
+
+const openSessionDetail = (session: SessionSummary) => {
+  router.push(`/projects/sessions/${encodeURIComponent(session.id)}`)
 }
 
 const clearOpeningSession = (sessionID: string) => {
@@ -306,6 +368,7 @@ onBeforeUnmount(() => {
       :projects="projectCards"
       :format-updated-at="formatUpdatedAt"
       @enter="enterProject"
+      @delete="openDeleteModal('project', $event)"
       @rename="openRenameModal('project', $event)"
       @open-folder="handleOpenProjectFolder"
       @view-path="viewProjectRawPath"
@@ -318,8 +381,10 @@ onBeforeUnmount(() => {
       :resolve-summary="resolveSessionSummary"
       :show-project-name-tag="activeMode === 'session'"
       :is-session-opening="isSessionOpening"
+      @delete="openDeleteModal('session', $event)"
       @rename="openRenameModal('session', $event)"
       @open-session="handleOpenSession"
+      @open-detail="openSessionDetail"
     />
 
     <ProjectManagerRenameModal
@@ -330,5 +395,34 @@ onBeforeUnmount(() => {
       @close="closeRenameModal"
       @save="saveRename"
     />
+
+    <BaseModal
+      :open="deleteState.open"
+      :title="deleteState.targetType === 'project'
+        ? t('components.projectManager.delete.projectTitle')
+        : t('components.projectManager.delete.sessionTitle')"
+      variant="confirm"
+      @close="closeDeleteModal"
+    >
+      <div class="rename-body">
+        <div class="confirm-body">
+          <p v-if="deleteState.targetType === 'project'">
+            {{ t('components.projectManager.delete.projectConfirm', { name: deleteState.targetName, count: deleteState.sessionCount }) }}
+          </p>
+          <p v-else>
+            {{ t('components.projectManager.delete.sessionConfirm', { name: deleteState.targetName }) }}
+          </p>
+          <p class="detail-delete-hint">{{ t('components.projectManager.delete.hint') }}</p>
+        </div>
+        <footer class="form-actions confirm-actions">
+          <BaseButton variant="outline" type="button" :disabled="deleting" @click="closeDeleteModal">
+            {{ t('components.projectManager.rename.cancel') }}
+          </BaseButton>
+          <BaseButton variant="danger" type="button" :disabled="deleting" :loading="deleting" @click="confirmDelete">
+            {{ t('components.projectManager.delete.confirmAction') }}
+          </BaseButton>
+        </footer>
+      </div>
+    </BaseModal>
   </div>
 </template>

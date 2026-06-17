@@ -5,6 +5,7 @@ interface ProjectManagerCardMenuAction {
   key: string
   label: string
   accent?: boolean
+  danger?: boolean
 }
 
 defineProps<{
@@ -43,7 +44,7 @@ const emit = defineEmits<{
         >
           <button
             type="button"
-            :class="['card-menu-item', { active, accent: action.accent }]"
+            :class="['card-menu-item', { active, accent: action.accent, danger: action.danger }]"
             @click.stop="close(); emit('select', action.key)"
           >
             {{ action.label }}

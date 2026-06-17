@@ -1507,6 +1507,41 @@ html.dark .ghost-icon:hover {
   transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
   margin: 0;
   min-width: 88px;
+  gap: 8px;
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.74;
+}
+
+.btn-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn.is-loading .btn-label {
+  opacity: 0.96;
+}
+
+.btn-spinner {
+  width: 0.95rem;
+  height: 0.95rem;
+  border-radius: 999px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  flex: 0 0 auto;
+  animation: btn-spin 0.72s linear infinite;
+}
+
+@keyframes btn-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .btn-outline {

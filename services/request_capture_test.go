@@ -178,6 +178,111 @@ func TestRequestCaptureService_DisabledSkipsWrite(t *testing.T) {
 	}
 }
 
+func TestRequestCaptureService_CaptureFallsBackToCodexSessionProject(t *testing.T) {
+	tmpHome := setupRenameTestEnv(t)
+	t.Setenv("USERPROFILE", tmpHome)
+	t.Setenv("HOME", tmpHome)
+
+	projectDir := filepath.Join(tmpHome, "workspace", "capture-fallback")
+	sessionID := "sess-fallback-codex"
+	writeProjectManagerRolloutFixtureWithWorkspaceRoots(
+		t,
+		tmpHome,
+		sessionID,
+		"rollout-2026-06-16T10-00-04-"+sessionID+".jsonl",
+		`C:\Users\X1`,
+		[]string{projectDir},
+		[]string{
+			`{"type":"event_msg","timestamp":"2026-06-16T10:01:01Z","payload":{"type":"user_message","message":"capture 回退测试"}}`,
+		},
+	)
+
+	appSettings := NewAppSettingsService(NewAutoStartService())
+	service := NewRequestCaptureService(appSettings)
+	err := service.Capture(RequestCaptureContext{
+		Platform: "codex",
+		Method:   http.MethodPost,
+		Endpoint: "/responses",
+		Headers: map[string]string{
+			"Session-Id": sessionID,
+		},
+		Body: []byte(`{"model":"gpt-5-codex","input":[{"role":"user","content":"hello"}]}`),
+	})
+	if err != nil {
+		t.Fatalf("Capture 失败: %v", err)
+	}
+
+	files := collectCaptureFiles(t, filepath.Join(tmpHome, ".code-switch", requestCaptureDirName))
+	if len(files) != 1 {
+		t.Fatalf("期望 1 个捕获文件，实际 %d", len(files))
+	}
+
+	var record RequestCaptureRecord
+	data, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatalf("读取捕获文件失败: %v", err)
+	}
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatalf("解析捕获文件失败: %v", err)
+	}
+	if record.ProjectID != normalizeProjectManagerProjectPath(projectDir) {
+		t.Fatalf("project_id = %q，期望 %q", record.ProjectID, normalizeProjectManagerProjectPath(projectDir))
+	}
+}
+
+func TestRequestCaptureService_CaptureMigratesUnknownProjectDirectory(t *testing.T) {
+	tmpHome := setupRenameTestEnv(t)
+	t.Setenv("USERPROFILE", tmpHome)
+	t.Setenv("HOME", tmpHome)
+
+	projectDir := filepath.Join(tmpHome, "workspace", "capture-migrate")
+	sessionID := "sess-migrate-codex"
+	writeProjectManagerRolloutFixtureWithWorkspaceRoots(
+		t,
+		tmpHome,
+		sessionID,
+		"rollout-2026-06-16T10-00-05-"+sessionID+".jsonl",
+		`C:\Users\X1`,
+		[]string{projectDir},
+		[]string{
+			`{"type":"event_msg","timestamp":"2026-06-16T10:01:01Z","payload":{"type":"user_message","message":"capture 迁移测试"}}`,
+		},
+	)
+
+	baseDir := filepath.Join(tmpHome, ".code-switch", requestCaptureDirName, "codex", "unknown-project", sessionID)
+	if err := AtomicWriteJSON(filepath.Join(baseDir, "old.json"), RequestCaptureRecord{
+		Platform:  "codex",
+		ProjectID: unknownProjectCaptureID,
+		SessionID: sessionID,
+	}); err != nil {
+		t.Fatalf("写入旧 unknown capture 失败: %v", err)
+	}
+
+	appSettings := NewAppSettingsService(NewAutoStartService())
+	service := NewRequestCaptureService(appSettings)
+	err := service.Capture(RequestCaptureContext{
+		Platform: "codex",
+		Method:   http.MethodPost,
+		Endpoint: "/responses",
+		Headers: map[string]string{
+			"Session-Id": sessionID,
+		},
+		Body: []byte(`{"model":"gpt-5-codex","input":[{"role":"user","content":"hello again"}]}`),
+	})
+	if err != nil {
+		t.Fatalf("Capture 失败: %v", err)
+	}
+
+	targetDir := filepath.Join(tmpHome, ".code-switch", requestCaptureDirName, "codex", sanitizeCapturePathSegment(normalizeProjectManagerProjectPath(projectDir), unknownProjectCaptureID), sessionID)
+	files := collectCaptureFiles(t, targetDir)
+	if len(files) != 2 {
+		t.Fatalf("迁移后目标目录应有 2 个 capture，实际 %d", len(files))
+	}
+	if FileExists(baseDir) {
+		t.Fatalf("unknown-project 原目录应被迁空移除: %s", baseDir)
+	}
+}
+
 func TestProviderRelay_CapturesOncePerIncomingRequest(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

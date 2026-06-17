@@ -509,10 +509,45 @@
         "sessionCount": "{count} 个会话",
         "moreActions": "更多操作",
         "rename": "重命名",
+        "deleteProject": "删除项目",
+        "deleteSession": "删除会话",
         "openFolder": "打开目录",
         "openSession": "打开终端",
         "openingSession": "打开中...",
         "pathDetail": "看路径"
+      },
+      "detail": {
+        "eyebrow": "会话详情",
+        "back": "返回项目管理",
+        "loadingTitle": "正在加载会话详情...",
+        "projectName": "所属项目",
+        "updatedAt": "最近更新时间",
+        "loading": "正在整理会话对话...",
+        "empty": "这个会话还没整理出可展示的用户 / agent 对话。",
+        "userLabel": "用户",
+        "agentLabel": "Agent",
+        "showMore": "显示更多",
+        "showLess": "收起",
+        "enterSelection": "进入选择",
+        "exitSelection": "退出选择",
+        "selectPrimary": "选主问答",
+        "selectLoaded": "选当前已加载",
+        "clearSelection": "清空选择",
+        "renderedCount": "当前渲染 {visible} / {total}",
+        "selectedCount": "已选 {count} 条",
+        "loadMoreHint": "会话太长了，先分批渲染，滚到底或点按钮继续加载。",
+        "loadMore": "继续加载",
+        "openingTerminal": "正在打开终端...",
+        "deleteSelected": "删除已选 {count}",
+        "deleteTitle": "确认剪枝会话",
+        "deleteConfirm": "确认删除已选中的 {count} 条对话内容吗？",
+        "deleteHint": "这会直接改写真实 `.codex/sessions` 会话文件，属于物理剪枝，不带撤销。",
+        "confirmDeleteAction": "确认删除",
+        "deleting": "删除中...",
+        "deleteSuccess": "会话内容已剪枝",
+        "errors": {
+          "sessionNotFound": "会话不存在或会话 ID 无效"
+        }
       },
       "rename": {
         "projectTitle": "重命名项目",
@@ -524,6 +559,17 @@
         "saving": "保存中...",
         "saved": "名称已更新",
         "emptyName": "名字不能为空，别整那没字儿的。"
+      },
+      "delete": {
+        "projectTitle": "确认删除项目",
+        "sessionTitle": "确认删除会话",
+        "projectConfirm": "确认删除项目“{name}”及其下 {count} 个会话吗？",
+        "sessionConfirm": "确认删除会话“{name}”吗？",
+        "hint": "这会物理删除真实 `.codex/sessions` 会话文件，并清理项目管理本地状态；request capture 不会被清理，且删除不可撤销。",
+        "confirmAction": "确认删除",
+        "deleting": "删除中...",
+        "projectDeleted": "项目及其关联会话已删除",
+        "sessionDeleted": "会话已删除"
       },
       "common": {
         "path": "项目路径",

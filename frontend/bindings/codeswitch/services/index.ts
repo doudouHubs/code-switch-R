@@ -101,6 +101,8 @@ export {
     ProxyInjection,
     ReqeustLog,
     RetryConfig,
+    SessionConversationDetail,
+    SessionConversationItem,
     SessionSummary,
     Skill,
     TargetCli,

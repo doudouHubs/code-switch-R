@@ -40,6 +40,22 @@ type ProjectManagerSnapshot struct {
 	Sessions []SessionSummary `json:"sessions"`
 }
 
+type SessionConversationItem struct {
+	ID         string `json:"id"`
+	SessionID  string `json:"session_id"`
+	Role       string `json:"role"`
+	Content    string `json:"content"`
+	Timestamp  int64  `json:"timestamp"`
+	ReplyFor   string `json:"reply_for"`
+	SourceFile string `json:"source_file"`
+	SourceLine int    `json:"source_line"`
+}
+
+type SessionConversationDetail struct {
+	Session SessionSummary            `json:"session"`
+	Items   []SessionConversationItem `json:"items"`
+}
+
 type ProjectManagerService struct {
 	store *projectManagerStoreService
 }
@@ -132,6 +148,69 @@ func (s *ProjectManagerService) RenameSession(sessionID string, displayName stri
 	return nil
 }
 
+func (s *ProjectManagerService) DeleteProject(projectPath string) error {
+	projectPath = normalizeProjectManagerProjectPath(projectPath)
+	if projectPath == "" {
+		return errors.New("项目路径不能为空")
+	}
+
+	snapshot, err := s.GetSnapshot()
+	if err != nil {
+		return err
+	}
+
+	targetSessions := make([]SessionSummary, 0, 8)
+	for _, session := range snapshot.Sessions {
+		if normalizeProjectManagerProjectPath(session.ProjectPath) != projectPath {
+			continue
+		}
+		targetSessions = append(targetSessions, session)
+	}
+
+	var failed []string
+	for _, session := range targetSessions {
+		if err := s.DeleteSession(session.ID); err != nil {
+			failed = append(failed, fmt.Sprintf("%s: %v", session.ID, err))
+		}
+	}
+	if len(failed) > 0 {
+		return fmt.Errorf("删除项目关联会话失败: %s", strings.Join(failed, "; "))
+	}
+
+	return s.store.deleteProject(projectPath)
+}
+
+func (s *ProjectManagerService) DeleteSession(sessionID string) error {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return errors.New("会话 ID 不能为空")
+	}
+
+	sessionFile, err := s.findProjectManagerSessionFileByID(sessionID)
+	hasSessionFile := err == nil
+	if err != nil && !strings.Contains(err.Error(), "未找到会话源文件") {
+		return err
+	}
+
+	if hasSessionFile {
+		if err := os.Remove(sessionFile.Path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("删除会话文件失败: %w", err)
+		}
+	}
+	if err := s.removeCodexSessionIndexEntry(sessionID); err != nil {
+		return err
+	}
+	// 这里明确不清 request capture；删除只作用于真实会话文件与项目管理本地状态。
+	// 为了防止 capture 兜底把已删会话重新扫回来，本地 store 要留下 hidden tombstone。
+	if err := s.store.hideSession(sessionID); err != nil {
+		return err
+	}
+	if err := removeProjectManagerSessionRuntime(sessionID); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (s *ProjectManagerService) OpenSessionTerminal(sessionID string) error {
 	snapshot, err := s.GetSnapshot()
 	if err != nil {
@@ -152,6 +231,123 @@ func (s *ProjectManagerService) OpenProjectFolder(projectPath string) error {
 		return errors.New("项目路径不能为空")
 	}
 	return OpenInExplorer(projectPath)
+}
+
+func (s *ProjectManagerService) GetSessionConversationDetail(sessionID string) (SessionConversationDetail, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return SessionConversationDetail{}, errors.New("会话 ID 不能为空")
+	}
+
+	snapshot, err := s.GetSnapshot()
+	if err != nil {
+		return SessionConversationDetail{}, err
+	}
+
+	session, err := projectManagerFindSession(snapshot.Sessions, sessionID)
+	if err != nil {
+		return SessionConversationDetail{}, err
+	}
+
+	sessionFile, err := s.findProjectManagerSessionFileByID(sessionID)
+	if err != nil {
+		return SessionConversationDetail{}, err
+	}
+
+	var items []SessionConversationItem
+	if sessionFile.IsRollout {
+		items, err = readProjectManagerRolloutConversationItems(sessionFile.Path, sessionID)
+	} else {
+		items, err = readProjectManagerSessionConversationItems(sessionFile.Path, sessionID)
+	}
+	if err != nil {
+		return SessionConversationDetail{}, err
+	}
+
+	return SessionConversationDetail{
+		Session: session,
+		Items:   items,
+	}, nil
+}
+
+func (s *ProjectManagerService) PruneSessionConversation(sessionID string, messageIDs []string) (SessionConversationDetail, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return SessionConversationDetail{}, errors.New("会话 ID 不能为空")
+	}
+	if len(messageIDs) == 0 {
+		return SessionConversationDetail{}, errors.New("至少选择一条消息")
+	}
+
+	sessionFile, err := s.findProjectManagerSessionFileByID(sessionID)
+	if err != nil {
+		return SessionConversationDetail{}, err
+	}
+
+	var currentItems []SessionConversationItem
+	if sessionFile.IsRollout {
+		currentItems, err = readProjectManagerRolloutConversationItems(sessionFile.Path, sessionID)
+	} else {
+		currentItems, err = readProjectManagerSessionConversationItems(sessionFile.Path, sessionID)
+	}
+	if err != nil {
+		return SessionConversationDetail{}, err
+	}
+
+	prunePlan, err := buildProjectManagerConversationPrunePlan(sessionID, currentItems, messageIDs)
+	if err != nil {
+		return SessionConversationDetail{}, err
+	}
+
+	if sessionFile.IsRollout {
+		if err := pruneProjectManagerRolloutFile(sessionFile.Path, sessionID, prunePlan); err != nil {
+			return SessionConversationDetail{}, err
+		}
+	} else {
+		if err := pruneProjectManagerSessionConversationFile(sessionFile.Path, sessionID, prunePlan.TargetIDs); err != nil {
+			return SessionConversationDetail{}, err
+		}
+		if err := s.pruneProjectManagerRolloutFiles(sessionID, prunePlan); err != nil {
+			return SessionConversationDetail{}, err
+		}
+	}
+
+	return s.GetSessionConversationDetail(sessionID)
+}
+
+func (s *ProjectManagerService) removeCodexSessionIndexEntry(sessionID string) error {
+	home, err := getUserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	path := filepath.Join(home, ".codex", "session_index.jsonl")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	lines := strings.Split(string(data), "\n")
+	kept := make([]string, 0, len(lines))
+	removed := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if gjson.Get(trimmed, "id").String() == sessionID {
+			removed = true
+			continue
+		}
+		kept = append(kept, line)
+	}
+	if !removed {
+		return nil
+	}
+	return AtomicWriteText(path, strings.Join(kept, "\n"))
 }
 
 func (s *ProjectManagerService) tryRenameCodexSessionIndex(sessionID string, displayName string) error {

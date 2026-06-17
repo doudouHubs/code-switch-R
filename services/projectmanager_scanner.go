@@ -43,8 +43,11 @@ type projectManagerSessionFileEntry struct {
 	Path       string
 	ThreadName string
 	Cwd        string
+	ProjectPath string
+	ProjectSource string
 	Summary    string
 	UpdatedAt  time.Time
+	IsRollout  bool
 }
 
 type projectManagerProjectState struct {
@@ -161,6 +164,9 @@ func (s *ProjectManagerService) enrichProjectManagerSessionsFromCodexSessions(
 		if sessionID == "" {
 			continue
 		}
+		if projectManagerSessionIsHidden(store, sessionID) {
+			continue
+		}
 
 		state := sessions[sessionID]
 		if state == nil {
@@ -169,13 +175,21 @@ func (s *ProjectManagerService) enrichProjectManagerSessionsFromCodexSessions(
 		}
 
 		cwd := strings.TrimSpace(fileEntry.Cwd)
+		projectPath := strings.TrimSpace(fileEntry.ProjectPath)
+		projectSource := strings.TrimSpace(fileEntry.ProjectSource)
 		summary := strings.TrimSpace(fileEntry.Summary)
 		updatedAt := fileEntry.UpdatedAt
 		if state.Cwd == "" && cwd != "" {
 			state.Cwd = cwd
 		}
-		if state.ProjectPath == "" && cwd != "" {
+		if state.ProjectPath == "" && projectPath != "" {
+			state.ProjectPath = normalizeProjectManagerProjectPath(projectPath)
+			state.ProjectSource = projectSource
+		} else if state.ProjectPath == "" && cwd != "" {
+			// 兼容旧数据：如果源文件里还没解析出更明确的项目根，才退回到 cwd。
+			// rollout 的真实项目根优先走 workspace_roots，避免家目录 cwd 把项目归属带沟里。
 			state.ProjectPath = normalizeProjectManagerProjectPath(cwd)
+			state.ProjectSource = "cwd"
 		}
 		if state.Summary == "" && summary != "" {
 			state.Summary = summary
@@ -290,6 +304,9 @@ func (s *ProjectManagerService) enrichProjectManagerSessionsFromCaptures(
 		}
 		sessionID := strings.TrimSpace(record.SessionID)
 		if sessionID == "" {
+			return nil
+		}
+		if projectManagerSessionIsHidden(store, sessionID) {
 			return nil
 		}
 
@@ -656,7 +673,7 @@ func (s *ProjectManagerService) readProjectManagerSessionFiles(
 			return nil
 		}
 
-		sessionID, cwd, summary, updatedAt, err := scanProjectManagerCodexSessionFile(path)
+		sessionID, cwd, projectPath, projectSource, summary, updatedAt, err := scanProjectManagerCodexSessionFile(path)
 		if err != nil {
 			return nil
 		}
@@ -673,12 +690,15 @@ func (s *ProjectManagerService) readProjectManagerSessionFiles(
 		}
 
 		result = append(result, projectManagerSessionFileEntry{
-			SessionID:  sessionID,
-			Path:       path,
-			ThreadName: threadName,
-			Cwd:        cwd,
-			Summary:    summary,
-			UpdatedAt:  updatedAt,
+			SessionID:     sessionID,
+			Path:          path,
+			ThreadName:    threadName,
+			Cwd:           cwd,
+			ProjectPath:   projectPath,
+			ProjectSource: projectSource,
+			Summary:       summary,
+			UpdatedAt:     updatedAt,
+			IsRollout:     projectManagerIsRolloutSessionPath(path),
 		})
 		return nil
 	})
@@ -731,10 +751,10 @@ func projectManagerLooksLikeSessionID(value string) bool {
 	return true
 }
 
-func scanProjectManagerCodexSessionFile(path string) (sessionID string, cwd string, summary string, updatedAt time.Time, err error) {
+func scanProjectManagerCodexSessionFile(path string) (sessionID string, cwd string, projectPath string, projectSource string, summary string, updatedAt time.Time, err error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return "", "", "", time.Time{}, err
+		return "", "", "", "", "", time.Time{}, err
 	}
 	defer file.Close()
 
@@ -746,6 +766,15 @@ func scanProjectManagerCodexSessionFile(path string) (sessionID string, cwd stri
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
+		}
+
+		if projectPath == "" {
+			if roots := extractProjectManagerWorkspaceRootsFromLine(line); len(roots) > 0 {
+				// rollout 的 turn_context 才会稳定给出 workspace_roots；
+				// 这层必须在逐行扫描时统一处理，不能只绑死在 session_meta 分支里。
+				projectPath = roots[0]
+				projectSource = "workspace_roots"
+			}
 		}
 
 		if gjson.Get(line, "type").String() == "session_meta" {
@@ -777,10 +806,37 @@ func scanProjectManagerCodexSessionFile(path string) (sessionID string, cwd stri
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return "", "", "", time.Time{}, err
+		return "", "", "", "", "", time.Time{}, err
 	}
 
-	return sessionID, cwd, summary, updatedAt, nil
+	return sessionID, cwd, projectPath, projectSource, summary, updatedAt, nil
+}
+
+func extractProjectManagerWorkspaceRootsFromLine(line string) []string {
+	paths := []string{
+		"workspace_roots",
+		"workspaceRoots",
+		"payload.workspace_roots",
+		"payload.workspaceRoots",
+	}
+	for _, path := range paths {
+		result := gjson.Get(line, path)
+		if !result.Exists() || !result.IsArray() {
+			continue
+		}
+		roots := make([]string, 0, len(result.Array()))
+		for _, item := range result.Array() {
+			trimmed := strings.TrimSpace(item.String())
+			if trimmed == "" {
+				continue
+			}
+			roots = append(roots, trimmed)
+		}
+		if len(roots) > 0 {
+			return roots
+		}
+	}
+	return nil
 }
 
 func buildProjectManagerProjectSummaries(projects map[string]*projectManagerProjectState) []ProjectSummary {

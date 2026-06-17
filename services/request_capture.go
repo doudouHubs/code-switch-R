@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -123,6 +124,11 @@ func (s *RequestCaptureService) Capture(ctx RequestCaptureContext) error {
 	}
 
 	projectID, sessionID := DetectCaptureScope(ctx.Headers, ctx.Body)
+	if projectID == unknownProjectCaptureID {
+		if fallbackProjectID := detectCaptureProjectIDFromCodexSessionFiles(sessionID); fallbackProjectID != "" {
+			projectID = fallbackProjectID
+		}
+	}
 	record := RequestCaptureRecord{
 		CapturedAt: time.Now().Format(time.RFC3339Nano),
 		Platform:   strings.TrimSpace(ctx.Platform),
@@ -151,6 +157,11 @@ func (s *RequestCaptureService) Capture(ctx RequestCaptureContext) error {
 	path := filepath.Join(dir, filename)
 	if err := AtomicWriteJSON(path, record); err != nil {
 		return fmt.Errorf("写入请求捕获失败: %w", err)
+	}
+	if record.ProjectID != unknownProjectCaptureID {
+		if err := migrateUnknownProjectCaptures(baseDir, record.Platform, record.SessionID, record.ProjectID); err != nil {
+			return fmt.Errorf("迁移 unknown-project capture 失败: %w", err)
+		}
 	}
 	return nil
 }
@@ -257,6 +268,48 @@ func detectCaptureProjectID(headers map[string]string, metadata codexTurnMetadat
 		return value
 	}
 	return detectProjectFromCaptureText(body)
+}
+
+func detectCaptureProjectIDFromCodexSessionFiles(sessionID string) string {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" || sessionID == unknownSessionCaptureID {
+		return ""
+	}
+
+	home, err := getUserHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	baseDir := filepath.Join(home, ".codex", "sessions")
+	if !FileExists(baseDir) {
+		return ""
+	}
+
+	bestProjectID := ""
+	var bestUpdatedAt time.Time
+	_ = filepath.WalkDir(baseDir, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil || d == nil || d.IsDir() || filepath.Ext(path) != ".jsonl" {
+			return nil
+		}
+
+		fileSessionID, _, projectPath, _, _, updatedAt, err := scanProjectManagerCodexSessionFile(path)
+		if err != nil || strings.TrimSpace(fileSessionID) != sessionID {
+			return nil
+		}
+
+		normalizedProjectPath := normalizeProjectManagerProjectPath(projectPath)
+		if normalizedProjectPath == "" {
+			return nil
+		}
+		if bestProjectID == "" || updatedAt.After(bestUpdatedAt) {
+			bestProjectID = normalizedProjectPath
+			bestUpdatedAt = updatedAt
+		}
+		return nil
+	})
+
+	return bestProjectID
 }
 
 func detectCaptureSessionID(headers map[string]string, metadata codexTurnMetadata, body []byte) string {
@@ -554,6 +607,47 @@ func sanitizeCapturePathSegment(value string, fallback string) string {
 		sanitized = string(runes[:maxCapturePathSegmentLength])
 	}
 	return sanitized
+}
+
+func migrateUnknownProjectCaptures(baseDir string, platform string, sessionID string, projectID string) error {
+	platformSegment := sanitizeCapturePathSegment(platform, "unknown-platform")
+	sessionSegment := sanitizeCapturePathSegment(sessionID, unknownSessionCaptureID)
+	projectSegment := sanitizeCapturePathSegment(projectID, unknownProjectCaptureID)
+	if platformSegment == "" || sessionSegment == "" || projectSegment == "" || projectSegment == unknownProjectCaptureID {
+		return nil
+	}
+
+	sourceDir := filepath.Join(baseDir, platformSegment, unknownProjectCaptureID, sessionSegment)
+	if !FileExists(sourceDir) {
+		return nil
+	}
+
+	targetDir := filepath.Join(baseDir, platformSegment, projectSegment, sessionSegment)
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		return err
+	}
+
+	entries, err := os.ReadDir(sourceDir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry == nil || entry.IsDir() {
+			continue
+		}
+		sourcePath := filepath.Join(sourceDir, entry.Name())
+		targetPath := filepath.Join(targetDir, entry.Name())
+		if err := os.Rename(sourcePath, targetPath); err != nil {
+			return err
+		}
+	}
+
+	_ = os.Remove(sourceDir)
+	parentDir := filepath.Dir(sourceDir)
+	if remaining, err := os.ReadDir(parentDir); err == nil && len(remaining) == 0 {
+		_ = os.Remove(parentDir)
+	}
+	return nil
 }
 
 func parseCaptureBody(body []byte) any {

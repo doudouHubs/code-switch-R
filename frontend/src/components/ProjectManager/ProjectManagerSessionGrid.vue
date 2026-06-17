@@ -7,6 +7,7 @@ type ProjectManagerCardMenuAction = {
   key: string
   label: string
   accent?: boolean
+  danger?: boolean
 }
 
 const props = defineProps<{
@@ -19,7 +20,9 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   rename: [session: SessionSummary]
+  delete: [session: SessionSummary]
   'open-session': [session: SessionSummary]
+  'open-detail': [session: SessionSummary]
 }>()
 
 const { t } = useI18n()
@@ -29,11 +32,20 @@ const resolveSessionActions = (session: SessionSummary): ProjectManagerCardMenuA
     key: `rename:${session.id}`,
     label: t('components.projectManager.card.rename'),
   },
+  {
+    key: `delete:${session.id}`,
+    label: t('components.projectManager.card.deleteSession'),
+    danger: true,
+  },
 ]
 
 const handleSessionAction = (session: SessionSummary, actionKey: string) => {
   if (actionKey.startsWith('rename:')) {
     emit('rename', session)
+    return
+  }
+  if (actionKey.startsWith('delete:')) {
+    emit('delete', session)
     return
   }
 }
@@ -44,6 +56,10 @@ const emitOpenSession = (session: SessionSummary) => {
   }
   emit('open-session', session)
 }
+
+const emitOpenDetail = (session: SessionSummary) => {
+  emit('open-detail', session)
+}
 </script>
 
 <template>
@@ -52,7 +68,7 @@ const emitOpenSession = (session: SessionSummary) => {
       v-for="session in sessions"
       :key="session.id"
       :class="['session-card', { 'is-opening': isSessionOpening(session.id) }]"
-      @click="emitOpenSession(session)"
+      @click="emitOpenDetail(session)"
     >
       <div class="card-topline">
         <h3 class="card-title">{{ session.display_name }}</h3>

@@ -413,6 +413,14 @@
   color: #2563eb;
 }
 
+.project-manager-page .card-menu-item.danger {
+  color: #d14343;
+}
+
+.dark .project-manager-page .card-menu-item.danger {
+  color: #ff8b8b;
+}
+
 .project-manager-page .card-menu-enter,
 .project-manager-page .card-menu-leave {
   transition: opacity 0.16s ease, transform 0.16s ease;
@@ -498,6 +506,444 @@
   gap: 10px;
 }
 
+.project-manager-page.project-manager-detail-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.project-manager-page .project-detail-hero {
+  display: grid;
+  gap: 18px;
+  padding: 24px;
+  border-radius: 30px;
+  border: 1px solid rgba(255, 255, 255, 0.56);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(245, 248, 255, 0.86)),
+    radial-gradient(circle at top right, rgba(55, 114, 255, 0.12), transparent 34%);
+  box-shadow: 0 20px 40px rgba(31, 45, 73, 0.14);
+}
+
+.dark .project-manager-page .project-detail-hero {
+  border-color: rgba(255, 255, 255, 0.06);
+  background:
+    linear-gradient(180deg, rgba(19, 26, 39, 0.96), rgba(14, 18, 28, 0.9)),
+    radial-gradient(circle at top right, rgba(73, 125, 232, 0.16), transparent 32%);
+  box-shadow: 0 24px 44px rgba(0, 0, 0, 0.32);
+}
+
+.project-manager-page .project-detail-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.project-manager-page .project-detail-action-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.project-manager-page .conversation-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(17, 28, 47, 0.08);
+}
+
+.dark .project-manager-page .conversation-toolbar {
+  background: rgba(16, 22, 34, 0.8);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.project-manager-page .conversation-toolbar-status {
+  display: grid;
+  gap: 4px;
+}
+
+.project-manager-page .conversation-toolbar-status strong {
+  font-size: 0.92rem;
+  color: var(--mac-text);
+}
+
+.project-manager-page .conversation-toolbar-status span {
+  font-size: 0.78rem;
+  color: var(--mac-text-secondary);
+}
+
+.project-manager-page .conversation-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.project-manager-page .toolbar-chip {
+  border: none;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.12);
+  color: #2563eb;
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease, opacity 0.18s ease;
+}
+
+.project-manager-page .toolbar-chip:hover {
+  background: rgba(37, 99, 235, 0.18);
+  transform: translateY(-1px);
+}
+
+.project-manager-page .toolbar-chip:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+  transform: none;
+}
+
+.project-manager-page .toolbar-chip.ghost {
+  background: rgba(17, 28, 47, 0.06);
+  color: var(--mac-text-secondary);
+}
+
+.dark .project-manager-page .toolbar-chip {
+  background: rgba(76, 128, 214, 0.2);
+  color: #7db5ff;
+}
+
+.dark .project-manager-page .toolbar-chip.ghost {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--mac-text-secondary);
+}
+
+.project-manager-page .project-detail-copy {
+  display: grid;
+  gap: 8px;
+}
+
+.project-manager-page .detail-eyebrow {
+  margin: 0;
+  font-size: 0.76rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--mac-text-secondary);
+}
+
+.project-manager-page .project-detail-copy h1 {
+  margin: 0;
+  font-size: clamp(1.8rem, 3vw, 2.5rem);
+  line-height: 1.06;
+  color: var(--mac-text);
+}
+
+.project-manager-page .detail-lead {
+  margin: 0;
+  max-width: 880px;
+  line-height: 1.7;
+  color: var(--mac-text-secondary);
+}
+
+.project-manager-page .project-detail-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.project-manager-page .detail-meta-card {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 14px 16px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.76);
+  border: 1px solid rgba(17, 28, 47, 0.07);
+}
+
+.dark .project-manager-page .detail-meta-card {
+  background: rgba(16, 22, 34, 0.82);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.project-manager-page .detail-meta-card span {
+  font-size: 0.76rem;
+  color: var(--mac-text-secondary);
+}
+
+.project-manager-page .detail-meta-card strong {
+  font-size: 0.94rem;
+  line-height: 1.55;
+  color: var(--mac-text);
+  word-break: break-word;
+}
+
+.project-manager-page .conversation-list {
+  display: grid;
+  width: 100%;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+}
+
+.project-manager-page .chat-thread {
+  width: 100%;
+  gap: 18px;
+  align-content: start;
+}
+
+.project-manager-page .conversation-group {
+  display: grid;
+  width: 100%;
+  gap: 10px;
+}
+
+.project-manager-page .message-entry {
+  display: flex;
+  align-items: flex-start;
+  width: 100%;
+  gap: 12px;
+}
+
+.project-manager-page .message-entry.is-selecting {
+  cursor: pointer;
+  border-radius: 26px;
+  padding: 8px 10px;
+  transition: background 0.18s ease, box-shadow 0.18s ease;
+}
+
+.project-manager-page .message-entry.is-selecting:hover {
+  background: rgba(37, 99, 235, 0.04);
+}
+
+.project-manager-page .message-entry.is-selecting.selected {
+  background: rgba(37, 99, 235, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.12);
+}
+
+.project-manager-page .message-entry.is-user {
+  justify-content: flex-start;
+  flex-direction: row-reverse;
+}
+
+.project-manager-page .message-entry.is-agent {
+  justify-content: flex-start;
+  flex-direction: row;
+}
+
+.project-manager-page .message-select-slot {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding-top: 10px;
+}
+
+.project-manager-page .message-select-slot input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #2563eb;
+}
+
+.project-manager-page .message-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  max-width: min(88%, 1120px);
+  min-width: 0;
+}
+
+.project-manager-page .message-entry.is-user .message-stack {
+  align-items: flex-end;
+}
+
+.project-manager-page .message-entry.is-agent .message-stack {
+  align-items: flex-start;
+}
+
+.project-manager-page .message-entry.is-selecting:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+}
+
+.project-manager-page .conversation-bubble {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  width: auto;
+  max-width: 100%;
+  min-width: 0;
+  padding: 16px 18px;
+  border: 1px solid transparent;
+  border-radius: 24px;
+  text-align: left;
+  color: inherit;
+  white-space: normal;
+  font: inherit;
+  box-shadow: 0 18px 36px rgba(32, 45, 69, 0.1);
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+.project-manager-page .conversation-bubble.is-user {
+  align-self: flex-end;
+  background:
+    linear-gradient(180deg, rgba(67, 142, 255, 0.95), rgba(33, 107, 237, 0.92));
+  border-color: rgba(37, 99, 235, 0.18);
+  color: #f8fbff;
+}
+
+.project-manager-page .conversation-bubble.is-agent {
+  align-self: flex-start;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(244, 247, 252, 0.9));
+  border-color: rgba(17, 28, 47, 0.08);
+  color: var(--mac-text);
+}
+
+.project-manager-page .conversation-bubble.is-user::after,
+.project-manager-page .conversation-bubble.is-agent::after {
+  content: '';
+  position: absolute;
+  bottom: 10px;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+
+.project-manager-page .conversation-bubble.is-user::after {
+  right: -4px;
+  background: rgba(33, 107, 237, 0.92);
+  transform: rotate(45deg);
+}
+
+.project-manager-page .conversation-bubble.is-agent::after {
+  left: -4px;
+  background: rgba(248, 250, 255, 0.94);
+  border-left: 1px solid rgba(17, 28, 47, 0.06);
+  border-bottom: 1px solid rgba(17, 28, 47, 0.06);
+  transform: rotate(45deg);
+}
+
+.dark .project-manager-page .conversation-bubble.is-user {
+  background:
+    linear-gradient(180deg, rgba(61, 123, 224, 0.94), rgba(33, 90, 190, 0.92));
+  border-color: rgba(123, 181, 255, 0.16);
+  color: #f7fbff;
+}
+
+.dark .project-manager-page .conversation-bubble.is-agent {
+  background:
+    linear-gradient(180deg, rgba(22, 28, 40, 0.96), rgba(14, 18, 28, 0.92));
+  border-color: rgba(255, 255, 255, 0.08);
+  color: var(--mac-text);
+}
+
+.dark .project-manager-page .conversation-bubble.is-agent::after {
+  background: rgba(18, 24, 35, 0.96);
+  border-left-color: rgba(255, 255, 255, 0.06);
+  border-bottom-color: rgba(255, 255, 255, 0.06);
+}
+
+.project-manager-page .conversation-bubble.selected {
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.16), 0 20px 38px rgba(32, 45, 69, 0.12);
+}
+
+.project-manager-page .conversation-bubble.clickable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.project-manager-page .conversation-bubble.clickable:hover {
+  transform: translateY(-1px);
+}
+
+.project-manager-page .conversation-bubble.clickable:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18), 0 18px 36px rgba(32, 45, 69, 0.12);
+}
+
+.project-manager-page .conversation-content {
+  display: block;
+  width: 100%;
+  line-height: 1.72;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.project-manager-page .conversation-content.clamped {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.project-manager-page .conversation-toggle {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #2563eb;
+}
+
+.project-manager-page .conversation-bubble.is-user .conversation-toggle {
+  color: rgba(248, 251, 255, 0.92);
+}
+
+.dark .project-manager-page .conversation-toggle {
+  color: #7db5ff;
+}
+
+.project-manager-page .message-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 0 2px;
+  font-size: 0.74rem;
+  color: var(--mac-text-secondary);
+  line-height: 1.2;
+}
+
+.project-manager-page .message-meta.is-user {
+  justify-content: flex-end;
+}
+
+.project-manager-page .message-meta.is-agent {
+  justify-content: flex-start;
+}
+
+.project-manager-page .message-meta span:first-child {
+  font-weight: 700;
+}
+
+.project-manager-page .detail-delete-hint {
+  margin: 10px 0 0;
+  line-height: 1.6;
+  color: var(--mac-text-secondary);
+}
+
+.project-manager-page .conversation-load-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 8px 0 4px;
+  color: var(--mac-text-secondary);
+  font-size: 0.82rem;
+}
+
 @keyframes pm-spin {
   from {
     transform: rotate(0deg);
@@ -540,5 +986,38 @@
 @media (max-width: 640px) {
   .project-manager-page .toolbar-actions {
     grid-template-columns: 1fr;
+  }
+
+  .project-manager-page .project-detail-actions {
+    align-items: stretch;
+  }
+
+  .project-manager-page .project-detail-action-row {
+    width: 100%;
+  }
+
+  .project-manager-page .project-detail-action-row .btn {
+    flex: 1;
+  }
+
+  .project-manager-page .conversation-toolbar {
+    align-items: stretch;
+  }
+
+  .project-manager-page .conversation-toolbar-actions {
+    width: 100%;
+  }
+
+  .project-manager-page .message-entry {
+    gap: 10px;
+  }
+
+  .project-manager-page .message-stack {
+    max-width: min(92%, 100%);
+  }
+
+  .project-manager-page .conversation-bubble {
+    padding: 14px 16px;
+    border-radius: 20px;
   }
 }

@@ -26,6 +26,22 @@ export interface SessionSummary {
   project_source_hint: string
 }
 
+export interface SessionConversationItem {
+  id: string
+  session_id: string
+  role: 'user' | 'agent'
+  content: string
+  timestamp: number
+  reply_for: string
+  source_file: string
+  source_line: number
+}
+
+export interface SessionConversationDetail {
+  session: SessionSummary
+  items: SessionConversationItem[]
+}
+
 export interface ProjectManagerSnapshot {
   projects: ProjectSummary[]
   sessions: SessionSummary[]
@@ -49,10 +65,28 @@ export const renameSession = async (sessionID: string, displayName: string): Pro
   await Call.ByName(`${PROJECT_MANAGER_SERVICE}.RenameSession`, sessionID, displayName)
 }
 
+export const deleteProject = async (projectPath: string): Promise<void> => {
+  await Call.ByName(`${PROJECT_MANAGER_SERVICE}.DeleteProject`, projectPath)
+}
+
+export const deleteSession = async (sessionID: string): Promise<void> => {
+  await Call.ByName(`${PROJECT_MANAGER_SERVICE}.DeleteSession`, sessionID)
+}
+
 export const openSessionTerminal = async (sessionID: string): Promise<void> => {
   await Call.ByName(`${PROJECT_MANAGER_SERVICE}.OpenSessionTerminal`, sessionID)
 }
 
 export const openProjectFolder = async (projectPath: string): Promise<void> => {
   await Call.ByName(`${PROJECT_MANAGER_SERVICE}.OpenProjectFolder`, projectPath)
+}
+
+export const fetchSessionConversationDetail = async (sessionID: string): Promise<SessionConversationDetail> => {
+  const result = await Call.ByName(`${PROJECT_MANAGER_SERVICE}.GetSessionConversationDetail`, sessionID)
+  return result as SessionConversationDetail
+}
+
+export const pruneSessionConversation = async (sessionID: string, messageIDs: string[]): Promise<SessionConversationDetail> => {
+  const result = await Call.ByName(`${PROJECT_MANAGER_SERVICE}.PruneSessionConversation`, sessionID, messageIDs)
+  return result as SessionConversationDetail
 }

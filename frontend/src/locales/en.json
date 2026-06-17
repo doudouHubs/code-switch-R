@@ -508,10 +508,45 @@
         "sessionCount": "{count} sessions",
         "moreActions": "More actions",
         "rename": "Rename",
+        "deleteProject": "Delete Project",
+        "deleteSession": "Delete Session",
         "openFolder": "Open Folder",
         "openSession": "Open Terminal",
         "openingSession": "Opening...",
         "pathDetail": "Path"
+      },
+      "detail": {
+        "eyebrow": "Session Detail",
+        "back": "Back to Project Manager",
+        "loadingTitle": "Loading session detail...",
+        "projectName": "Project",
+        "updatedAt": "Last updated",
+        "loading": "Collecting session conversation...",
+        "empty": "No user / agent conversation is available for this session yet.",
+        "userLabel": "User",
+        "agentLabel": "Agent",
+        "showMore": "Show more",
+        "showLess": "Show less",
+        "enterSelection": "Enter Selection",
+        "exitSelection": "Exit Selection",
+        "selectPrimary": "Select Primary",
+        "selectLoaded": "Select Loaded",
+        "clearSelection": "Clear Selection",
+        "renderedCount": "Rendered {visible} / {total}",
+        "selectedCount": "Selected {count}",
+        "loadMoreHint": "This session is long, so messages are rendered in batches. Scroll near the bottom or load more manually.",
+        "loadMore": "Load More",
+        "openingTerminal": "Opening terminal...",
+        "deleteSelected": "Delete Selected {count}",
+        "deleteTitle": "Prune Session Conversation",
+        "deleteConfirm": "Delete the selected {count} conversation items?",
+        "deleteHint": "This directly rewrites the real `.codex/sessions` file. There is no undo.",
+        "confirmDeleteAction": "Delete Now",
+        "deleting": "Deleting...",
+        "deleteSuccess": "Session conversation pruned",
+        "errors": {
+          "sessionNotFound": "Session does not exist or the session ID is invalid"
+        }
       },
       "rename": {
         "projectTitle": "Rename Project",
@@ -523,6 +558,17 @@
         "saving": "Saving...",
         "saved": "Name updated",
         "emptyName": "Name cannot be empty."
+      },
+      "delete": {
+        "projectTitle": "Delete Project",
+        "sessionTitle": "Delete Session",
+        "projectConfirm": "Delete project \"{name}\" and its {count} sessions?",
+        "sessionConfirm": "Delete session \"{name}\"?",
+        "hint": "This physically deletes the real `.codex/sessions` session file and clears local Project Manager state. Request captures are preserved. This cannot be undone.",
+        "confirmAction": "Delete Now",
+        "deleting": "Deleting...",
+        "projectDeleted": "Project and related sessions deleted",
+        "sessionDeleted": "Session deleted"
       },
       "common": {
         "path": "Project Path",
