@@ -732,10 +732,26 @@
   align-content: start;
 }
 
-.project-manager-page .conversation-group {
-  display: grid;
+.project-manager-page .conversation-viewport {
+  position: relative;
+  overflow: auto;
+  max-height: min(calc(100vh - 240px), 1120px);
+  padding-right: 6px;
+  scrollbar-gutter: stable;
+}
+
+.project-manager-page .conversation-virtualizer {
+  position: relative;
   width: 100%;
-  gap: 10px;
+  min-height: 100%;
+}
+
+.project-manager-page .conversation-virtual-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  padding-bottom: 14px;
 }
 
 .project-manager-page .message-entry {
@@ -967,17 +983,6 @@
   color: var(--mac-text-secondary);
 }
 
-.project-manager-page .conversation-load-more {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  padding: 8px 0 4px;
-  color: var(--mac-text-secondary);
-  font-size: 0.82rem;
-}
-
 @keyframes pm-spin {
   from {
     transform: rotate(0deg);
@@ -1040,6 +1045,11 @@
 
   .project-manager-page .conversation-toolbar-actions {
     width: 100%;
+  }
+
+  .project-manager-page .conversation-viewport {
+    max-height: min(calc(100vh - 210px), 980px);
+    padding-right: 2px;
   }
 
   .project-manager-page .message-entry {

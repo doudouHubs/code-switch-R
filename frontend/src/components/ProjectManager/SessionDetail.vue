@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { useVirtualizer, type VirtualItem } from '@tanstack/vue-virtual'
 import BaseButton from '../common/BaseButton.vue'
 import BaseModal from '../common/BaseModal.vue'
 import './projectManager.css'
@@ -26,16 +27,14 @@ const selecting = ref(false)
 const detail = ref<SessionConversationDetail | null>(null)
 const expandedIDs = ref<string[]>([])
 const selectedIDs = ref<string[]>([])
-const renderedCount = ref(60)
-const loadMoreAnchor = ref<HTMLElement | null>(null)
+const conversationViewport = ref<HTMLElement | null>(null)
 
 const deleteState = reactive({
   open: false,
   count: 0,
 })
 
-const conversationRenderBatchSize = 60
-let loadMoreObserver: IntersectionObserver | null = null
+const messageRowElements = new Map<string, HTMLElement>()
 
 const sessionID = computed(() => {
   const raw = route.params.sessionId
@@ -52,32 +51,11 @@ const dateFormatter = computed(() =>
 )
 
 const items = computed(() => detail.value?.items ?? [])
-const visibleItems = computed(() => items.value.slice(0, renderedCount.value))
 const selectedSet = computed(() => new Set(selectedIDs.value))
 const expandedSet = computed(() => new Set(expandedIDs.value))
 const selectedCount = computed(() => selectedIDs.value.length)
 const hasSelection = computed(() => selectedCount.value > 0)
-const hasMoreItems = computed(() => visibleItems.value.length < items.value.length)
 const showSelectionToolbar = computed(() => selecting.value && !!detail.value)
-const conversationGroups = computed(() => {
-  const groups: Array<{ id: string; role: SessionConversationItem['role']; items: SessionConversationItem[] }> = []
-
-  for (const item of visibleItems.value) {
-    const previousGroup = groups[groups.length - 1]
-    if (previousGroup && previousGroup.role === item.role) {
-      previousGroup.items.push(item)
-      continue
-    }
-
-    groups.push({
-      id: item.id,
-      role: item.role,
-      items: [item],
-    })
-  }
-
-  return groups
-})
 
 const formatUpdatedAt = (timestamp: number) => {
   if (!timestamp) {
@@ -103,7 +81,111 @@ const shouldShowExpand = (item: SessionConversationItem) => {
 
 const isExpanded = (itemID: string) => expandedSet.value.has(itemID)
 
-const toggleExpanded = (item: SessionConversationItem) => {
+const estimateMessageUnits = (content: string) => {
+  const normalized = content.replace(/\r\n/g, '\n')
+  return normalized
+    .split('\n')
+    .reduce((total, line) => total + Math.max(1, Math.ceil(Math.max(line.length, 1) / 42)), 0)
+}
+
+const estimateMessageSize = (index: number) => {
+  const item = items.value[index]
+  if (!item) {
+    return 120
+  }
+
+  const expandable = shouldShowExpand(item)
+  const visibleUnits = item.role === 'agent' && expandable && !isExpanded(item.id)
+    ? Math.min(estimateMessageUnits(item.content), 3)
+    : estimateMessageUnits(item.content)
+
+  const baseHeight = item.role === 'user' ? 92 : 104
+  return baseHeight + visibleUnits * 24 + (expandable ? 24 : 0)
+}
+
+const virtualizer = useVirtualizer<HTMLElement, HTMLElement>(computed(() => ({
+  count: items.value.length,
+  getScrollElement: () => conversationViewport.value,
+  estimateSize: estimateMessageSize,
+  overscan: 10,
+  getItemKey: index => items.value[index]?.id ?? index,
+})))
+
+const virtualMessages = computed(() => {
+  const next: Array<{ row: VirtualItem; item: SessionConversationItem }> = []
+  for (const row of virtualizer.value.getVirtualItems()) {
+    const item = items.value[row.index]
+    if (item) {
+      next.push({ row, item })
+    }
+  }
+  return next
+})
+
+const virtualTotalSize = computed(() => virtualizer.value.getTotalSize())
+
+const waitForNextLayout = () => new Promise<void>((resolve) => {
+  if (typeof window === 'undefined') {
+    resolve()
+    return
+  }
+  window.requestAnimationFrame(() => resolve())
+})
+
+const setMessageRowRef = (messageID: string, element: unknown) => {
+  if (!(element instanceof HTMLElement)) {
+    messageRowElements.delete(messageID)
+    return
+  }
+
+  messageRowElements.set(messageID, element)
+  virtualizer.value.measureElement(element)
+}
+
+const getVirtualRowKey = (row: VirtualItem) =>
+  typeof row.key === 'bigint' ? row.key.toString() : row.key
+
+const syncVirtualConversationLayout = async (options: { anchorItemID?: string; resetScroll?: boolean } = {}) => {
+  const scrollElement = conversationViewport.value
+  const anchorElement = options.anchorItemID ? messageRowElements.get(options.anchorItemID) : null
+  let anchorTop: number | null = null
+
+  if (scrollElement && anchorElement) {
+    const viewportRect = scrollElement.getBoundingClientRect()
+    anchorTop = anchorElement.getBoundingClientRect().top - viewportRect.top
+  }
+
+  await nextTick()
+  await waitForNextLayout()
+  virtualizer.value.measure()
+  await waitForNextLayout()
+
+  if (options.resetScroll && scrollElement) {
+    scrollElement.scrollTop = 0
+    virtualizer.value.scrollToOffset(0)
+  }
+
+  if (anchorTop === null || !scrollElement || !options.anchorItemID) {
+    return
+  }
+
+  const nextAnchorElement = messageRowElements.get(options.anchorItemID)
+  if (!nextAnchorElement) {
+    return
+  }
+
+  const viewportRect = scrollElement.getBoundingClientRect()
+  const nextAnchorTop = nextAnchorElement.getBoundingClientRect().top - viewportRect.top
+  const delta = nextAnchorTop - anchorTop
+
+  // 这里按“点击哪条 agent，就尽量稳住哪条”的原则补偿滚动，
+  // 否则展开/收起长回答时，视口会出现明显抖动，体验像没睡醒似的。
+  if (Math.abs(delta) >= 1) {
+    scrollElement.scrollTop += delta
+  }
+}
+
+const toggleExpanded = async (item: SessionConversationItem) => {
   if (item.role !== 'agent' || !shouldShowExpand(item)) {
     return
   }
@@ -114,6 +196,7 @@ const toggleExpanded = (item: SessionConversationItem) => {
     next.add(item.id)
   }
   expandedIDs.value = Array.from(next)
+  await syncVirtualConversationLayout({ anchorItemID: item.id })
 }
 
 const handleBubbleKeydown = (item: SessionConversationItem, event: KeyboardEvent) => {
@@ -124,7 +207,7 @@ const handleBubbleKeydown = (item: SessionConversationItem, event: KeyboardEvent
     return
   }
   event.preventDefault()
-  toggleExpanded(item)
+  void toggleExpanded(item)
 }
 
 const isSelected = (itemID: string) => selectedSet.value.has(itemID)
@@ -169,14 +252,6 @@ const resetSelectionState = () => {
   selecting.value = false
 }
 
-const resetRenderedWindow = () => {
-  renderedCount.value = Math.min(items.value.length || conversationRenderBatchSize, conversationRenderBatchSize)
-}
-
-const loadMoreItems = () => {
-  renderedCount.value = Math.min(renderedCount.value + conversationRenderBatchSize, items.value.length)
-}
-
 const clearSelection = () => {
   selectedIDs.value = []
 }
@@ -202,39 +277,10 @@ const selectPrimaryConversation = () => {
   selectedIDs.value = Array.from(next)
 }
 
-const selectLoadedItems = () => {
-  selectedIDs.value = Array.from(new Set(visibleItems.value.map(item => item.id)))
-}
-
-const teardownLoadMoreObserver = () => {
-  if (!loadMoreObserver) {
-    return
-  }
-  loadMoreObserver.disconnect()
-  loadMoreObserver = null
-}
-
-const setupLoadMoreObserver = async () => {
-  teardownLoadMoreObserver()
-  if (!hasMoreItems.value) {
-    return
-  }
-  await nextTick()
-  if (!loadMoreAnchor.value) {
-    return
-  }
-
-  // 这里用“接近底部自动续一批”的渐进渲染，先把首屏和常用滚动做轻，
-  // 避免超长会话一上来就把整页 DOM 全摊开。
-  loadMoreObserver = new IntersectionObserver(entries => {
-    if (!entries.some(entry => entry.isIntersecting)) {
-      return
-    }
-    loadMoreItems()
-  }, {
-    rootMargin: '240px 0px 240px 0px',
-  })
-  loadMoreObserver.observe(loadMoreAnchor.value)
+const selectAllMessages = () => {
+  // 真虚拟列表只渲染视口附近的 DOM，但“全选”必须作用于完整数据集，
+  // 否则用户眼里是全选，实际只删掉一截，那就纯扯犊子了。
+  selectedIDs.value = Array.from(new Set(items.value.map(item => item.id)))
 }
 
 const loadDetail = async () => {
@@ -245,15 +291,20 @@ const loadDetail = async () => {
   }
 
   loading.value = true
+  let loaded = false
   try {
     detail.value = await fetchSessionConversationDetail(sessionID.value)
     resetSelectionState()
-    resetRenderedWindow()
+    loaded = true
   } catch (error) {
     console.error('failed to load session conversation detail', error)
     showToast(extractErrorMessage(error), 'error')
   } finally {
     loading.value = false
+  }
+
+  if (loaded) {
+    await syncVirtualConversationLayout({ resetScroll: true })
   }
 }
 
@@ -300,8 +351,8 @@ const confirmDelete = async () => {
   try {
     detail.value = await pruneSessionConversation(detail.value.session.id, selectedIDs.value)
     resetSelectionState()
-    resetRenderedWindow()
     deleteState.open = false
+    await syncVirtualConversationLayout()
     showToast(t('components.projectManager.detail.deleteSuccess'), 'success')
   } catch (error) {
     console.error('failed to prune session conversation', error)
@@ -312,23 +363,18 @@ const confirmDelete = async () => {
 }
 
 watch(sessionID, () => {
-  loadDetail()
+  void loadDetail()
 })
 
-watch([items, hasMoreItems], () => {
-  void setupLoadMoreObserver()
-})
-
-watch(loadMoreAnchor, () => {
-  void setupLoadMoreObserver()
+watch(selecting, () => {
+  if (loading.value) {
+    return
+  }
+  void syncVirtualConversationLayout()
 })
 
 onMounted(() => {
-  loadDetail()
-})
-
-onBeforeUnmount(() => {
-  teardownLoadMoreObserver()
+  void loadDetail()
 })
 </script>
 
@@ -369,14 +415,14 @@ onBeforeUnmount(() => {
 
       <div v-if="showSelectionToolbar" class="conversation-toolbar">
         <div class="conversation-toolbar-status">
-          <strong>{{ t('components.projectManager.detail.renderedCount', { visible: visibleItems.length, total: items.length }) }}</strong>
-          <span>{{ t('components.projectManager.detail.selectedCount', { count: selectedCount }) }}</span>
+          <strong>{{ t('components.projectManager.detail.selectedCount', { count: selectedCount }) }}</strong>
+          <span>{{ t('components.projectManager.detail.totalCount', { count: items.length }) }}</span>
         </div>
         <div class="conversation-toolbar-actions">
           <button class="toolbar-chip" type="button" @click="selectPrimaryConversation">
             {{ t('components.projectManager.detail.selectPrimary') }}
           </button>
-          <button class="toolbar-chip" type="button" @click="selectLoadedItems">
+          <button class="toolbar-chip" type="button" @click="selectAllMessages">
             {{ t('components.projectManager.detail.selectLoaded') }}
           </button>
           <button class="toolbar-chip ghost" type="button" :disabled="!hasSelection" @click="clearSelection">
@@ -419,63 +465,63 @@ onBeforeUnmount(() => {
       <p>{{ t('components.projectManager.detail.empty') }}</p>
     </section>
 
-    <section v-else class="conversation-list chat-thread">
-      <article
-        v-for="group in conversationGroups"
-        :key="group.id"
-        :class="['conversation-group', `is-${group.role}`]"
-      >
-        <div
-          v-for="item in group.items"
-          :key="item.id"
-          :class="['message-entry', `is-${item.role}`, { selected: isSelected(item.id), 'is-selecting': selecting }]"
-          :role="selecting ? 'checkbox' : undefined"
-          :aria-checked="selecting ? isSelected(item.id) : undefined"
-          :tabindex="selecting ? 0 : undefined"
-          @click="handleMessageEntryClick(item)"
-          @keydown.enter.prevent="handleMessageEntryClick(item)"
-          @keydown.space.prevent="handleMessageEntryClick(item)"
+    <section
+      v-else
+      ref="conversationViewport"
+      class="conversation-list chat-thread conversation-viewport"
+    >
+      <div class="conversation-virtualizer" :style="{ height: `${virtualTotalSize}px` }">
+        <article
+          v-for="entry in virtualMessages"
+          :key="getVirtualRowKey(entry.row)"
+          :ref="element => setMessageRowRef(entry.item.id, element)"
+          class="conversation-virtual-row"
+          :data-index="entry.row.index"
+          :style="{ transform: `translateY(${entry.row.start}px)` }"
         >
-          <label v-if="selecting" class="message-select-slot" @click.stop>
-            <input
-              type="checkbox"
-              :checked="isSelected(item.id)"
-              @change="handleCheckboxChange(item, $event)"
-            />
-          </label>
+          <div
+            :class="['message-entry', `is-${entry.item.role}`, { selected: isSelected(entry.item.id), 'is-selecting': selecting }]"
+            :role="selecting ? 'checkbox' : undefined"
+            :aria-checked="selecting ? isSelected(entry.item.id) : undefined"
+            :tabindex="selecting ? 0 : undefined"
+            @click="handleMessageEntryClick(entry.item)"
+            @keydown.enter.prevent="handleMessageEntryClick(entry.item)"
+            @keydown.space.prevent="handleMessageEntryClick(entry.item)"
+          >
+            <label v-if="selecting" class="message-select-slot" @click.stop>
+              <input
+                type="checkbox"
+                :checked="isSelected(entry.item.id)"
+                @change="handleCheckboxChange(entry.item, $event)"
+              />
+            </label>
 
-          <div class="message-stack">
-            <div
-              :class="['conversation-bubble', `is-${item.role}`, { clickable: item.role === 'agent', selected: isSelected(item.id) }]"
-              :role="!selecting && item.role === 'agent' ? 'button' : undefined"
-              :tabindex="!selecting && item.role === 'agent' ? 0 : undefined"
-              @click="!selecting && toggleExpanded(item)"
-              @keydown="!selecting && handleBubbleKeydown(item, $event)"
-            >
-              <span :class="['conversation-content', { clamped: item.role === 'agent' && !isExpanded(item.id) }]">
-                {{ item.content }}
-              </span>
-              <span
-                v-if="shouldShowExpand(item)"
-                class="conversation-toggle"
+            <div class="message-stack">
+              <div
+                :class="['conversation-bubble', `is-${entry.item.role}`, { clickable: entry.item.role === 'agent', selected: isSelected(entry.item.id) }]"
+                :role="!selecting && entry.item.role === 'agent' ? 'button' : undefined"
+                :tabindex="!selecting && entry.item.role === 'agent' ? 0 : undefined"
+                @click="!selecting && toggleExpanded(entry.item)"
+                @keydown="!selecting && handleBubbleKeydown(entry.item, $event)"
               >
-                {{ isExpanded(item.id) ? t('components.projectManager.detail.showLess') : t('components.projectManager.detail.showMore') }}
-              </span>
-            </div>
+                <span :class="['conversation-content', { clamped: entry.item.role === 'agent' && !isExpanded(entry.item.id) }]">
+                  {{ entry.item.content }}
+                </span>
+                <span
+                  v-if="shouldShowExpand(entry.item)"
+                  class="conversation-toggle"
+                >
+                  {{ isExpanded(entry.item.id) ? t('components.projectManager.detail.showLess') : t('components.projectManager.detail.showMore') }}
+                </span>
+              </div>
 
-            <div :class="['message-meta', `is-${item.role}`]">
-              <span>{{ item.role === 'user' ? t('components.projectManager.detail.userLabel') : t('components.projectManager.detail.agentLabel') }}</span>
-              <span>{{ formatUpdatedAt(item.timestamp) }}</span>
+              <div :class="['message-meta', `is-${entry.item.role}`]">
+                <span>{{ entry.item.role === 'user' ? t('components.projectManager.detail.userLabel') : t('components.projectManager.detail.agentLabel') }}</span>
+                <span>{{ formatUpdatedAt(entry.item.timestamp) }}</span>
+              </div>
             </div>
           </div>
-        </div>
-      </article>
-
-      <div v-if="hasMoreItems" ref="loadMoreAnchor" class="conversation-load-more">
-        <span>{{ t('components.projectManager.detail.loadMoreHint') }}</span>
-        <button class="toolbar-chip" type="button" @click="loadMoreItems">
-          {{ t('components.projectManager.detail.loadMore') }}
-        </button>
+        </article>
       </div>
     </section>
 
