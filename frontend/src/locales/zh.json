@@ -536,6 +536,7 @@
         "selectedCount": "已选 {count} 条",
         "totalCount": "共 {count} 条",
         "openingTerminal": "正在打开终端...",
+        "deleteAction": "删除",
         "deleteSelected": "删除已选 {count}",
         "deleteTitle": "确认剪枝会话",
         "deleteConfirm": "确认删除已选中的 {count} 条对话内容吗？",

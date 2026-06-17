@@ -35,6 +35,7 @@ type projectManagerConversationPrunePlan struct {
 type projectManagerRolloutRecord struct {
 	LineIndex   int
 	Type        string
+	Timestamp   int64
 	PayloadType string
 	Role        string
 	Message     string
@@ -247,6 +248,7 @@ func readProjectManagerRolloutConversationItems(path string, sessionID string) (
 				SessionID:  sessionID,
 				Role:       projectManagerConversationRole(record.PayloadType),
 				Content:    content,
+				Timestamp:  record.Timestamp,
 				SourceFile: path,
 				SourceLine: record.LineIndex + 1,
 			}
@@ -517,6 +519,7 @@ func parseProjectManagerRolloutFile(path string, expectedSessionID string) (proj
 		record := projectManagerRolloutRecord{
 			LineIndex:   lineIndex,
 			Type:        lineType,
+			Timestamp:   parseProjectManagerConversationTimestamp(gjson.Get(trimmed, "timestamp").String()),
 			PayloadType: payloadType,
 			Role:        strings.TrimSpace(gjson.Get(trimmed, "payload.role").String()),
 			Message:     strings.TrimSpace(gjson.Get(trimmed, "payload.message").String()),

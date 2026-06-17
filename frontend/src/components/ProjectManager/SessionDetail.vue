@@ -56,6 +56,14 @@ const expandedSet = computed(() => new Set(expandedIDs.value))
 const selectedCount = computed(() => selectedIDs.value.length)
 const hasSelection = computed(() => selectedCount.value > 0)
 const showSelectionToolbar = computed(() => selecting.value && !!detail.value)
+const selectionToggleLabel = computed(() =>
+  selecting.value
+    ? t('components.projectManager.detail.exitSelection')
+    : t('components.projectManager.detail.enterSelection'),
+)
+const headerTitle = computed(() =>
+  detail.value?.session.display_name || t('components.projectManager.detail.loadingTitle'),
+)
 
 const formatUpdatedAt = (timestamp: number) => {
   if (!timestamp) {
@@ -283,6 +291,14 @@ const selectAllMessages = () => {
   selectedIDs.value = Array.from(new Set(items.value.map(item => item.id)))
 }
 
+const toggleSelectionMode = () => {
+  if (selecting.value) {
+    closeSelectionMode()
+    return
+  }
+  openSelectionMode()
+}
+
 const loadDetail = async () => {
   if (!sessionID.value) {
     showToast(t('components.projectManager.detail.errors.sessionNotFound'), 'error')
@@ -379,89 +395,53 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="project-manager-page project-manager-detail-page">
-    <section class="project-detail-hero">
-      <div class="project-detail-actions">
-        <button class="back-chip" type="button" @click="goBack">
-          ← {{ t('components.projectManager.detail.back') }}
+  <div class="project-manager-page project-manager-detail-page" :class="{ 'is-selecting': showSelectionToolbar }">
+    <header class="detail-app-header">
+      <div class="detail-app-header-side">
+        <button
+          class="detail-nav-button"
+          type="button"
+          :title="t('components.projectManager.detail.back')"
+          :aria-label="t('components.projectManager.detail.back')"
+          @click="goBack"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M14.5 5.5 8 12l6.5 6.5" />
+          </svg>
         </button>
-        <div class="project-detail-action-row">
-          <BaseButton
-            variant="outline"
-            :disabled="openingTerminal || loading || !detail"
-            :loading="openingTerminal"
-            @click="handleOpenTerminal"
-          >
-            {{ t('components.projectManager.card.openSession') }}
-          </BaseButton>
-          <BaseButton
-            v-if="!selecting"
-            variant="outline"
-            :disabled="loading || !detail"
-            @click="openSelectionMode"
-          >
-            {{ t('components.projectManager.detail.enterSelection') }}
-          </BaseButton>
-          <BaseButton
-            v-else
-            variant="danger"
-            :disabled="!hasSelection || pruning || loading"
-            @click="openDeleteConfirm"
-          >
-            {{ t('components.projectManager.detail.deleteSelected', { count: selectedCount }) }}
-          </BaseButton>
+        <div class="detail-app-header-copy">
+          <strong>{{ headerTitle }}</strong>
         </div>
       </div>
 
-      <div v-if="showSelectionToolbar" class="conversation-toolbar">
-        <div class="conversation-toolbar-status">
-          <strong>{{ t('components.projectManager.detail.selectedCount', { count: selectedCount }) }}</strong>
-          <span>{{ t('components.projectManager.detail.totalCount', { count: items.length }) }}</span>
-        </div>
-        <div class="conversation-toolbar-actions">
-          <button class="toolbar-chip" type="button" @click="selectPrimaryConversation">
-            {{ t('components.projectManager.detail.selectPrimary') }}
-          </button>
-          <button class="toolbar-chip" type="button" @click="selectAllMessages">
-            {{ t('components.projectManager.detail.selectLoaded') }}
-          </button>
-          <button class="toolbar-chip ghost" type="button" :disabled="!hasSelection" @click="clearSelection">
-            {{ t('components.projectManager.detail.clearSelection') }}
-          </button>
-          <button class="toolbar-chip ghost" type="button" @click="closeSelectionMode">
-            {{ t('components.projectManager.detail.exitSelection') }}
-          </button>
-        </div>
+      <div class="detail-app-header-actions">
+        <button
+          class="detail-header-text-button accent"
+          type="button"
+          :disabled="openingTerminal || loading || !detail"
+          @click="handleOpenTerminal"
+        >
+          <span v-if="openingTerminal" class="detail-header-spinner" aria-hidden="true"></span>
+          <span>{{ t('components.projectManager.card.openSession') }}</span>
+        </button>
+        <button
+          class="detail-header-text-button"
+          type="button"
+          :class="{ active: selecting }"
+          :disabled="loading || !detail || pruning"
+          @click="toggleSelectionMode"
+        >
+          {{ selectionToggleLabel }}
+        </button>
       </div>
+    </header>
 
-      <div class="project-detail-copy">
-        <p class="detail-eyebrow">{{ t('components.projectManager.detail.eyebrow') }}</p>
-        <h1>{{ detail?.session.display_name || t('components.projectManager.detail.loadingTitle') }}</h1>
-        <p class="detail-lead">{{ detail?.session.summary || t('components.projectManager.common.emptySummary') }}</p>
-      </div>
-
-      <div v-if="detail" class="project-detail-meta">
-        <div class="detail-meta-card">
-          <span>{{ t('components.projectManager.detail.projectName') }}</span>
-          <strong>{{ detail.session.project_name }}</strong>
-        </div>
-        <div class="detail-meta-card">
-          <span>{{ t('components.projectManager.common.path') }}</span>
-          <strong>{{ detail.session.cwd || detail.session.project_path }}</strong>
-        </div>
-        <div class="detail-meta-card">
-          <span>{{ t('components.projectManager.detail.updatedAt') }}</span>
-          <strong>{{ formatUpdatedAt(detail.session.updated_at) }}</strong>
-        </div>
-      </div>
-    </section>
-
-    <section v-if="loading" class="state-panel">
+    <section v-if="loading" class="detail-screen state-panel">
       <div class="state-orb"></div>
       <p>{{ t('components.projectManager.detail.loading') }}</p>
     </section>
 
-    <section v-else-if="!items.length" class="state-panel empty">
+    <section v-else-if="!items.length" class="detail-screen state-panel empty">
       <p>{{ t('components.projectManager.detail.empty') }}</p>
     </section>
 
@@ -524,6 +504,71 @@ onMounted(() => {
         </article>
       </div>
     </section>
+
+    <footer v-if="showSelectionToolbar" class="selection-dock">
+      <div class="selection-dock-summary">
+        <strong>{{ t('components.projectManager.detail.selectedCount', { count: selectedCount }) }}</strong>
+        <span>{{ t('components.projectManager.detail.totalCount', { count: items.length }) }}</span>
+      </div>
+
+      <div class="selection-dock-actions">
+        <button class="selection-dock-action" type="button" @click="selectPrimaryConversation">
+          <span class="selection-dock-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M6 6.75h9" />
+              <path d="M6 12h12" />
+              <path d="M6 17.25h7.5" />
+            </svg>
+          </span>
+          <span>{{ t('components.projectManager.detail.selectPrimary') }}</span>
+        </button>
+
+        <button class="selection-dock-action" type="button" @click="selectAllMessages">
+          <span class="selection-dock-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <rect x="5.25" y="5.25" width="13.5" height="13.5" rx="2.5" />
+              <path d="m8.5 12 2.2 2.2L15.5 9.5" />
+            </svg>
+          </span>
+          <span>{{ t('components.projectManager.detail.selectLoaded') }}</span>
+        </button>
+
+        <button class="selection-dock-action" type="button" :disabled="!hasSelection" @click="clearSelection">
+          <span class="selection-dock-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M6.75 6.75 17.25 17.25" />
+              <path d="M17.25 6.75 6.75 17.25" />
+            </svg>
+          </span>
+          <span>{{ t('components.projectManager.detail.clearSelection') }}</span>
+        </button>
+
+        <button
+          class="selection-dock-action danger"
+          type="button"
+          :disabled="!hasSelection || pruning || loading"
+          @click="openDeleteConfirm"
+        >
+          <span class="selection-dock-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M9.25 5.75h5.5" />
+              <path d="M4.75 7.25h14.5" />
+              <path d="M8.25 7.25v9.25" />
+              <path d="M15.75 7.25v9.25" />
+              <path d="M6.75 7.25l.55 10.05a1.5 1.5 0 0 0 1.5 1.42h6.4a1.5 1.5 0 0 0 1.5-1.42l.55-10.05" />
+            </svg>
+          </span>
+          <span>{{ t('components.projectManager.detail.deleteAction') }}</span>
+        </button>
+
+        <button class="selection-dock-close" type="button" :disabled="pruning" @click="closeSelectionMode">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M7 7 17 17" />
+            <path d="M17 7 7 17" />
+          </svg>
+        </button>
+      </div>
+    </footer>
 
     <BaseModal
       :open="deleteState.open"

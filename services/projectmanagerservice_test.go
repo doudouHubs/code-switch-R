@@ -19,6 +19,16 @@ func setupProjectManagerTestHome(t *testing.T) string {
 	return tmpHome
 }
 
+func mustParseProjectManagerRFC3339Time(t *testing.T, value string) time.Time {
+	t.Helper()
+
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		t.Fatalf("解析测试时间失败: %v", err)
+	}
+	return parsed
+}
+
 func writeProjectManagerSessionIndex(t *testing.T, home string, sessionID string, threadName string, updatedAt string) string {
 	t.Helper()
 
@@ -603,6 +613,12 @@ func TestProjectManagerGetSessionConversationDetailFallsBackToRolloutOnly(t *tes
 	}
 	if detail.Items[1].ReplyFor != detail.Items[0].ID {
 		t.Fatalf("rollout only 回答归属关系不对，got=%+v", detail.Items[1])
+	}
+	if detail.Items[0].Timestamp != mustParseProjectManagerRFC3339Time(t, "2026-06-16T10:01:01Z").UnixMilli() {
+		t.Fatalf("rollout only 用户时间戳不对，got=%d", detail.Items[0].Timestamp)
+	}
+	if detail.Items[1].Timestamp != mustParseProjectManagerRFC3339Time(t, "2026-06-16T10:01:03Z").UnixMilli() {
+		t.Fatalf("rollout only Agent 时间戳不对，got=%d", detail.Items[1].Timestamp)
 	}
 }
 

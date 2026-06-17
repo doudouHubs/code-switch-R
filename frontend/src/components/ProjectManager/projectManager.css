@@ -543,180 +543,259 @@
 .project-manager-page.project-manager-detail-page {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 0;
+  height: 100%;
+  padding: 0;
+  overflow: hidden;
 }
 
-.project-manager-page .project-detail-hero {
-  display: grid;
-  gap: 18px;
-  padding: 24px;
-  border-radius: 30px;
-  border: 1px solid rgba(255, 255, 255, 0.56);
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(245, 248, 255, 0.86)),
-    radial-gradient(circle at top right, rgba(55, 114, 255, 0.12), transparent 34%);
-  box-shadow: 0 20px 40px rgba(31, 45, 73, 0.14);
-}
-
-.dark .project-manager-page .project-detail-hero {
-  border-color: rgba(255, 255, 255, 0.06);
-  background:
-    linear-gradient(180deg, rgba(19, 26, 39, 0.96), rgba(14, 18, 28, 0.9)),
-    radial-gradient(circle at top right, rgba(73, 125, 232, 0.16), transparent 32%);
-  box-shadow: 0 24px 44px rgba(0, 0, 0, 0.32);
-}
-
-.project-manager-page .project-detail-actions {
+.project-manager-page .detail-app-header {
+  position: sticky;
+  top: 0;
+  z-index: 8;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
-  flex-wrap: wrap;
+  gap: 16px;
+  min-height: 68px;
+  margin: 0;
+  padding: 12px 18px;
+  background: rgba(255, 255, 255, 0.94);
+  border-bottom: 1px solid rgba(17, 28, 47, 0.08);
+  backdrop-filter: blur(18px);
 }
 
-.project-manager-page .project-detail-action-row {
+.dark .project-manager-page .detail-app-header {
+  background: rgba(17, 23, 34, 0.94);
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+.project-manager-page .detail-app-header-side,
+.project-manager-page .detail-app-header-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
 }
 
-.project-manager-page .conversation-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  flex-wrap: wrap;
-  padding: 14px 16px;
-  border-radius: 22px;
-  background: rgba(255, 255, 255, 0.7);
-  border: 1px solid rgba(17, 28, 47, 0.08);
-}
-
-.dark .project-manager-page .conversation-toolbar {
-  background: rgba(16, 22, 34, 0.8);
-  border-color: rgba(255, 255, 255, 0.08);
-}
-
-.project-manager-page .conversation-toolbar-status {
-  display: grid;
-  gap: 4px;
-}
-
-.project-manager-page .conversation-toolbar-status strong {
-  font-size: 0.92rem;
-  color: var(--mac-text);
-}
-
-.project-manager-page .conversation-toolbar-status span {
-  font-size: 0.78rem;
-  color: var(--mac-text-secondary);
-}
-
-.project-manager-page .conversation-toolbar-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.project-manager-page .toolbar-chip {
-  border: none;
-  padding: 8px 14px;
-  border-radius: 999px;
-  background: rgba(37, 99, 235, 0.12);
-  color: #2563eb;
-  font-size: 0.78rem;
-  font-weight: 700;
-  line-height: 1;
-  cursor: pointer;
-  transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease, opacity 0.18s ease;
-}
-
-.project-manager-page .toolbar-chip:hover {
-  background: rgba(37, 99, 235, 0.18);
-  transform: translateY(-1px);
-}
-
-.project-manager-page .toolbar-chip:disabled {
-  cursor: not-allowed;
-  opacity: 0.48;
-  transform: none;
-}
-
-.project-manager-page .toolbar-chip.ghost {
-  background: rgba(17, 28, 47, 0.06);
-  color: var(--mac-text-secondary);
-}
-
-.dark .project-manager-page .toolbar-chip {
-  background: rgba(76, 128, 214, 0.2);
-  color: #7db5ff;
-}
-
-.dark .project-manager-page .toolbar-chip.ghost {
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--mac-text-secondary);
-}
-
-.project-manager-page .project-detail-copy {
-  display: grid;
+.project-manager-page .detail-app-header-side {
+  min-width: 0;
+  flex: 1;
   gap: 8px;
 }
 
-.project-manager-page .detail-eyebrow {
-  margin: 0;
-  font-size: 0.76rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--mac-text-secondary);
+.project-manager-page .detail-app-header-actions {
+  gap: 8px;
+  flex: 0 0 auto;
 }
 
-.project-manager-page .project-detail-copy h1 {
-  margin: 0;
-  font-size: clamp(1.8rem, 3vw, 2.5rem);
-  line-height: 1.06;
+.project-manager-page .detail-nav-button,
+.project-manager-page .detail-header-icon-button {
+  border: none;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--mac-text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease;
+}
+
+.project-manager-page .detail-nav-button:hover,
+.project-manager-page .detail-header-icon-button:hover {
+  background: rgba(17, 28, 47, 0.06);
+}
+
+.dark .project-manager-page .detail-nav-button:hover,
+.dark .project-manager-page .detail-header-icon-button:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.project-manager-page .detail-nav-button svg,
+.project-manager-page .detail-header-icon-button svg,
+.project-manager-page .selection-dock-icon svg,
+.project-manager-page .selection-dock-close svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.project-manager-page .detail-app-header-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.project-manager-page .detail-app-header-copy strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 1.02rem;
+  font-weight: 700;
   color: var(--mac-text);
 }
 
-.project-manager-page .detail-lead {
-  margin: 0;
-  max-width: 880px;
-  line-height: 1.7;
+.project-manager-page .detail-header-text-button {
+  border: none;
+  min-height: 38px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: rgba(17, 28, 47, 0.06);
   color: var(--mac-text-secondary);
+  font-size: 0.84rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease;
 }
 
-.project-manager-page .project-detail-meta {
+.project-manager-page .detail-header-text-button.accent {
+  background: rgba(37, 99, 235, 0.12);
+  color: #2563eb;
+}
+
+.project-manager-page .detail-header-text-button.active {
+  background: rgba(37, 99, 235, 0.12);
+  color: #2563eb;
+}
+
+.dark .project-manager-page .detail-header-text-button {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.dark .project-manager-page .detail-header-text-button.accent {
+  background: rgba(76, 128, 214, 0.24);
+  color: #7db5ff;
+}
+
+.dark .project-manager-page .detail-header-text-button.active {
+  background: rgba(76, 128, 214, 0.24);
+  color: #7db5ff;
+}
+
+.project-manager-page .detail-header-text-button:disabled,
+.project-manager-page .detail-header-icon-button:disabled,
+.project-manager-page .detail-nav-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.project-manager-page .detail-header-spinner {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  animation: pm-spin 0.72s linear infinite;
+}
+
+.project-manager-page .detail-screen {
+  margin: 20px 18px 0;
+}
+
+.project-manager-page .selection-dock {
+  position: sticky;
+  bottom: 12px;
+  z-index: 8;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin: auto 18px 12px;
+  padding: 16px 18px 14px;
+  border-radius: 26px;
+  border: 1px solid rgba(17, 28, 47, 0.08);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 20px 40px rgba(29, 40, 61, 0.12);
+  backdrop-filter: blur(18px);
+}
+
+.dark .project-manager-page .selection-dock {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(18, 25, 38, 0.96);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.32);
+}
+
+.project-manager-page .selection-dock-summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
   gap: 12px;
 }
 
-.project-manager-page .detail-meta-card {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-  padding: 14px 16px;
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.76);
-  border: 1px solid rgba(17, 28, 47, 0.07);
+.project-manager-page .selection-dock-summary strong {
+  font-size: 0.96rem;
+  color: var(--mac-text);
 }
 
-.dark .project-manager-page .detail-meta-card {
-  background: rgba(16, 22, 34, 0.82);
-  border-color: rgba(255, 255, 255, 0.08);
-}
-
-.project-manager-page .detail-meta-card span {
-  font-size: 0.76rem;
+.project-manager-page .selection-dock-summary span {
+  font-size: 0.8rem;
   color: var(--mac-text-secondary);
 }
 
-.project-manager-page .detail-meta-card strong {
-  font-size: 0.94rem;
-  line-height: 1.55;
+.project-manager-page .selection-dock-actions {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  align-items: stretch;
+}
+
+.project-manager-page .selection-dock-action,
+.project-manager-page .selection-dock-close {
+  border: none;
+  background: transparent;
   color: var(--mac-text);
-  word-break: break-word;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 82px;
+  padding: 10px 8px;
+  border-radius: 18px;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease, opacity 0.18s ease;
+}
+
+.project-manager-page .selection-dock-action:hover,
+.project-manager-page .selection-dock-close:hover {
+  background: rgba(17, 28, 47, 0.05);
+}
+
+.dark .project-manager-page .selection-dock-action:hover,
+.dark .project-manager-page .selection-dock-close:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.project-manager-page .selection-dock-action:disabled,
+.project-manager-page .selection-dock-close:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.project-manager-page .selection-dock-icon {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.project-manager-page .selection-dock-action span:last-child {
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.project-manager-page .selection-dock-action.danger {
+  color: #d14343;
+}
+
+.dark .project-manager-page .selection-dock-action.danger {
+  color: #ff8b8b;
 }
 
 .project-manager-page .conversation-list {
@@ -734,10 +813,16 @@
 
 .project-manager-page .conversation-viewport {
   position: relative;
+  flex: 1;
   overflow: auto;
-  max-height: min(calc(100vh - 240px), 1120px);
-  padding-right: 6px;
+  margin-top: 0;
+  padding: 12px 18px 18px;
+  min-height: 0;
   scrollbar-gutter: stable;
+}
+
+.project-manager-page.project-manager-detail-page.is-selecting .conversation-viewport {
+  padding-bottom: 150px;
 }
 
 .project-manager-page .conversation-virtualizer {
@@ -1008,6 +1093,10 @@
     padding: 16px 14px 18px;
   }
 
+  .project-manager-page .detail-app-header {
+    padding: 10px 14px;
+  }
+
   .project-manager-page .toolbar {
     grid-template-columns: 1fr;
   }
@@ -1039,17 +1128,19 @@
     flex: 1;
   }
 
-  .project-manager-page .conversation-toolbar {
-    align-items: stretch;
-  }
-
-  .project-manager-page .conversation-toolbar-actions {
-    width: 100%;
-  }
-
   .project-manager-page .conversation-viewport {
-    max-height: min(calc(100vh - 210px), 980px);
-    padding-right: 2px;
+    padding: 10px 14px 16px;
+  }
+
+  .project-manager-page .selection-dock {
+    margin-right: 14px;
+    margin-left: 14px;
+    bottom: 8px;
+    padding: 14px 12px 12px;
+  }
+
+  .project-manager-page .selection-dock-actions {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .project-manager-page .message-entry {

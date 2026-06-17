@@ -535,6 +535,7 @@
         "selectedCount": "Selected {count}",
         "totalCount": "Total {count}",
         "openingTerminal": "Opening terminal...",
+        "deleteAction": "Delete",
         "deleteSelected": "Delete Selected {count}",
         "deleteTitle": "Prune Session Conversation",
         "deleteConfirm": "Delete the selected {count} conversation items?",
