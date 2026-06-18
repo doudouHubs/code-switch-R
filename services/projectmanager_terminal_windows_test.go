@@ -175,7 +175,7 @@ func TestBuildProjectManagerAICommitPowerShellCommand(t *testing.T) {
 	got := buildProjectManagerAICommitPowerShellCommand(projectPath)
 	expectedParts := []string{
 		"Set-Location -LiteralPath 'F:\\GitlabProjects\\code-switch-R'",
-		"codex exec --profile commit-fast '$commit commit本地文件'",
+		"codex -p commit-fast exec '$commit commit本地文件'",
 		"if ($__exitCode -eq 0) { exit 0 }",
 		"Read-Host | Out-Null",
 	}
@@ -238,7 +238,7 @@ func TestBuildProjectManagerAICommitLaunchCommand(t *testing.T) {
 		"'-ExecutionPolicy'",
 		"'Bypass'",
 		"'-Command'",
-		"codex exec --profile commit-fast ''$commit commit本地文件''",
+		"codex -p commit-fast exec ''$commit commit本地文件''",
 		"-WorkingDirectory 'F:\\GitlabProjects\\code-switch-R'",
 	}
 

@@ -472,10 +472,16 @@ func buildProjectManagerAICommitPowerShellCommand(projectPath string) string {
 	commitPrompt := escapeProjectManagerPowerShellSingleQuoted(`$commit commit本地文件`)
 	failureMessage := escapeProjectManagerPowerShellSingleQuoted("AI-Commit 执行失败，按 Enter 关闭窗口")
 
+	// 这里必须把 -p/--profile 放在 codex 根命令层，而不是 exec 子命令层。
+	// 当前用户机器上的 codex-cli 0.122.0 存在实测差异：
+	// `codex exec -p commit-fast ...` 会报 profile not found，
+	// 但 `codex -p commit-fast exec ...` 才能正确加载 `CODEX_HOME/commit-fast.config.toml`。
+	// 所以这里明确使用根命令 profile 写法，别再赌 CLI 子命令参数继承。
+	//
 	// 这里直接让可见 shell 自己跑完 commit 命令。
 	// 成功就 exit 0 自动关窗；失败再停留等待用户确认，这样不会为了“保留失败现场”额外再炸出第二个窗口。
 	return fmt.Sprintf(
-		"Set-Location -LiteralPath '%s'; codex exec --profile commit-fast '%s'; $__exitCode = $LASTEXITCODE; if ($__exitCode -eq 0) { exit 0 }; Write-Host '%s'; Read-Host | Out-Null; exit $__exitCode",
+		"Set-Location -LiteralPath '%s'; codex -p commit-fast exec '%s'; $__exitCode = $LASTEXITCODE; if ($__exitCode -eq 0) { exit 0 }; Write-Host '%s'; Read-Host | Out-Null; exit $__exitCode",
 		escapedProjectPath,
 		commitPrompt,
 		failureMessage,
