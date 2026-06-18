@@ -248,6 +248,14 @@ func (s *ProjectManagerService) OpenProjectFolder(projectPath string) error {
 	return OpenInExplorer(projectPath)
 }
 
+func (s *ProjectManagerService) OpenProjectTerminal(projectPath string) error {
+	projectPath = normalizeProjectManagerProjectPath(projectPath)
+	if projectPath == "" {
+		return errors.New("项目路径不能为空")
+	}
+	return s.openProjectManagerProjectTerminal(projectPath)
+}
+
 func (s *ProjectManagerService) RunProjectAICommit(projectPath string) error {
 	projectPath = normalizeProjectManagerProjectPath(projectPath)
 	if projectPath == "" {

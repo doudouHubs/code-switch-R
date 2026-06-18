@@ -16,6 +16,7 @@ import {
   deleteSession,
   fetchProjectManagerSnapshot,
   openProjectFolder,
+  openProjectTerminal,
   openSessionTerminal,
   runProjectAICommit,
   refreshProjectManagerSnapshot,
@@ -35,6 +36,7 @@ const loading = ref(false)
 const refreshing = ref(false)
 const renameSaving = ref(false)
 const openingSessionIds = ref<string[]>([])
+const openingProjectTerminalId = ref('')
 const committingProjectId = ref('')
 const deletingProjectIds = ref<string[]>([])
 const deletingSessionIds = ref<string[]>([])
@@ -321,6 +323,33 @@ const handleOpenProjectFolder = async (project: ProjectSummary) => {
   }
 }
 
+const handleOpenProjectTerminal = async (project: ProjectSummary) => {
+  if (!project?.path || openingProjectTerminalId.value === project.id) {
+    return
+  }
+
+  // 这里单独走“项目级新终端”链路，明确只负责在项目目录新开 codex，
+  // 不复用会话 resume 逻辑，避免头部按钮把用户带回某个旧会话。
+  openingProjectTerminalId.value = project.id
+  const timeoutId = setTimeout(() => {
+    if (openingProjectTerminalId.value === project.id) {
+      openingProjectTerminalId.value = ''
+    }
+  }, projectManagerOpenTimeoutMs)
+
+  try {
+    await openProjectTerminal(project.path)
+  } catch (error) {
+    console.error('failed to open project terminal', error)
+    showToast(extractErrorMessage(error), 'error')
+  } finally {
+    clearTimeout(timeoutId)
+    if (openingProjectTerminalId.value === project.id) {
+      openingProjectTerminalId.value = ''
+    }
+  }
+}
+
 const handleRunProjectAICommit = async (project: ProjectSummary) => {
   if (!project?.path || committingProjectId.value === project.id) {
     return
@@ -410,8 +439,10 @@ onBeforeUnmount(() => {
     <ProjectManagerBreadcrumb
       v-if="selectedProject && activeMode === 'project'"
       :project="selectedProject"
+      :opening-terminal="openingProjectTerminalId === selectedProject.id"
       :committing="committingProjectId === selectedProject.id"
       @back="selectedProjectId = ''"
+      @open-terminal="handleOpenProjectTerminal(selectedProject)"
       @commit="handleRunProjectAICommit(selectedProject)"
     />
 

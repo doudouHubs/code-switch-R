@@ -85,6 +85,10 @@ export const openProjectFolder = async (projectPath: string): Promise<void> => {
   await Call.ByName(`${PROJECT_MANAGER_SERVICE}.OpenProjectFolder`, projectPath)
 }
 
+export const openProjectTerminal = async (projectPath: string): Promise<void> => {
+  await Call.ByName(`${PROJECT_MANAGER_SERVICE}.OpenProjectTerminal`, projectPath)
+}
+
 export const runProjectAICommit = async (projectPath: string): Promise<void> => {
   await Call.ByName(`${PROJECT_MANAGER_SERVICE}.RunProjectAICommit`, projectPath)
 }

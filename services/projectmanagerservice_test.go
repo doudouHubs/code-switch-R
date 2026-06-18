@@ -914,3 +914,12 @@ func TestRunProjectAICommitRejectsEmptyProjectPath(t *testing.T) {
 		t.Fatalf("期望空路径报错，got=%v", err)
 	}
 }
+
+func TestOpenProjectTerminalRejectsEmptyProjectPath(t *testing.T) {
+	service := NewProjectManagerService()
+
+	err := service.OpenProjectTerminal("   ")
+	if err == nil || !strings.Contains(err.Error(), "项目路径不能为空") {
+		t.Fatalf("期望空路径报错，got=%v", err)
+	}
+}

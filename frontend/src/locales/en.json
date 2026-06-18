@@ -493,6 +493,7 @@
         "refresh": "Refresh",
         "refreshing": "Syncing...",
         "backToProjects": "Back to project list",
+        "openTerminal": "Open Terminal",
         "aiCommit": "AI-Commit"
       },
       "stats": {

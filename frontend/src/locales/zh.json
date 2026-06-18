@@ -494,6 +494,7 @@
         "refresh": "更新",
         "refreshing": "同步中...",
         "backToProjects": "返回项目列表",
+        "openTerminal": "打开终端",
         "aiCommit": "AI-Commit"
       },
       "stats": {

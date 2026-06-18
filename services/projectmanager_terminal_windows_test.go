@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
-	"syscall"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 	"unicode/utf16"
@@ -70,6 +70,37 @@ func TestBuildProjectManagerWTArgs(t *testing.T) {
 	}
 }
 
+func TestBuildProjectManagerProjectTerminalWTArgs(t *testing.T) {
+	originalLookPath := projectManagerLookPath
+	t.Cleanup(func() {
+		projectManagerLookPath = originalLookPath
+	})
+	projectManagerLookPath = func(file string) (string, error) {
+		if file == "pwsh.exe" {
+			return `E:\software\PowerShell7\7\pwsh.exe`, nil
+		}
+		return "", errors.New("not found")
+	}
+
+	projectPath := `F:\GitlabProjects\code-switch-R`
+	windowID := projectManagerProjectWindowID(projectPath)
+
+	got := buildProjectManagerProjectTerminalWTArgs(projectPath, windowID)
+	want := []string{
+		"-w", windowID,
+		"new-tab",
+		"-d", projectPath,
+		`E:\software\PowerShell7\7\pwsh.exe`,
+		"-NoExit",
+		"-EncodedCommand",
+		encodeProjectManagerPowerShellCommand(buildProjectManagerProjectTerminalPowerShellCommand(projectPath)),
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("项目终端 WT 参数不对，want=%v got=%v", want, got)
+	}
+}
+
 func TestBuildProjectManagerPowerShellLaunchCommand(t *testing.T) {
 	sessionID := "session'o1"
 	runtimePath := `C:\Users\X1\.code-switch\project-manager-runtime\session-o1.json`
@@ -98,6 +129,24 @@ func TestBuildProjectManagerPowerShellLaunchCommand(t *testing.T) {
 	}
 }
 
+func TestBuildProjectManagerProjectTerminalPowerShellCommand(t *testing.T) {
+	projectPath := `F:\GitlabProjects\code-switch-R`
+
+	got := buildProjectManagerProjectTerminalPowerShellCommand(projectPath)
+	expectedParts := []string{
+		"Set-Location -LiteralPath 'F:\\GitlabProjects\\code-switch-R'",
+		"codex",
+	}
+	for _, part := range expectedParts {
+		if !strings.Contains(got, part) {
+			t.Fatalf("项目终端 PowerShell 命令缺少片段 %q，got=%q", part, got)
+		}
+	}
+	if strings.Contains(got, "resume") {
+		t.Fatalf("项目终端命令不该包含 resume，got=%q", got)
+	}
+}
+
 func TestBuildProjectManagerPowerShellCommandArgs(t *testing.T) {
 	sessionID := "session-encoded"
 	runtimePath := `C:\Users\X1\.code-switch\project-manager-runtime\session-encoded.json`
@@ -115,6 +164,22 @@ func TestBuildProjectManagerPowerShellCommandArgs(t *testing.T) {
 	wantCommand := buildProjectManagerPowerShellLaunchCommand(sessionID, runtimePath, windowID, tabTitle, tabIndex)
 	if decoded != wantCommand {
 		t.Fatalf("EncodedCommand 解码后不对，want=%q got=%q", wantCommand, decoded)
+	}
+}
+
+func TestBuildProjectManagerProjectTerminalCommandArgs(t *testing.T) {
+	projectPath := `F:\GitlabProjects\code-switch-R`
+
+	got := buildProjectManagerProjectTerminalCommandArgs("pwsh", projectPath)
+	wantPrefix := []string{"pwsh", "-NoExit", "-EncodedCommand"}
+	if !reflect.DeepEqual(got[:3], wantPrefix) {
+		t.Fatalf("项目终端参数前缀不对，want=%v got=%v", wantPrefix, got[:3])
+	}
+
+	decoded := decodeProjectManagerPowerShellEncodedCommand(t, got[3])
+	wantCommand := buildProjectManagerProjectTerminalPowerShellCommand(projectPath)
+	if decoded != wantCommand {
+		t.Fatalf("项目终端 EncodedCommand 解码后不对，want=%q got=%q", wantCommand, decoded)
 	}
 }
 
@@ -311,6 +376,15 @@ func TestStartProjectManagerAICommitTerminalUsesHiddenPwshLauncher(t *testing.T)
 	}
 	if captured.SysProcAttr == nil || !captured.SysProcAttr.HideWindow {
 		t.Fatalf("AI-Commit 外层启动器必须隐藏窗口，got=%+v", captured.SysProcAttr)
+	}
+}
+
+func TestOpenProjectManagerProjectTerminalRejectsMissingDirectory(t *testing.T) {
+	service := NewProjectManagerService()
+
+	err := service.openProjectManagerProjectTerminal(`F:\not-exists\project`)
+	if err == nil || !strings.Contains(err.Error(), "项目路径不存在或不是目录") {
+		t.Fatalf("期望目录校验失败，got=%v", err)
 	}
 }
 
