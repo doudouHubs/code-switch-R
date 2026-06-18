@@ -103,6 +103,7 @@
   align-items: center;
   gap: 10px;
   width: 100%;
+  min-height: 48px;
   min-width: 0;
   padding: 0 14px;
   border-radius: 999px;
@@ -135,6 +136,13 @@
   box-shadow: none;
 }
 
+.project-manager-page .toolbar-actions .btn {
+  min-height: 48px;
+  height: 48px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
 .project-manager-page .clear-btn {
   border: none;
   background: transparent;
@@ -146,6 +154,7 @@
 .project-manager-page .project-breadcrumb {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 16px;
   margin-top: 22px;
   padding: 16px 18px;
@@ -169,6 +178,19 @@
   cursor: pointer;
 }
 
+.project-manager-page .project-breadcrumb-main {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+  flex: 1;
+}
+
+.project-manager-page .breadcrumb-copy {
+  min-width: 0;
+  flex: 1;
+}
+
 .project-manager-page .breadcrumb-copy h2 {
   margin: 0;
   font-size: 1.18rem;
@@ -179,6 +201,54 @@
   margin: 6px 0 0;
   font-size: 0.86rem;
   color: var(--mac-text-secondary);
+  word-break: break-word;
+}
+
+.project-manager-page .breadcrumb-action-button {
+  border: none;
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.12);
+  color: #2563eb;
+  font-size: 0.84rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease, opacity 0.18s ease;
+}
+
+.project-manager-page .breadcrumb-action-button:hover {
+  background: rgba(37, 99, 235, 0.18);
+  transform: translateY(-1px);
+}
+
+.project-manager-page .breadcrumb-action-button:disabled {
+  cursor: progress;
+  opacity: 0.72;
+  transform: none;
+}
+
+.project-manager-page .breadcrumb-action-button:disabled:hover {
+  background: rgba(37, 99, 235, 0.12);
+  transform: none;
+}
+
+.project-manager-page .breadcrumb-action-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  animation: pm-spin 0.72s linear infinite;
+}
+
+.dark .project-manager-page .breadcrumb-action-button {
+  background: rgba(76, 128, 214, 0.22);
+  color: #7db5ff;
 }
 
 .project-manager-page .state-panel {
@@ -1112,6 +1182,26 @@
 }
 
 @media (max-width: 640px) {
+  .project-manager-page .project-breadcrumb,
+  .project-manager-page .project-breadcrumb-main {
+    align-items: stretch;
+  }
+
+  .project-manager-page .project-breadcrumb {
+    flex-direction: column;
+  }
+
+  .project-manager-page .project-breadcrumb-main {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .project-manager-page .breadcrumb-action-button,
+  .project-manager-page .back-chip {
+    width: 100%;
+    justify-content: center;
+  }
+
   .project-manager-page .toolbar-actions {
     grid-template-columns: 1fr;
   }

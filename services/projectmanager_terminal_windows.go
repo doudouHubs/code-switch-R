@@ -32,6 +32,7 @@ var (
 	projectManagerExecCommand       = func(name string, args ...string) projectManagerCommandRunner {
 		return exec.Command(name, args...)
 	}
+	projectManagerAICommitCommandFactory = hideWindowCmd
 )
 
 func projectManagerProjectWindowID(projectPath string) string {
@@ -176,6 +177,33 @@ func (s *ProjectManagerService) openProjectManagerSessionTerminal(session Sessio
 		return fmt.Errorf("启动项目管理器终端失败: %w", err)
 	}
 	log.Printf("[ProjectManager] WT 不可用，已回退到 shell 启动 session=%s dir=%s", session.ID, launchDir)
+	return nil
+}
+
+func (s *ProjectManagerService) runProjectManagerAICommit(projectPath string) error {
+	projectPath = normalizeProjectManagerProjectPath(projectPath)
+	if projectPath == "" {
+		return errors.New("项目路径不能为空")
+	}
+
+	projectInfo, err := os.Stat(projectPath)
+	if err != nil || !projectInfo.IsDir() {
+		return errors.New("项目路径不存在或不是目录")
+	}
+
+	changed, err := projectManagerHasCommittableChanges(projectPath)
+	if err != nil {
+		return fmt.Errorf("读取 git 变更失败: %w", err)
+	}
+	if !changed {
+		return errors.New("当前项目没有可提交变更")
+	}
+
+	if err := startProjectManagerAICommitTerminal(projectPath); err != nil {
+		return fmt.Errorf("启动 AI-Commit 失败: %w", err)
+	}
+
+	log.Printf("[ProjectManager] 已启动 AI-Commit project=%s", projectPath)
 	return nil
 }
 
@@ -362,6 +390,96 @@ func projectManagerPreferredShellExecutable() string {
 		}
 	}
 	return "powershell.exe"
+}
+
+func projectManagerRequiredPwshExecutable() (string, error) {
+	resolved, err := projectManagerLookPath("pwsh.exe")
+	if err != nil {
+		return "", errors.New("未找到 pwsh.exe，请先安装 PowerShell 7 或检查 PATH")
+	}
+
+	resolved = strings.TrimSpace(resolved)
+	if resolved == "" {
+		return "", errors.New("未找到 pwsh.exe，请先安装 PowerShell 7 或检查 PATH")
+	}
+
+	return resolved, nil
+}
+
+func projectManagerHasCommittableChanges(projectPath string) (bool, error) {
+	cmd := hideWindowCmd("git", "status", "--porcelain")
+	cmd.Dir = projectPath
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		message := strings.TrimSpace(string(output))
+		if message != "" {
+			return false, errors.New(message)
+		}
+		return false, err
+	}
+
+	return strings.TrimSpace(string(output)) != "", nil
+}
+
+func startProjectManagerAICommitTerminal(projectPath string) error {
+	shellExecutable, err := projectManagerRequiredPwshExecutable()
+	if err != nil {
+		return err
+	}
+
+	cmd := projectManagerAICommitCommandFactory(shellExecutable, buildProjectManagerAICommitLauncherArgs(projectPath, shellExecutable)...)
+	cmd.Dir = projectPath
+	return cmd.Start()
+}
+
+func buildProjectManagerAICommitLauncherArgs(projectPath string, shellExecutable string) []string {
+	return []string{
+		"-NoProfile",
+		"-EncodedCommand",
+		encodeProjectManagerPowerShellCommand(buildProjectManagerAICommitLaunchCommand(projectPath, shellExecutable)),
+	}
+}
+
+func buildProjectManagerAICommitLaunchCommand(projectPath string, shellExecutable string) string {
+	escapedProjectPath := escapeProjectManagerPowerShellSingleQuoted(projectPath)
+	escapedShellExecutable := escapeProjectManagerPowerShellSingleQuoted(shellExecutable)
+	innerArgs := []string{
+		"-NoProfile",
+		"-ExecutionPolicy",
+		"Bypass",
+		"-Command",
+		buildProjectManagerAICommitPowerShellCommand(projectPath),
+	}
+	quotedInnerArgs := make([]string, 0, len(innerArgs))
+	for _, arg := range innerArgs {
+		quotedInnerArgs = append(quotedInnerArgs, fmt.Sprintf("'%s'", escapeProjectManagerPowerShellSingleQuoted(arg)))
+	}
+
+	// 这里外层不能再直接从 GUI 进程裸起一个 pwsh 去跑 commit。
+	// 那样命令虽然可能在后台执行，但不会带出用户可见的终端窗口，体感就是“点了没反应”。
+	// 所以外层隐藏 pwsh 只负责 Start-Process，真正给用户看的任务窗口必须由内层可见 pwsh 拉起。
+	return fmt.Sprintf(
+		"$ErrorActionPreference = 'Stop'; Start-Process -FilePath '%s' -ArgumentList @(%s) -WorkingDirectory '%s' | Out-Null",
+		escapedShellExecutable,
+		strings.Join(quotedInnerArgs, ", "),
+		escapedProjectPath,
+	)
+}
+
+func buildProjectManagerAICommitPowerShellCommand(projectPath string) string {
+	escapedProjectPath := escapeProjectManagerPowerShellSingleQuoted(projectPath)
+	commitPrompt := escapeProjectManagerPowerShellSingleQuoted(`$commit commit本地文件`)
+	failureMessage := escapeProjectManagerPowerShellSingleQuoted("AI-Commit 执行失败，按 Enter 关闭窗口")
+
+	// 这里直接让可见 shell 自己跑完 commit 命令。
+	// 成功就 exit 0 自动关窗；失败再停留等待用户确认，这样不会为了“保留失败现场”额外再炸出第二个窗口。
+	return fmt.Sprintf(
+		"Set-Location -LiteralPath '%s'; codex exec --profile commit-fast '%s'; $__exitCode = $LASTEXITCODE; if ($__exitCode -eq 0) { exit 0 }; Write-Host '%s'; Read-Host | Out-Null; exit $__exitCode",
+		escapedProjectPath,
+		commitPrompt,
+		failureMessage,
+	)
 }
 
 func buildProjectManagerPowerShellLaunchCommand(

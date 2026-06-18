@@ -905,3 +905,12 @@ func TestSanitizeProjectManagerSessionSummaryForTerminal(t *testing.T) {
 		t.Fatalf("字符串 trim 失败，got=%+v", sanitized)
 	}
 }
+
+func TestRunProjectAICommitRejectsEmptyProjectPath(t *testing.T) {
+	service := NewProjectManagerService()
+
+	err := service.RunProjectAICommit("   ")
+	if err == nil || !strings.Contains(err.Error(), "项目路径不能为空") {
+		t.Fatalf("期望空路径报错，got=%v", err)
+	}
+}

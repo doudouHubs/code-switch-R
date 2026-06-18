@@ -492,7 +492,8 @@
         "searchPlaceholder": "Search project names, paths, session titles, or summaries",
         "refresh": "Refresh",
         "refreshing": "Syncing...",
-        "backToProjects": "Back to project list"
+        "backToProjects": "Back to project list",
+        "aiCommit": "AI-Commit"
       },
       "stats": {
         "visibleCount": "Visible now",
@@ -568,6 +569,16 @@
         "deleting": "Deleting...",
         "projectDeleted": "Project and related sessions deleted",
         "sessionDeleted": "Session deleted"
+      },
+      "commit": {
+        "started": "AI-Commit started",
+        "errors": {
+          "projectPathRequired": "Project path is required",
+          "projectPathInvalid": "Project path does not exist or is not a directory",
+          "noChanges": "No committable changes in this project",
+          "gitStatusFailed": "Failed to inspect git changes",
+          "launchFailed": "Failed to launch AI-Commit"
+        }
       },
       "common": {
         "path": "Project Path",

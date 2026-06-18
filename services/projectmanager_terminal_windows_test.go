@@ -6,9 +6,11 @@ import (
 	"encoding/base64"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -164,6 +166,151 @@ func TestBuildProjectManagerPowerShellResumeCommand(t *testing.T) {
 	want := "codex resume 'session''o1'"
 	if got != want {
 		t.Fatalf("resume 命令不对，want=%q got=%q", want, got)
+	}
+}
+
+func TestBuildProjectManagerAICommitPowerShellCommand(t *testing.T) {
+	projectPath := `F:\GitlabProjects\code-switch-R`
+
+	got := buildProjectManagerAICommitPowerShellCommand(projectPath)
+	expectedParts := []string{
+		"Set-Location -LiteralPath 'F:\\GitlabProjects\\code-switch-R'",
+		"codex exec --profile commit-fast '$commit commit本地文件'",
+		"if ($__exitCode -eq 0) { exit 0 }",
+		"Read-Host | Out-Null",
+	}
+
+	for _, part := range expectedParts {
+		if !strings.Contains(got, part) {
+			t.Fatalf("AI-Commit PowerShell 命令缺少片段 %q，got=%q", part, got)
+		}
+	}
+}
+
+func TestProjectManagerRequiredPwshExecutable(t *testing.T) {
+	originalLookPath := projectManagerLookPath
+	t.Cleanup(func() {
+		projectManagerLookPath = originalLookPath
+	})
+
+	t.Run("returns resolved pwsh path", func(t *testing.T) {
+		projectManagerLookPath = func(file string) (string, error) {
+			if file != "pwsh.exe" {
+				t.Fatalf("期望只查找 pwsh.exe，got=%q", file)
+			}
+			return `E:\software\PowerShell7\7\pwsh.exe`, nil
+		}
+
+		got, err := projectManagerRequiredPwshExecutable()
+		if err != nil {
+			t.Fatalf("期望成功解析 pwsh.exe，got err=%v", err)
+		}
+		want := `E:\software\PowerShell7\7\pwsh.exe`
+		if got != want {
+			t.Fatalf("pwsh 路径不对，want=%q got=%q", want, got)
+		}
+	})
+
+	t.Run("returns error when pwsh missing", func(t *testing.T) {
+		projectManagerLookPath = func(file string) (string, error) {
+			if file != "pwsh.exe" {
+				t.Fatalf("期望只查找 pwsh.exe，got=%q", file)
+			}
+			return "", errors.New("not found")
+		}
+
+		_, err := projectManagerRequiredPwshExecutable()
+		if err == nil || !strings.Contains(err.Error(), "pwsh.exe") {
+			t.Fatalf("期望提示缺少 pwsh.exe，got=%v", err)
+		}
+	})
+}
+
+func TestBuildProjectManagerAICommitLaunchCommand(t *testing.T) {
+	projectPath := `F:\GitlabProjects\code-switch-R`
+	shellExecutable := `E:\software\PowerShell7\7\pwsh.exe`
+
+	got := buildProjectManagerAICommitLaunchCommand(projectPath, shellExecutable)
+	expectedParts := []string{
+		"Start-Process -FilePath 'E:\\software\\PowerShell7\\7\\pwsh.exe'",
+		"-ArgumentList @(",
+		"'-NoProfile'",
+		"'-ExecutionPolicy'",
+		"'Bypass'",
+		"'-Command'",
+		"codex exec --profile commit-fast ''$commit commit本地文件''",
+		"-WorkingDirectory 'F:\\GitlabProjects\\code-switch-R'",
+	}
+
+	for _, part := range expectedParts {
+		if !strings.Contains(got, part) {
+			t.Fatalf("AI-Commit 启动命令缺少片段 %q，got=%q", part, got)
+		}
+	}
+}
+
+func TestBuildProjectManagerAICommitLauncherArgs(t *testing.T) {
+	projectPath := `F:\GitlabProjects\code-switch-R`
+	shellExecutable := `E:\software\PowerShell7\7\pwsh.exe`
+
+	got := buildProjectManagerAICommitLauncherArgs(projectPath, shellExecutable)
+	wantPrefix := []string{"-NoProfile", "-EncodedCommand"}
+	if !reflect.DeepEqual(got[:2], wantPrefix) {
+		t.Fatalf("AI-Commit launcher 参数前缀不对，want=%v got=%v", wantPrefix, got[:2])
+	}
+
+	decoded := decodeProjectManagerPowerShellEncodedCommand(t, got[2])
+	wantCommand := buildProjectManagerAICommitLaunchCommand(projectPath, shellExecutable)
+	if decoded != wantCommand {
+		t.Fatalf("AI-Commit launcher EncodedCommand 解码后不对，want=%q got=%q", wantCommand, decoded)
+	}
+}
+
+func TestStartProjectManagerAICommitTerminalUsesHiddenPwshLauncher(t *testing.T) {
+	originalLookPath := projectManagerLookPath
+	originalCommandContext := projectManagerAICommitCommandFactory
+	t.Cleanup(func() {
+		projectManagerLookPath = originalLookPath
+		projectManagerAICommitCommandFactory = originalCommandContext
+	})
+
+	projectManagerLookPath = func(file string) (string, error) {
+		if file != "pwsh.exe" {
+			t.Fatalf("期望只查找 pwsh.exe，got=%q", file)
+		}
+		return `E:\software\PowerShell7\7\pwsh.exe`, nil
+	}
+
+	var captured *exec.Cmd
+	projectManagerAICommitCommandFactory = func(name string, args ...string) *exec.Cmd {
+		captured = exec.Command("cmd", "/c", "exit", "0")
+		captured.Path = name
+		captured.Args = append([]string{name}, args...)
+		captured.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+		return captured
+	}
+
+	projectPath := `F:\GitlabProjects\code-switch-R`
+	if err := startProjectManagerAICommitTerminal(projectPath); err != nil {
+		t.Fatalf("期望启动入口构造成功，got err=%v", err)
+	}
+	if captured == nil {
+		t.Fatalf("期望捕获到启动命令")
+	}
+	if captured.Path != `E:\software\PowerShell7\7\pwsh.exe` {
+		t.Fatalf("AI-Commit 启动器不对，want=%q got=%q", `E:\software\PowerShell7\7\pwsh.exe`, captured.Path)
+	}
+	if captured.Dir != projectPath {
+		t.Fatalf("AI-Commit 工作目录不对，want=%q got=%q", projectPath, captured.Dir)
+	}
+	if len(captured.Args) != 4 {
+		t.Fatalf("AI-Commit launcher 参数数量不对，got=%v", captured.Args)
+	}
+	if captured.Args[1] != "-NoProfile" || captured.Args[2] != "-EncodedCommand" {
+		t.Fatalf("AI-Commit launcher 参数前缀不对，got=%v", captured.Args)
+	}
+	if captured.SysProcAttr == nil || !captured.SysProcAttr.HideWindow {
+		t.Fatalf("AI-Commit 外层启动器必须隐藏窗口，got=%+v", captured.SysProcAttr)
 	}
 }
 

@@ -493,7 +493,8 @@
         "searchPlaceholder": "搜索项目名、路径、会话标题或概要",
         "refresh": "更新",
         "refreshing": "同步中...",
-        "backToProjects": "返回项目列表"
+        "backToProjects": "返回项目列表",
+        "aiCommit": "AI-Commit"
       },
       "stats": {
         "visibleCount": "当前展示",
@@ -569,6 +570,16 @@
         "deleting": "删除中...",
         "projectDeleted": "项目及其关联会话已删除",
         "sessionDeleted": "会话已删除"
+      },
+      "commit": {
+        "started": "AI-Commit 已启动",
+        "errors": {
+          "projectPathRequired": "项目路径不能为空",
+          "projectPathInvalid": "项目路径不存在或不是目录",
+          "noChanges": "当前项目没有可提交变更",
+          "gitStatusFailed": "读取 git 变更失败",
+          "launchFailed": "启动 AI-Commit 失败"
+        }
       },
       "common": {
         "path": "项目路径",

@@ -85,6 +85,10 @@ export const openProjectFolder = async (projectPath: string): Promise<void> => {
   await Call.ByName(`${PROJECT_MANAGER_SERVICE}.OpenProjectFolder`, projectPath)
 }
 
+export const runProjectAICommit = async (projectPath: string): Promise<void> => {
+  await Call.ByName(`${PROJECT_MANAGER_SERVICE}.RunProjectAICommit`, projectPath)
+}
+
 export const fetchSessionConversationDetail = async (sessionID: string): Promise<SessionConversationDetail> => {
   const result = await Call.ByName(`${PROJECT_MANAGER_SERVICE}.GetSessionConversationDetail`, sessionID)
   return result as SessionConversationDetail

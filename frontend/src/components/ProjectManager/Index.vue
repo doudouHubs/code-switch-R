@@ -17,6 +17,7 @@ import {
   fetchProjectManagerSnapshot,
   openProjectFolder,
   openSessionTerminal,
+  runProjectAICommit,
   refreshProjectManagerSnapshot,
   renameProject,
   renameSession,
@@ -34,6 +35,7 @@ const loading = ref(false)
 const refreshing = ref(false)
 const renameSaving = ref(false)
 const openingSessionIds = ref<string[]>([])
+const committingProjectId = ref('')
 const deletingProjectIds = ref<string[]>([])
 const deletingSessionIds = ref<string[]>([])
 const snapshotProjects = ref<ProjectSummary[]>([])
@@ -319,6 +321,23 @@ const handleOpenProjectFolder = async (project: ProjectSummary) => {
   }
 }
 
+const handleRunProjectAICommit = async (project: ProjectSummary) => {
+  if (!project?.path || committingProjectId.value === project.id) {
+    return
+  }
+
+  committingProjectId.value = project.id
+  try {
+    await runProjectAICommit(project.path)
+    showToast(t('components.projectManager.commit.started'), 'success')
+  } catch (error) {
+    console.error('failed to run project ai commit', error)
+    showToast(extractErrorMessage(error), 'error')
+  } finally {
+    committingProjectId.value = ''
+  }
+}
+
 const handleOpenSession = async (session: SessionSummary) => {
   if (openingSessionIds.value.includes(session.id)) {
     return
@@ -391,7 +410,9 @@ onBeforeUnmount(() => {
     <ProjectManagerBreadcrumb
       v-if="selectedProject && activeMode === 'project'"
       :project="selectedProject"
+      :committing="committingProjectId === selectedProject.id"
       @back="selectedProjectId = ''"
+      @commit="handleRunProjectAICommit(selectedProject)"
     />
 
     <ProjectManagerStatePanel
