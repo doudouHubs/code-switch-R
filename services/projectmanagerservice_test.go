@@ -923,3 +923,123 @@ func TestOpenProjectTerminalRejectsEmptyProjectPath(t *testing.T) {
 		t.Fatalf("期望空路径报错，got=%v", err)
 	}
 }
+
+func TestProjectManagerGetSnapshotWritesAndReusesSnapshotCache(t *testing.T) {
+	home := setupProjectManagerTestHome(t)
+	service := NewProjectManagerService()
+
+	projectDir := filepath.Join(home, "workspace", "cache-reuse")
+	sessionID := "019ecab9-cache-reuse-case"
+	writeProjectManagerSessionIndex(t, home, sessionID, "Cache Reuse Session", "2026-06-18T10:01:14Z")
+	writeProjectManagerCodexSessionFixture(
+		t,
+		home,
+		sessionID,
+		projectDir,
+		"第一次扫描应该落缓存。",
+		"2026-06-18T10:00:00Z",
+		"2026-06-18T10:02:00Z",
+	)
+
+	firstSnapshot, err := service.GetSnapshot()
+	if err != nil {
+		t.Fatalf("首次 GetSnapshot 失败: %v", err)
+	}
+	if firstSnapshot.SnapshotUpdatedAt == 0 {
+		t.Fatalf("首次快照缺少 snapshot_updated_at: %+v", firstSnapshot)
+	}
+
+	cachePath := filepath.Join(home, appSettingsDir, projectManagerSnapshotCacheFile)
+	if !FileExists(cachePath) {
+		t.Fatalf("首次快照后未生成 snapshot cache: %s", cachePath)
+	}
+
+	if err := os.RemoveAll(filepath.Join(home, ".codex", "sessions")); err != nil {
+		t.Fatalf("删除 session 目录失败: %v", err)
+	}
+	if err := os.Remove(filepath.Join(home, ".codex", "session_index.jsonl")); err != nil {
+		t.Fatalf("删除 session_index 失败: %v", err)
+	}
+
+	secondSnapshot, err := service.GetSnapshot()
+	if err != nil {
+		t.Fatalf("复用缓存的 GetSnapshot 失败: %v", err)
+	}
+	if len(secondSnapshot.Sessions) != 1 || secondSnapshot.Sessions[0].ID != sessionID {
+		t.Fatalf("复用缓存失败，sessions=%+v", secondSnapshot.Sessions)
+	}
+	if secondSnapshot.SnapshotUpdatedAt != firstSnapshot.SnapshotUpdatedAt {
+		t.Fatalf("缓存命中时 snapshot 时间不应变化，first=%d second=%d", firstSnapshot.SnapshotUpdatedAt, secondSnapshot.SnapshotUpdatedAt)
+	}
+}
+
+func TestProjectManagerRefreshProjectIndexPicksUpNewSessionIncrementally(t *testing.T) {
+	home := setupProjectManagerTestHome(t)
+	service := NewProjectManagerService()
+
+	projectA := filepath.Join(home, "workspace", "incremental-a")
+	projectB := filepath.Join(home, "workspace", "incremental-b")
+	sessionA := "019ecab9-incremental-a"
+	sessionB := "019ecab9-incremental-b"
+
+	writeProjectManagerSessionIndex(t, home, sessionA, "Incremental A", "2026-06-18T10:01:14Z")
+	writeProjectManagerCodexSessionFixture(
+		t,
+		home,
+		sessionA,
+		projectA,
+		"A 先落到缓存里。",
+		"2026-06-18T10:00:00Z",
+		"2026-06-18T10:02:00Z",
+	)
+
+	initialSnapshot, err := service.GetSnapshot()
+	if err != nil {
+		t.Fatalf("首次 GetSnapshot 失败: %v", err)
+	}
+	if len(initialSnapshot.Sessions) != 1 || initialSnapshot.Sessions[0].ID != sessionA {
+		t.Fatalf("首次快照不对: %+v", initialSnapshot.Sessions)
+	}
+
+	indexPath := filepath.Join(home, ".codex", "session_index.jsonl")
+	if err := AtomicWriteText(indexPath, strings.Join([]string{
+		fmt.Sprintf(`{"id":%q,"thread_name":"Incremental A","updated_at":"2026-06-18T10:01:14Z"}`, sessionA),
+		fmt.Sprintf(`{"id":%q,"thread_name":"Incremental B","updated_at":"2026-06-18T10:05:14Z"}`, sessionB),
+	}, "\n")); err != nil {
+		t.Fatalf("追加第二条 session_index 失败: %v", err)
+	}
+	writeProjectManagerCodexSessionFixture(
+		t,
+		home,
+		sessionB,
+		projectB,
+		"B 后续通过增量刷新补进来。",
+		"2026-06-18T10:04:00Z",
+		"2026-06-18T10:06:00Z",
+	)
+
+	refreshed, err := service.RefreshProjectIndex()
+	if err != nil {
+		t.Fatalf("RefreshProjectIndex 失败: %v", err)
+	}
+	if len(refreshed.Sessions) != 2 {
+		t.Fatalf("增量刷新后会话数不对，want=2 got=%d", len(refreshed.Sessions))
+	}
+
+	foundA := false
+	foundB := false
+	for _, session := range refreshed.Sessions {
+		switch session.ID {
+		case sessionA:
+			foundA = true
+		case sessionB:
+			foundB = true
+			if session.ProjectPath != normalizeProjectManagerProjectPath(projectB) {
+				t.Fatalf("增量刷新的第二个会话项目路径不对，got=%q", session.ProjectPath)
+			}
+		}
+	}
+	if !foundA || !foundB {
+		t.Fatalf("增量刷新未正确返回两条会话: %+v", refreshed.Sessions)
+	}
+}

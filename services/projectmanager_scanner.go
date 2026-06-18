@@ -39,15 +39,15 @@ type projectManagerSessionState struct {
 }
 
 type projectManagerSessionFileEntry struct {
-	SessionID  string
-	Path       string
-	ThreadName string
-	Cwd        string
-	ProjectPath string
+	SessionID     string
+	Path          string
+	ThreadName    string
+	Cwd           string
+	ProjectPath   string
 	ProjectSource string
-	Summary    string
-	UpdatedAt  time.Time
-	IsRollout  bool
+	Summary       string
+	UpdatedAt     time.Time
+	IsRollout     bool
 }
 
 type projectManagerProjectState struct {
@@ -59,41 +59,15 @@ type projectManagerProjectState struct {
 }
 
 func (s *ProjectManagerService) scanProjectManagerData() (projectManagerAggregate, error) {
-	indexEntries, err := s.readProjectManagerSessionIndex()
+	// 保留这个入口作为兼容壳，但实际实现统一走新的全量缓存构建链，
+	// 避免项目管理出现“两套扫描真相”继续分叉生长。
+	cache, err := s.buildProjectManagerSnapshotCache(nil)
 	if err != nil {
 		return projectManagerAggregate{}, err
 	}
-
-	store, err := s.store.load()
-	if err != nil {
-		return projectManagerAggregate{}, err
-	}
-
-	indexByID := make(map[string]projectManagerSessionIndexEntry, len(indexEntries))
-	for _, entry := range indexEntries {
-		if strings.TrimSpace(entry.ID) == "" {
-			continue
-		}
-		indexByID[entry.ID] = entry
-	}
-
-	sessionFiles, err := s.readProjectManagerSessionFiles(indexByID)
-	if err != nil {
-		return projectManagerAggregate{}, err
-	}
-
-	sessions := make(map[string]*projectManagerSessionState, len(sessionFiles))
-	if err := s.enrichProjectManagerSessionsFromCodexSessions(sessions, store, sessionFiles, indexByID); err != nil {
-		return projectManagerAggregate{}, err
-	}
-	if err := s.enrichProjectManagerSessionsFromCaptures(sessions, store); err != nil {
-		return projectManagerAggregate{}, err
-	}
-
-	projects := s.groupProjectManagerProjects(sessions, store)
 	return projectManagerAggregate{
-		Projects: buildProjectManagerProjectSummaries(projects),
-		Sessions: buildProjectManagerSessionSummaries(projects),
+		Projects: cache.Snapshot.Projects,
+		Sessions: cache.Snapshot.Sessions,
 	}, nil
 }
 
@@ -673,7 +647,7 @@ func (s *ProjectManagerService) readProjectManagerSessionFiles(
 			return nil
 		}
 
-		sessionID, cwd, projectPath, projectSource, summary, updatedAt, err := scanProjectManagerCodexSessionFile(path)
+		sessionID, cwd, projectPath, projectSource, summary, updatedAt, err := scanProjectManagerCodexSessionFileDetails(path)
 		if err != nil {
 			return nil
 		}
@@ -751,7 +725,7 @@ func projectManagerLooksLikeSessionID(value string) bool {
 	return true
 }
 
-func scanProjectManagerCodexSessionFile(path string) (sessionID string, cwd string, projectPath string, projectSource string, summary string, updatedAt time.Time, err error) {
+func scanProjectManagerCodexSessionFileDetails(path string) (sessionID string, cwd string, projectPath string, projectSource string, summary string, updatedAt time.Time, err error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return "", "", "", "", "", time.Time{}, err

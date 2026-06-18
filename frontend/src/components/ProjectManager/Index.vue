@@ -58,7 +58,9 @@ const deleteState = reactive({
 })
 
 const projectManagerOpenTimeoutMs = 5000
+const projectManagerWarmRefreshDelayMs = 800
 const openingSessionTimers = new Map<string, ReturnType<typeof setTimeout>>()
+let projectManagerWarmRefreshTimer: ReturnType<typeof setTimeout> | null = null
 
 const dateFormatter = computed(() =>
   new Intl.DateTimeFormat(locale.value === 'zh' ? 'zh-CN' : 'en-US', {
@@ -248,6 +250,30 @@ const saveRename = async () => {
   }
 }
 
+const scheduleSilentWarmRefresh = () => {
+  if (projectManagerWarmRefreshTimer) {
+    clearTimeout(projectManagerWarmRefreshTimer)
+  }
+
+  // 首屏先吃缓存，随后静默再拉一次；
+  // 这样后端的后台增量刷新若已经完成，前端能自然捞到更新后的快照，不需要额外 UI 提示。
+  projectManagerWarmRefreshTimer = setTimeout(async () => {
+    try {
+      const snapshot = await fetchProjectManagerSnapshot()
+      snapshotProjects.value = snapshot.projects
+      snapshotSessions.value = snapshot.sessions
+
+      if (selectedProjectId.value && !snapshot.projects.some(project => project.id === selectedProjectId.value)) {
+        selectedProjectId.value = ''
+      }
+    } catch (error) {
+      console.error('failed to perform silent project manager warm refresh', error)
+    } finally {
+      projectManagerWarmRefreshTimer = null
+    }
+  }, projectManagerWarmRefreshDelayMs)
+}
+
 const confirmDelete = async () => {
   const targetType = deleteState.targetType
   const targetId = deleteState.targetId
@@ -415,6 +441,7 @@ const resolveSessionSummary = (session: SessionSummary) =>
 
 onMounted(() => {
   loadSnapshot()
+  scheduleSilentWarmRefresh()
 })
 
 onBeforeUnmount(() => {
@@ -422,6 +449,10 @@ onBeforeUnmount(() => {
     clearTimeout(timeoutId)
   })
   openingSessionTimers.clear()
+  if (projectManagerWarmRefreshTimer) {
+    clearTimeout(projectManagerWarmRefreshTimer)
+    projectManagerWarmRefreshTimer = null
+  }
 })
 </script>
 

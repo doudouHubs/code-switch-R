@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -36,8 +38,9 @@ type SessionSummary struct {
 }
 
 type ProjectManagerSnapshot struct {
-	Projects []ProjectSummary `json:"projects"`
-	Sessions []SessionSummary `json:"sessions"`
+	Projects          []ProjectSummary `json:"projects"`
+	Sessions          []SessionSummary `json:"sessions"`
+	SnapshotUpdatedAt int64            `json:"snapshot_updated_at,omitempty"`
 }
 
 type SessionConversationItem struct {
@@ -57,24 +60,29 @@ type SessionConversationDetail struct {
 }
 
 type ProjectManagerService struct {
-	store *projectManagerStoreService
+	store              *projectManagerStoreService
+	snapshotCache      *projectManagerSnapshotCacheService
+	snapshotBuildMu    sync.Mutex
+	warmRefreshMu      sync.Mutex
+	warmRefreshRunning bool
+	lastWarmRefreshAt  time.Time
 }
 
 func NewProjectManagerService() *ProjectManagerService {
 	return &ProjectManagerService{
-		store: newProjectManagerStoreService(),
+		store:         newProjectManagerStoreService(),
+		snapshotCache: newProjectManagerSnapshotCacheService(),
 	}
 }
 
 func (s *ProjectManagerService) GetSnapshot() (ProjectManagerSnapshot, error) {
-	aggregate, err := s.scanProjectManagerData()
-	if err != nil {
-		return ProjectManagerSnapshot{}, err
+	cache, err := s.loadProjectManagerSnapshotCache()
+	if err == nil && cache.isUsable() && (len(cache.Snapshot.Projects) > 0 || len(cache.Snapshot.Sessions) > 0 || cache.Snapshot.SnapshotUpdatedAt > 0) {
+		s.maybeScheduleProjectManagerWarmRefresh(cache.Snapshot)
+		return cache.Snapshot, nil
 	}
-	return ProjectManagerSnapshot{
-		Projects: aggregate.Projects,
-		Sessions: aggregate.Sessions,
-	}, nil
+
+	return s.refreshProjectManagerSnapshotIncrementalWithFallback()
 }
 
 func (s *ProjectManagerService) ListProjects() ([]ProjectSummary, error) {
@@ -110,7 +118,7 @@ func (s *ProjectManagerService) ListProjectSessions(projectPath string) ([]Sessi
 }
 
 func (s *ProjectManagerService) RefreshProjectIndex() (ProjectManagerSnapshot, error) {
-	return s.GetSnapshot()
+	return s.refreshProjectManagerSnapshotIncrementalWithFallback()
 }
 
 func (s *ProjectManagerService) RenameProject(projectPath string, displayName string) error {
@@ -118,7 +126,11 @@ func (s *ProjectManagerService) RenameProject(projectPath string, displayName st
 	if projectPath == "" {
 		return errors.New("项目路径不能为空")
 	}
-	return s.store.saveProjectDisplayName(projectPath, strings.TrimSpace(displayName))
+	if err := s.store.saveProjectDisplayName(projectPath, strings.TrimSpace(displayName)); err != nil {
+		return err
+	}
+	s.invalidateProjectManagerSnapshotCache()
+	return nil
 }
 
 func (s *ProjectManagerService) RenameSession(sessionID string, displayName string) error {
@@ -145,6 +157,7 @@ func (s *ProjectManagerService) RenameSession(sessionID string, displayName stri
 	if err := s.tryRenameCodexSessionIndex(sessionID, displayName); err != nil {
 		return fmt.Errorf("已保存本地会话别名，但回写 Codex 会话标题失败: %w", err)
 	}
+	s.invalidateProjectManagerSnapshotCache()
 	return nil
 }
 
@@ -177,7 +190,11 @@ func (s *ProjectManagerService) DeleteProject(projectPath string) error {
 		return fmt.Errorf("删除项目关联会话失败: %s", strings.Join(failed, "; "))
 	}
 
-	return s.store.deleteProject(projectPath)
+	if err := s.store.deleteProject(projectPath); err != nil {
+		return err
+	}
+	s.invalidateProjectManagerSnapshotCache()
+	return nil
 }
 
 func (s *ProjectManagerService) DeleteSession(sessionID string) error {
@@ -208,6 +225,7 @@ func (s *ProjectManagerService) DeleteSession(sessionID string) error {
 	if err := removeProjectManagerSessionRuntime(sessionID); err != nil {
 		return err
 	}
+	s.invalidateProjectManagerSnapshotCache()
 	return nil
 }
 
@@ -343,7 +361,11 @@ func (s *ProjectManagerService) PruneSessionConversation(sessionID string, messa
 		}
 	}
 
-	return s.GetSessionConversationDetail(sessionID)
+	detail, err := s.GetSessionConversationDetail(sessionID)
+	if err == nil {
+		s.invalidateProjectManagerSnapshotCache()
+	}
+	return detail, err
 }
 
 func (s *ProjectManagerService) removeCodexSessionIndexEntry(sessionID string) error {
@@ -378,7 +400,11 @@ func (s *ProjectManagerService) removeCodexSessionIndexEntry(sessionID string) e
 	if !removed {
 		return nil
 	}
-	return AtomicWriteText(path, strings.Join(kept, "\n"))
+	if err := AtomicWriteText(path, strings.Join(kept, "\n")); err != nil {
+		return err
+	}
+	s.invalidateProjectManagerSnapshotCache()
+	return nil
 }
 
 func (s *ProjectManagerService) tryRenameCodexSessionIndex(sessionID string, displayName string) error {
@@ -414,7 +440,11 @@ func (s *ProjectManagerService) tryRenameCodexSessionIndex(sessionID string, dis
 		return fmt.Errorf("session_index.jsonl 中未找到会话 %s", sessionID)
 	}
 
-	return AtomicWriteText(path, strings.Join(lines, "\n"))
+	if err := AtomicWriteText(path, strings.Join(lines, "\n")); err != nil {
+		return err
+	}
+	s.invalidateProjectManagerSnapshotCache()
+	return nil
 }
 
 func sanitizeProjectManagerSessionSummaryForTerminal(session SessionSummary) SessionSummary {
