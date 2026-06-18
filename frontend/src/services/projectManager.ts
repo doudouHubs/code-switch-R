@@ -73,8 +73,12 @@ export const deleteSession = async (sessionID: string): Promise<void> => {
   await Call.ByName(`${PROJECT_MANAGER_SERVICE}.DeleteSession`, sessionID)
 }
 
-export const openSessionTerminal = async (sessionID: string): Promise<void> => {
-  await Call.ByName(`${PROJECT_MANAGER_SERVICE}.OpenSessionTerminal`, sessionID)
+export const openSessionTerminal = async (session: SessionSummary | string): Promise<void> => {
+  if (typeof session === 'string') {
+    await Call.ByName(`${PROJECT_MANAGER_SERVICE}.OpenSessionTerminal`, session)
+    return
+  }
+  await Call.ByName(`${PROJECT_MANAGER_SERVICE}.OpenSessionTerminalWithSession`, session)
 }
 
 export const openProjectFolder = async (projectPath: string): Promise<void> => {

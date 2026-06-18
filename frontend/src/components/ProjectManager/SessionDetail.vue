@@ -334,7 +334,7 @@ const handleOpenTerminal = async () => {
   }
   openingTerminal.value = true
   try {
-    await openSessionTerminal(detail.value.session.id)
+    await openSessionTerminal(detail.value.session)
   } catch (error) {
     console.error('failed to open session terminal from detail', error)
     showToast(extractErrorMessage(error), 'error')

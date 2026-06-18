@@ -55,6 +55,10 @@ export function OpenSessionTerminal(sessionID: string): $CancellablePromise<void
     return $Call.ByID(1009513054, sessionID);
 }
 
+export function OpenSessionTerminalWithSession(session: $models.SessionSummary): $CancellablePromise<void> {
+    return $Call.ByID(2081160126, session);
+}
+
 export function PruneSessionConversation(sessionID: string, messageIDs: string[]): $CancellablePromise<$models.SessionConversationDetail> {
     return $Call.ByID(1933876465, sessionID, messageIDs).then(($result: any) => {
         return $$createType0($result);

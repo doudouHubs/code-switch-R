@@ -33,6 +33,17 @@ func (f fakeProjectManagerCommandRunner) Wait() error {
 }
 
 func TestBuildProjectManagerWTArgs(t *testing.T) {
+	originalLookPath := projectManagerLookPath
+	t.Cleanup(func() {
+		projectManagerLookPath = originalLookPath
+	})
+	projectManagerLookPath = func(file string) (string, error) {
+		if file == "pwsh.exe" {
+			return `E:\software\PowerShell7\7\pwsh.exe`, nil
+		}
+		return "", errors.New("not found")
+	}
+
 	launchDir := `F:\GitlabProjects\code-switch-R`
 	sessionID := "session-001"
 	runtimePath := `C:\Users\X1\.code-switch\project-manager-runtime\session-001.json`
@@ -46,7 +57,7 @@ func TestBuildProjectManagerWTArgs(t *testing.T) {
 		"new-tab",
 		"-d", launchDir,
 		"--title", tabTitle,
-		"pwsh",
+		`E:\software\PowerShell7\7\pwsh.exe`,
 		"-NoExit",
 		"-EncodedCommand",
 		encodeProjectManagerPowerShellCommand(buildProjectManagerPowerShellLaunchCommand(sessionID, runtimePath, windowID, tabTitle, tabIndex)),
@@ -103,6 +114,49 @@ func TestBuildProjectManagerPowerShellCommandArgs(t *testing.T) {
 	if decoded != wantCommand {
 		t.Fatalf("EncodedCommand 解码后不对，want=%q got=%q", wantCommand, decoded)
 	}
+}
+
+func TestProjectManagerPreferredShellExecutable(t *testing.T) {
+	originalLookPath := projectManagerLookPath
+	t.Cleanup(func() {
+		projectManagerLookPath = originalLookPath
+	})
+
+	t.Run("prefer pwsh when available", func(t *testing.T) {
+		projectManagerLookPath = func(file string) (string, error) {
+			switch file {
+			case "pwsh.exe":
+				return `E:\software\PowerShell7\7\pwsh.exe`, nil
+			case "powershell.exe":
+				return `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`, nil
+			default:
+				return "", errors.New("not found")
+			}
+		}
+
+		got := projectManagerPreferredShellExecutable()
+		want := `E:\software\PowerShell7\7\pwsh.exe`
+		if got != want {
+			t.Fatalf("优先 shell 不对，want=%q got=%q", want, got)
+		}
+	})
+
+	t.Run("fallback to powershell", func(t *testing.T) {
+		projectManagerLookPath = func(file string) (string, error) {
+			switch file {
+			case "powershell.exe":
+				return `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`, nil
+			default:
+				return "", errors.New("not found")
+			}
+		}
+
+		got := projectManagerPreferredShellExecutable()
+		want := `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`
+		if got != want {
+			t.Fatalf("fallback shell 不对，want=%q got=%q", want, got)
+		}
+	})
 }
 
 func TestBuildProjectManagerPowerShellResumeCommand(t *testing.T) {

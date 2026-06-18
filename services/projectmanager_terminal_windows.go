@@ -28,7 +28,8 @@ var (
 	projectManagerWTExecutableOnce  sync.Once
 	projectManagerWTExecutablePath  string
 	projectManagerWTExecutableReady bool
-	projectManagerExecCommand = func(name string, args ...string) projectManagerCommandRunner {
+	projectManagerLookPath          = exec.LookPath
+	projectManagerExecCommand       = func(name string, args ...string) projectManagerCommandRunner {
 		return exec.Command(name, args...)
 	}
 )
@@ -240,12 +241,13 @@ func buildProjectManagerWTArgs(
 	tabTitle string,
 	tabIndex int,
 ) []string {
+	shellExecutable := projectManagerPreferredShellExecutable()
 	return append([]string{
 		"-w", resolveProjectManagerWTWindowName(windowID),
 		"new-tab",
 		"-d", launchDir,
 		"--title", tabTitle,
-	}, buildProjectManagerPowerShellCommandArgs("pwsh", sessionID, runtimePath, windowID, tabTitle, tabIndex)...)
+	}, buildProjectManagerPowerShellCommandArgs(shellExecutable, sessionID, runtimePath, windowID, tabTitle, tabIndex)...)
 }
 
 func resolveProjectManagerWTWindowName(windowID string) string {
@@ -307,11 +309,7 @@ func startProjectManagerFallbackTerminal(
 	tabTitle string,
 	tabIndex int,
 ) error {
-	fallbackShell := "powershell.exe"
-	if pwshPath, err := exec.LookPath("pwsh.exe"); err == nil && strings.TrimSpace(pwshPath) != "" {
-		fallbackShell = pwshPath
-	}
-
+	fallbackShell := projectManagerPreferredShellExecutable()
 	innerArgs := buildProjectManagerPowerShellCommandArgs(fallbackShell, sessionID, runtimePath, windowID, tabTitle, tabIndex)
 	quotedInnerArgs := make([]string, 0, len(innerArgs))
 	for _, arg := range innerArgs[1:] {
@@ -349,6 +347,21 @@ func buildProjectManagerPowerShellCommandArgs(
 		"-EncodedCommand",
 		encodeProjectManagerPowerShellCommand(buildProjectManagerPowerShellLaunchCommand(sessionID, runtimePath, windowID, tabTitle, tabIndex)),
 	}
+}
+
+func projectManagerPreferredShellExecutable() string {
+	candidates := []string{"pwsh.exe", "powershell.exe"}
+	for _, candidate := range candidates {
+		resolved, err := projectManagerLookPath(candidate)
+		if err != nil {
+			continue
+		}
+		resolved = strings.TrimSpace(resolved)
+		if resolved != "" {
+			return resolved
+		}
+	}
+	return "powershell.exe"
 }
 
 func buildProjectManagerPowerShellLaunchCommand(

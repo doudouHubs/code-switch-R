@@ -870,3 +870,38 @@ func TestProjectManagerDeleteProjectRemovesAllSessions(t *testing.T) {
 		t.Fatalf("项目删除后 snapshot 不应残留: %+v %+v", snapshot.Projects, snapshot.Sessions)
 	}
 }
+
+func TestSanitizeProjectManagerSessionSummaryForTerminal(t *testing.T) {
+	projectDir := filepath.Join(t.TempDir(), "workspace", "alpha")
+	cwdDir := filepath.Join(t.TempDir(), "workspace", "beta")
+
+	sanitized := sanitizeProjectManagerSessionSummaryForTerminal(SessionSummary{
+		ID:                "  session-001  ",
+		ProjectID:         "  project-001  ",
+		ProjectPath:       projectDir + `\..\alpha`,
+		ProjectName:       "  Alpha  ",
+		SourceName:        "  Source  ",
+		DisplayName:       "  Display  ",
+		Summary:           "  Summary  ",
+		WindowID:          "  win-001  ",
+		Cwd:               cwdDir + `\..\beta`,
+		LastCapturePath:   "  capture.json  ",
+		ProjectSourceHint: "  workspace_roots  ",
+	})
+
+	if sanitized.ID != "session-001" {
+		t.Fatalf("ID 清理失败，got=%q", sanitized.ID)
+	}
+	if sanitized.ProjectID != "project-001" {
+		t.Fatalf("ProjectID 清理失败，got=%q", sanitized.ProjectID)
+	}
+	if sanitized.ProjectPath != normalizeProjectManagerProjectPath(projectDir) {
+		t.Fatalf("ProjectPath 清理失败，got=%q", sanitized.ProjectPath)
+	}
+	if sanitized.Cwd != normalizeProjectManagerProjectPath(cwdDir) {
+		t.Fatalf("Cwd 清理失败，got=%q", sanitized.Cwd)
+	}
+	if sanitized.DisplayName != "Display" || sanitized.ProjectName != "Alpha" || sanitized.SourceName != "Source" {
+		t.Fatalf("字符串 trim 失败，got=%+v", sanitized)
+	}
+}

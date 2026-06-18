@@ -225,6 +225,21 @@ func (s *ProjectManagerService) OpenSessionTerminal(sessionID string) error {
 	return s.openProjectManagerSessionTerminal(session)
 }
 
+func (s *ProjectManagerService) OpenSessionTerminalWithSession(session SessionSummary) error {
+	session = sanitizeProjectManagerSessionSummaryForTerminal(session)
+	if session.ID == "" {
+		return errors.New("会话 ID 不能为空")
+	}
+
+	// 打开终端是高频即时操作，不能每次都回去全量重扫 .codex 历史。
+	// 当前前端已经持有列表里的会话摘要，这里优先直接复用，只有关键目录信息缺失时才退回慢路径补查。
+	if session.ProjectPath != "" || session.Cwd != "" {
+		return s.openProjectManagerSessionTerminal(session)
+	}
+
+	return s.OpenSessionTerminal(session.ID)
+}
+
 func (s *ProjectManagerService) OpenProjectFolder(projectPath string) error {
 	projectPath = normalizeProjectManagerProjectPath(projectPath)
 	if projectPath == "" {
@@ -384,4 +399,19 @@ func (s *ProjectManagerService) tryRenameCodexSessionIndex(sessionID string, dis
 	}
 
 	return AtomicWriteText(path, strings.Join(lines, "\n"))
+}
+
+func sanitizeProjectManagerSessionSummaryForTerminal(session SessionSummary) SessionSummary {
+	session.ID = strings.TrimSpace(session.ID)
+	session.ProjectID = strings.TrimSpace(session.ProjectID)
+	session.ProjectPath = normalizeProjectManagerProjectPath(session.ProjectPath)
+	session.ProjectName = strings.TrimSpace(session.ProjectName)
+	session.SourceName = strings.TrimSpace(session.SourceName)
+	session.DisplayName = strings.TrimSpace(session.DisplayName)
+	session.Summary = strings.TrimSpace(session.Summary)
+	session.WindowID = strings.TrimSpace(session.WindowID)
+	session.Cwd = normalizeProjectManagerProjectPath(session.Cwd)
+	session.LastCapturePath = strings.TrimSpace(session.LastCapturePath)
+	session.ProjectSourceHint = strings.TrimSpace(session.ProjectSourceHint)
+	return session
 }

@@ -333,7 +333,7 @@ const handleOpenSession = async (session: SessionSummary) => {
   openingSessionTimers.set(session.id, timeoutId)
 
   try {
-    await openSessionTerminal(session.id)
+    await openSessionTerminal(session)
   } catch (error) {
     console.error('failed to open session terminal', error)
     showToast(extractErrorMessage(error), 'error')
