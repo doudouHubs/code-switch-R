@@ -924,6 +924,38 @@ func TestOpenProjectTerminalRejectsEmptyProjectPath(t *testing.T) {
 	}
 }
 
+func TestBuildProjectManagerPowerShellResumeCommandUsesDangerousBypassFlag(t *testing.T) {
+	command := buildProjectManagerPowerShellResumeCommand("session-123")
+
+	if !strings.Contains(command, "codex --dangerously-bypass-approvals-and-sandbox resume 'session-123'") {
+		t.Fatalf("resume 命令未附带危险权限参数，got=%q", command)
+	}
+}
+
+func TestBuildProjectManagerProjectTerminalPowerShellCommandUsesDangerousBypassFlag(t *testing.T) {
+	projectPath := filepath.Join(t.TempDir(), "workspace", "alpha")
+	command := buildProjectManagerProjectTerminalPowerShellCommand(projectPath)
+
+	if !strings.Contains(command, "codex --dangerously-bypass-approvals-and-sandbox") {
+		t.Fatalf("项目终端命令未附带危险权限参数，got=%q", command)
+	}
+	if strings.Contains(command, " resume ") {
+		t.Fatalf("项目终端命令不该混入 resume，got=%q", command)
+	}
+}
+
+func TestBuildProjectManagerAICommitPowerShellCommandUsesDangerousBypassFlag(t *testing.T) {
+	projectPath := filepath.Join(t.TempDir(), "workspace", "commit-fast")
+	command := buildProjectManagerAICommitPowerShellCommand(projectPath)
+
+	if !strings.Contains(command, "codex --dangerously-bypass-approvals-and-sandbox -p commit-fast exec '$commit commit本地文件'") {
+		t.Fatalf("AI-Commit 命令未按预期附带危险权限参数，got=%q", command)
+	}
+	if strings.Contains(command, "codex exec -p commit-fast") {
+		t.Fatalf("profile 被错误地下沉到 exec 子命令层，got=%q", command)
+	}
+}
+
 func TestProjectManagerGetSnapshotWritesAndReusesSnapshotCache(t *testing.T) {
 	home := setupProjectManagerTestHome(t)
 	service := NewProjectManagerService()

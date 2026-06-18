@@ -18,6 +18,7 @@ import (
 )
 
 const projectManagerWTFocusTimeout = 350 * time.Millisecond
+const projectManagerCodexDangerousBypassFlag = "--dangerously-bypass-approvals-and-sandbox"
 
 type projectManagerCommandRunner interface {
 	Start() error
@@ -556,9 +557,9 @@ func buildProjectManagerAICommitPowerShellCommand(projectPath string) string {
 	// 这里直接让可见 shell 自己跑完 commit 命令。
 	// 成功就 exit 0 自动关窗；失败再停留等待用户确认，这样不会为了“保留失败现场”额外再炸出第二个窗口。
 	return fmt.Sprintf(
-		"Set-Location -LiteralPath '%s'; codex -p commit-fast exec '%s'; $__exitCode = $LASTEXITCODE; if ($__exitCode -eq 0) { exit 0 }; Write-Host '%s'; Read-Host | Out-Null; exit $__exitCode",
+		"Set-Location -LiteralPath '%s'; %s; $__exitCode = $LASTEXITCODE; if ($__exitCode -eq 0) { exit 0 }; Write-Host '%s'; Read-Host | Out-Null; exit $__exitCode",
 		escapedProjectPath,
-		commitPrompt,
+		buildProjectManagerCodexCommand("-p", "commit-fast", "exec", fmt.Sprintf("'%s'", commitPrompt)),
 		failureMessage,
 	)
 }
@@ -596,7 +597,7 @@ func buildProjectManagerPowerShellLaunchCommand(
 
 func buildProjectManagerPowerShellResumeCommand(sessionID string) string {
 	escaped := escapeProjectManagerPowerShellSingleQuoted(sessionID)
-	return fmt.Sprintf("codex resume '%s'", escaped)
+	return buildProjectManagerCodexCommand("resume", fmt.Sprintf("'%s'", escaped))
 }
 
 func buildProjectManagerProjectTerminalPowerShellCommand(projectPath string) string {
@@ -604,7 +605,12 @@ func buildProjectManagerProjectTerminalPowerShellCommand(projectPath string) str
 
 	// 这里故意只做两件事：切到项目目录，然后进入新的 codex 交互终端。
 	// 头部按钮的职责是“新开一个项目终端”，不是恢复历史会话，所以绝不能混入 resume。
-	return fmt.Sprintf("Set-Location -LiteralPath '%s'; codex", escapedProjectPath)
+	return fmt.Sprintf("Set-Location -LiteralPath '%s'; %s", escapedProjectPath, buildProjectManagerCodexCommand())
+}
+
+func buildProjectManagerCodexCommand(args ...string) string {
+	parts := append([]string{"codex", projectManagerCodexDangerousBypassFlag}, args...)
+	return strings.Join(parts, " ")
 }
 
 func encodeProjectManagerPowerShellCommand(command string) string {

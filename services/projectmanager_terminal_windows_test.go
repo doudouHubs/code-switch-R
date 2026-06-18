@@ -118,7 +118,7 @@ func TestBuildProjectManagerPowerShellLaunchCommand(t *testing.T) {
 		"tab_title = '[PM]session''o1|Alpha'",
 		"tab_index = 3",
 		"Set-Content -LiteralPath $__codeSwitchRuntimePath -Encoding utf8 -ErrorAction Stop",
-		"codex resume 'session''o1'",
+		"codex --dangerously-bypass-approvals-and-sandbox resume 'session''o1'",
 		"Remove-Item -LiteralPath $__codeSwitchRuntimePath -Force -ErrorAction SilentlyContinue",
 	}
 
@@ -228,7 +228,7 @@ func TestProjectManagerPreferredShellExecutable(t *testing.T) {
 
 func TestBuildProjectManagerPowerShellResumeCommand(t *testing.T) {
 	got := buildProjectManagerPowerShellResumeCommand("session'o1")
-	want := "codex resume 'session''o1'"
+	want := "codex --dangerously-bypass-approvals-and-sandbox resume 'session''o1'"
 	if got != want {
 		t.Fatalf("resume 命令不对，want=%q got=%q", want, got)
 	}
@@ -240,7 +240,7 @@ func TestBuildProjectManagerAICommitPowerShellCommand(t *testing.T) {
 	got := buildProjectManagerAICommitPowerShellCommand(projectPath)
 	expectedParts := []string{
 		"Set-Location -LiteralPath 'F:\\GitlabProjects\\code-switch-R'",
-		"codex -p commit-fast exec '$commit commit本地文件'",
+		"codex --dangerously-bypass-approvals-and-sandbox -p commit-fast exec '$commit commit本地文件'",
 		"if ($__exitCode -eq 0) { exit 0 }",
 		"Read-Host | Out-Null",
 	}
@@ -303,7 +303,7 @@ func TestBuildProjectManagerAICommitLaunchCommand(t *testing.T) {
 		"'-ExecutionPolicy'",
 		"'Bypass'",
 		"'-Command'",
-		"codex -p commit-fast exec ''$commit commit本地文件''",
+		"codex --dangerously-bypass-approvals-and-sandbox -p commit-fast exec ''$commit commit本地文件''",
 		"-WorkingDirectory 'F:\\GitlabProjects\\code-switch-R'",
 	}
 
