@@ -42,12 +42,12 @@ type projectManagerRolloutRecord struct {
 }
 
 type projectManagerRolloutTurn struct {
-	TurnID          string
-	StartLineIndex  int
-	EndLineIndex    int
-	UserMessage     string
+	TurnID           string
+	StartLineIndex   int
+	EndLineIndex     int
+	UserMessage      string
 	AgentLineIndices []int
-	Records         []projectManagerRolloutRecord
+	Records          []projectManagerRolloutRecord
 }
 
 type projectManagerRolloutFile struct {
@@ -129,6 +129,21 @@ func (s *ProjectManagerService) findProjectManagerSessionFileByID(sessionID stri
 	return projectManagerConversationFile{}, fmt.Errorf("未找到会话源文件: %s", sessionID)
 }
 
+func (s *ProjectManagerService) findProjectManagerSessionFileByIDFast(
+	sessionID string,
+	cache projectManagerSnapshotCache,
+) (projectManagerConversationFile, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return projectManagerConversationFile{}, fmt.Errorf("会话 ID 不能为空")
+	}
+
+	if file, ok := projectManagerSelectConversationSourceFromCache(sessionID, cache); ok {
+		return file, nil
+	}
+	return s.findProjectManagerSessionFileByID(sessionID)
+}
+
 func (s *ProjectManagerService) findProjectManagerRolloutFilesByID(sessionID string) ([]projectManagerConversationFile, error) {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
@@ -156,6 +171,66 @@ func (s *ProjectManagerService) findProjectManagerRolloutFilesByID(sessionID str
 		return strings.ToLower(result[i].Path) < strings.ToLower(result[j].Path)
 	})
 	return result, nil
+}
+
+func projectManagerSelectConversationSourceFromCache(
+	sessionID string,
+	cache projectManagerSnapshotCache,
+) (projectManagerConversationFile, bool) {
+	if !cache.isUsable() || len(cache.SessionFiles) == 0 {
+		return projectManagerConversationFile{}, false
+	}
+
+	var bestPrimary *projectManagerSessionFileEntry
+	var bestRollout *projectManagerSessionFileEntry
+	for _, cached := range cache.SessionFiles {
+		entry := cached.Entry
+		if strings.TrimSpace(entry.SessionID) != sessionID {
+			continue
+		}
+
+		if entry.IsRollout {
+			bestRollout = projectManagerSelectNewerSessionFileEntry(bestRollout, &entry)
+			continue
+		}
+		bestPrimary = projectManagerSelectNewerSessionFileEntry(bestPrimary, &entry)
+	}
+
+	if bestPrimary != nil {
+		return projectManagerConversationFile{
+			SessionID: sessionID,
+			Path:      bestPrimary.Path,
+			IsRollout: false,
+		}, true
+	}
+	if bestRollout != nil {
+		return projectManagerConversationFile{
+			SessionID: sessionID,
+			Path:      bestRollout.Path,
+			IsRollout: true,
+		}, true
+	}
+
+	return projectManagerConversationFile{}, false
+}
+
+func projectManagerSelectNewerSessionFileEntry(
+	current *projectManagerSessionFileEntry,
+	candidate *projectManagerSessionFileEntry,
+) *projectManagerSessionFileEntry {
+	if candidate == nil {
+		return current
+	}
+	if current == nil {
+		return candidate
+	}
+	if candidate.UpdatedAt.After(current.UpdatedAt) {
+		return candidate
+	}
+	if candidate.UpdatedAt.Equal(current.UpdatedAt) && strings.ToLower(candidate.Path) < strings.ToLower(current.Path) {
+		return candidate
+	}
+	return current
 }
 
 func readProjectManagerSessionConversationItems(path string, sessionID string) ([]SessionConversationItem, error) {

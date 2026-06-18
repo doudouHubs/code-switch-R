@@ -62,6 +62,7 @@ type SessionConversationDetail struct {
 type ProjectManagerService struct {
 	store              *projectManagerStoreService
 	snapshotCache      *projectManagerSnapshotCacheService
+	detailCache        *projectManagerConversationCacheService
 	snapshotBuildMu    sync.Mutex
 	warmRefreshMu      sync.Mutex
 	warmRefreshRunning bool
@@ -72,6 +73,7 @@ func NewProjectManagerService() *ProjectManagerService {
 	return &ProjectManagerService{
 		store:         newProjectManagerStoreService(),
 		snapshotCache: newProjectManagerSnapshotCacheService(),
+		detailCache:   newProjectManagerConversationCacheService(),
 	}
 }
 
@@ -158,6 +160,7 @@ func (s *ProjectManagerService) RenameSession(sessionID string, displayName stri
 		return fmt.Errorf("已保存本地会话别名，但回写 Codex 会话标题失败: %w", err)
 	}
 	s.invalidateProjectManagerSnapshotCache()
+	s.invalidateProjectManagerConversationCache(sessionID)
 	return nil
 }
 
@@ -194,6 +197,9 @@ func (s *ProjectManagerService) DeleteProject(projectPath string) error {
 		return err
 	}
 	s.invalidateProjectManagerSnapshotCache()
+	for _, session := range targetSessions {
+		s.invalidateProjectManagerConversationCache(session.ID)
+	}
 	return nil
 }
 
@@ -226,6 +232,7 @@ func (s *ProjectManagerService) DeleteSession(sessionID string) error {
 		return err
 	}
 	s.invalidateProjectManagerSnapshotCache()
+	s.invalidateProjectManagerConversationCache(sessionID)
 	return nil
 }
 
@@ -288,7 +295,7 @@ func (s *ProjectManagerService) GetSessionConversationDetail(sessionID string) (
 		return SessionConversationDetail{}, errors.New("会话 ID 不能为空")
 	}
 
-	snapshot, err := s.GetSnapshot()
+	snapshot, snapshotCache, err := s.loadProjectManagerSnapshotWithCache()
 	if err != nil {
 		return SessionConversationDetail{}, err
 	}
@@ -298,25 +305,28 @@ func (s *ProjectManagerService) GetSessionConversationDetail(sessionID string) (
 		return SessionConversationDetail{}, err
 	}
 
-	sessionFile, err := s.findProjectManagerSessionFileByID(sessionID)
+	sessionFile, err := s.findProjectManagerSessionFileByIDFast(sessionID, snapshotCache)
 	if err != nil {
 		return SessionConversationDetail{}, err
 	}
 
-	var items []SessionConversationItem
-	if sessionFile.IsRollout {
-		items, err = readProjectManagerRolloutConversationItems(sessionFile.Path, sessionID)
-	} else {
-		items, err = readProjectManagerSessionConversationItems(sessionFile.Path, sessionID)
+	if cachedDetail, ok, err := s.loadProjectManagerConversationDetailCache(session, sessionFile); err != nil {
+		return SessionConversationDetail{}, err
+	} else if ok {
+		return cachedDetail, nil
 	}
+
+	items, err := s.readProjectManagerConversationItems(sessionFile)
 	if err != nil {
 		return SessionConversationDetail{}, err
 	}
 
-	return SessionConversationDetail{
+	detail := SessionConversationDetail{
 		Session: session,
 		Items:   items,
-	}, nil
+	}
+	s.saveProjectManagerConversationDetailCache(sessionFile, detail)
+	return detail, nil
 }
 
 func (s *ProjectManagerService) PruneSessionConversation(sessionID string, messageIDs []string) (SessionConversationDetail, error) {
@@ -328,17 +338,17 @@ func (s *ProjectManagerService) PruneSessionConversation(sessionID string, messa
 		return SessionConversationDetail{}, errors.New("至少选择一条消息")
 	}
 
-	sessionFile, err := s.findProjectManagerSessionFileByID(sessionID)
+	snapshot, snapshotCache, err := s.loadProjectManagerSnapshotWithCache()
 	if err != nil {
 		return SessionConversationDetail{}, err
 	}
 
-	var currentItems []SessionConversationItem
-	if sessionFile.IsRollout {
-		currentItems, err = readProjectManagerRolloutConversationItems(sessionFile.Path, sessionID)
-	} else {
-		currentItems, err = readProjectManagerSessionConversationItems(sessionFile.Path, sessionID)
+	sessionFile, err := s.findProjectManagerSessionFileByIDFast(sessionID, snapshotCache)
+	if err != nil {
+		return SessionConversationDetail{}, err
 	}
+
+	currentItems, err := s.readProjectManagerConversationItems(sessionFile)
 	if err != nil {
 		return SessionConversationDetail{}, err
 	}
@@ -361,11 +371,46 @@ func (s *ProjectManagerService) PruneSessionConversation(sessionID string, messa
 		}
 	}
 
+	s.invalidateProjectManagerConversationCache(sessionID)
+
+	// 剪枝后优先复用当前已取到的 snapshot；详情重新走一次读取链，
+	// 这样能复用最新源文件选择逻辑，同时避免旧缓存消息回魂。
+	if _, findErr := projectManagerFindSession(snapshot.Sessions, sessionID); findErr != nil {
+		return SessionConversationDetail{}, findErr
+	}
 	detail, err := s.GetSessionConversationDetail(sessionID)
 	if err == nil {
 		s.invalidateProjectManagerSnapshotCache()
 	}
 	return detail, err
+}
+
+func (s *ProjectManagerService) loadProjectManagerSnapshotWithCache() (ProjectManagerSnapshot, projectManagerSnapshotCache, error) {
+	snapshot, err := s.GetSnapshot()
+	if err != nil {
+		return ProjectManagerSnapshot{}, projectManagerSnapshotCache{}, err
+	}
+
+	cache, cacheErr := s.loadProjectManagerSnapshotCache()
+	if cacheErr != nil || !cache.isUsable() {
+		return snapshot, newProjectManagerSnapshotCache(), nil
+	}
+
+	return snapshot, cache, nil
+}
+
+func (s *ProjectManagerService) readProjectManagerConversationItems(file projectManagerConversationFile) ([]SessionConversationItem, error) {
+	if file.IsRollout {
+		return readProjectManagerRolloutConversationItems(file.Path, file.SessionID)
+	}
+	return readProjectManagerSessionConversationItems(file.Path, file.SessionID)
+}
+
+func (s *ProjectManagerService) invalidateProjectManagerConversationCache(sessionID string) {
+	if s.detailCache == nil {
+		return
+	}
+	s.detailCache.delete(sessionID)
 }
 
 func (s *ProjectManagerService) removeCodexSessionIndexEntry(sessionID string) error {

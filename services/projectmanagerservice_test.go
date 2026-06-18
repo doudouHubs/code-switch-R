@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -574,6 +575,118 @@ func TestProjectManagerConversationSourceSkipsRollout(t *testing.T) {
 	}
 	if len(detail.Items) != 2 || detail.Items[0].Content != "主会话问题" || detail.Items[1].Content != "主会话回答" {
 		t.Fatalf("详情不该从 rollout 读取，got=%+v", detail.Items)
+	}
+}
+
+func TestProjectManagerGetSessionConversationDetailUsesSnapshotCacheFastPath(t *testing.T) {
+	home := setupProjectManagerTestHome(t)
+	service := NewProjectManagerService()
+
+	sessionID := "019ecab9-detail-fast-path-case"
+	projectDir := filepath.Join(home, "workspace", "detail-fast-path")
+	sessionPath := writeProjectManagerConversationFixture(t, home, sessionID, projectDir, []string{
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:00Z","payload":{"type":"user_message","message":"缓存快路径问题"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:10Z","payload":{"type":"agent_message","message":"缓存快路径回答"}}`,
+	})
+	writeProjectManagerSessionIndex(t, home, sessionID, "Fast Path Session", "2026-06-16T10:01:14Z")
+
+	if _, err := service.GetSnapshot(); err != nil {
+		t.Fatalf("预热 snapshot 失败: %v", err)
+	}
+
+	if err := os.RemoveAll(filepath.Join(home, ".codex", "sessions")); err != nil {
+		t.Fatalf("删除原始 sessions 目录失败: %v", err)
+	}
+	if err := AtomicWriteText(sessionPath, strings.Join([]string{
+		fmt.Sprintf(`{"type":"session_meta","timestamp":"2026-06-16T10:00:00Z","payload":{"id":%q,"cwd":%q,"timestamp":"2026-06-16T10:00:00Z"}}`, sessionID, projectDir),
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:00Z","payload":{"type":"user_message","message":"缓存快路径问题"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:10Z","payload":{"type":"agent_message","message":"缓存快路径回答"}}`,
+	}, "\n")); err != nil {
+		t.Fatalf("重建单会话文件失败: %v", err)
+	}
+
+	detail, err := service.GetSessionConversationDetail(sessionID)
+	if err != nil {
+		t.Fatalf("GetSessionConversationDetail 失败: %v", err)
+	}
+	if len(detail.Items) != 2 {
+		t.Fatalf("详情消息数不对，want=2 got=%d", len(detail.Items))
+	}
+}
+
+func TestProjectManagerGetSessionConversationDetailReusesDetailCacheUntilSignatureChanges(t *testing.T) {
+	home := setupProjectManagerTestHome(t)
+	service := NewProjectManagerService()
+
+	sessionID := "019ecab9-detail-cache-case"
+	projectDir := filepath.Join(home, "workspace", "detail-cache")
+	sessionPath := writeProjectManagerConversationFixture(t, home, sessionID, projectDir, []string{
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:00Z","payload":{"type":"user_message","message":"第一次问题"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:10Z","payload":{"type":"agent_message","message":"第一次回答"}}`,
+	})
+	writeProjectManagerSessionIndex(t, home, sessionID, "Detail Cache Session", "2026-06-16T10:01:14Z")
+
+	first, err := service.GetSessionConversationDetail(sessionID)
+	if err != nil {
+		t.Fatalf("首次 GetSessionConversationDetail 失败: %v", err)
+	}
+
+	if err := AtomicWriteText(sessionPath, strings.Join([]string{
+		fmt.Sprintf(`{"type":"session_meta","timestamp":"2026-06-16T10:00:00Z","payload":{"id":%q,"cwd":%q,"timestamp":"2026-06-16T10:00:00Z"}}`, sessionID, projectDir),
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:00Z","payload":{"type":"user_message","message":"第二次问题"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:10Z","payload":{"type":"agent_message","message":"第二次回答"}}`,
+	}, "\n")); err != nil {
+		t.Fatalf("改写会话文件失败: %v", err)
+	}
+
+	second, err := service.GetSessionConversationDetail(sessionID)
+	if err != nil {
+		t.Fatalf("第二次 GetSessionConversationDetail 失败: %v", err)
+	}
+	if reflect.DeepEqual(first.Items, second.Items) {
+		t.Fatalf("文件签名变化后详情不该继续命中旧缓存，first=%+v second=%+v", first.Items, second.Items)
+	}
+	if second.Items[0].Content != "第二次问题" || second.Items[1].Content != "第二次回答" {
+		t.Fatalf("更新后的详情内容不对，got=%+v", second.Items)
+	}
+}
+
+func TestProjectManagerPruneSessionConversationInvalidatesDetailCache(t *testing.T) {
+	home := setupProjectManagerTestHome(t)
+	service := NewProjectManagerService()
+
+	sessionID := "019ecab9-prune-cache-case"
+	projectDir := filepath.Join(home, "workspace", "prune-cache")
+	writeProjectManagerConversationFixture(t, home, sessionID, projectDir, []string{
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:00Z","payload":{"type":"user_message","message":"第一问"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:10Z","payload":{"type":"agent_message","message":"第一答"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:02:00Z","payload":{"type":"user_message","message":"第二问"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:02:10Z","payload":{"type":"agent_message","message":"第二答"}}`,
+	})
+	writeProjectManagerSessionIndex(t, home, sessionID, "Prune Cache Session", "2026-06-16T10:01:14Z")
+
+	before, err := service.GetSessionConversationDetail(sessionID)
+	if err != nil {
+		t.Fatalf("首次 GetSessionConversationDetail 失败: %v", err)
+	}
+	if len(before.Items) != 4 {
+		t.Fatalf("初始消息数不对，got=%d", len(before.Items))
+	}
+
+	pruned, err := service.PruneSessionConversation(sessionID, []string{before.Items[0].ID})
+	if err != nil {
+		t.Fatalf("PruneSessionConversation 失败: %v", err)
+	}
+	if len(pruned.Items) != 2 {
+		t.Fatalf("剪枝后消息数不对，want=2 got=%d", len(pruned.Items))
+	}
+
+	after, err := service.GetSessionConversationDetail(sessionID)
+	if err != nil {
+		t.Fatalf("剪枝后再次读取详情失败: %v", err)
+	}
+	if len(after.Items) != 2 || after.Items[0].Content != "第二问" || after.Items[1].Content != "第二答" {
+		t.Fatalf("剪枝后详情缓存未正确失效，got=%+v", after.Items)
 	}
 }
 
