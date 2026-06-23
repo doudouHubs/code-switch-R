@@ -50,7 +50,7 @@ func TestBuildProjectManagerWTArgs(t *testing.T) {
 	sessionID := "session-001"
 	runtimePath := `C:\Users\X1\.code-switch\project-manager-runtime\session-001.json`
 	windowID := projectManagerProjectWindowID(launchDir)
-	tabTitle := "[PM]session-001|Session 001"
+	tabTitle := "[PM]session-001 - Session 001"
 	tabIndex := 2
 
 	got := buildProjectManagerWTArgs(launchDir, sessionID, runtimePath, windowID, tabTitle, tabIndex)
@@ -110,7 +110,7 @@ func TestBuildProjectManagerWTLaunchCommand(t *testing.T) {
 		"-w", "codeswitch-project-deadbeef",
 		"new-tab",
 		"-d", workingDir,
-		"--title", "[PM]session-001|Alpha",
+		"--title", "[PM]session-001 - Alpha",
 		"--",
 		`E:\software\PowerShell7\7\pwsh.exe`,
 		"-NoExit",
@@ -126,7 +126,7 @@ func TestBuildProjectManagerWTLaunchCommand(t *testing.T) {
 		"'codeswitch-project-deadbeef'",
 		"'new-tab'",
 		"'--title'",
-		"'[PM]session-001|Alpha'",
+		"'[PM]session-001 - Alpha'",
 		"'--'",
 		"'E:\\software\\PowerShell7\\7\\pwsh.exe'",
 		"'-EncodedCommand'",
@@ -163,7 +163,7 @@ func TestBuildProjectManagerPowerShellLaunchCommand(t *testing.T) {
 	sessionID := "session'o1"
 	runtimePath := `C:\Users\X1\.code-switch\project-manager-runtime\session-o1.json`
 	windowID := "codeswitch-project-deadbeef"
-	tabTitle := "[PM]session'o1|Alpha"
+	tabTitle := "[PM]session'o1 - Alpha"
 	tabIndex := 3
 
 	got := buildProjectManagerPowerShellLaunchCommand(sessionID, runtimePath, windowID, tabTitle, tabIndex)
@@ -173,7 +173,7 @@ func TestBuildProjectManagerPowerShellLaunchCommand(t *testing.T) {
 		"shell_started_at = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o')",
 		"launch_source = 'project-manager'",
 		"window_id = 'codeswitch-project-deadbeef'",
-		"tab_title = '[PM]session''o1|Alpha'",
+		"tab_title = '[PM]session''o1 - Alpha'",
 		"tab_index = 3",
 		"Set-Content -LiteralPath $__codeSwitchRuntimePath -Encoding utf8 -ErrorAction Stop",
 		"codex --dangerously-bypass-approvals-and-sandbox resume 'session''o1'",
@@ -209,7 +209,7 @@ func TestBuildProjectManagerPowerShellCommandArgs(t *testing.T) {
 	sessionID := "session-encoded"
 	runtimePath := `C:\Users\X1\.code-switch\project-manager-runtime\session-encoded.json`
 	windowID := "codeswitch-project-encoded"
-	tabTitle := "[PM]session-encoded|Encoded"
+	tabTitle := "[PM]session-encoded - Encoded"
 	tabIndex := 1
 
 	got := buildProjectManagerPowerShellCommandArgs("pwsh", sessionID, runtimePath, windowID, tabTitle, tabIndex)
@@ -591,7 +591,7 @@ func TestProjectManagerSessionTabTitle(t *testing.T) {
 	}
 
 	got := projectManagerSessionTabTitle(session)
-	want := "[PM]session-001|Alpha"
+	want := "[PM]session-001 - Alpha"
 	if got != want {
 		t.Fatalf("tab 标题不对，want=%q got=%q", want, got)
 	}
@@ -726,7 +726,7 @@ func TestFocusProjectManagerNamedWTTabReturnsQuicklyAfterStart(t *testing.T) {
 
 	runtime := projectManagerSessionRuntime{
 		WindowID: "codeswitch-project-001",
-		TabTitle: "[PM]session-001|Alpha",
+		TabTitle: "[PM]session-001 - Alpha",
 		TabIndex: 1,
 	}
 	session := SessionSummary{
@@ -761,7 +761,7 @@ func TestFocusProjectManagerNamedWTTabReturnsErrorWhenStartFails(t *testing.T) {
 
 	runtime := projectManagerSessionRuntime{
 		WindowID: "codeswitch-project-001",
-		TabTitle: "[PM]session-001|Alpha",
+		TabTitle: "[PM]session-001 - Alpha",
 	}
 	session := SessionSummary{
 		ID: "session-001",
@@ -787,7 +787,7 @@ func TestFocusProjectManagerNamedWTTabReturnsErrorWhenWaitFailsImmediately(t *te
 
 	runtime := projectManagerSessionRuntime{
 		WindowID: "codeswitch-project-001",
-		TabTitle: "[PM]session-001|Alpha",
+		TabTitle: "[PM]session-001 - Alpha",
 	}
 	session := SessionSummary{
 		ID: "session-001",
@@ -804,7 +804,7 @@ func TestTryReuseProjectManagerSessionTerminalSkipsInactiveRuntimeBeforeFocus(t 
 	service := NewProjectManagerService()
 	sessionID := "session-inactive"
 	runtimePath := filepath.Join(home, ".code-switch", "project-manager-runtime", sessionID+".json")
-	runtimeContent := `{"session_id":"session-inactive","shell_pid":45678,"shell_started_at":"2026-06-16T10:02:47.6262548Z","launch_source":"project-manager","window_id":"codeswitch-project-deadbeef","tab_title":"[PM]session-inactive|Dead","tab_index":0}`
+	runtimeContent := `{"session_id":"session-inactive","shell_pid":45678,"shell_started_at":"2026-06-16T10:02:47.6262548Z","launch_source":"project-manager","window_id":"codeswitch-project-deadbeef","tab_title":"[PM]session-inactive - Dead","tab_index":0}`
 	if err := AtomicWriteText(runtimePath, runtimeContent); err != nil {
 		t.Fatalf("写入 runtime fixture 失败: %v", err)
 	}

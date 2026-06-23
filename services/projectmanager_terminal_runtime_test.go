@@ -12,7 +12,7 @@ func TestProjectManagerSessionRuntimeCarriesPrivateClosureMetadata(t *testing.T)
 		ShellStartedAt: "2026-06-16T07:08:52.8213389Z",
 		LaunchSource:   projectManagerRuntimeLaunchSource,
 		WindowID:       "codeswitch-project-session-001",
-		TabTitle:       "[PM]session-001|Alpha",
+		TabTitle:       "[PM]session-001 - Alpha",
 		TabIndex:       0,
 	}
 
@@ -25,7 +25,7 @@ func TestProjectManagerSessionRuntimeCarriesPrivateClosureMetadata(t *testing.T)
 	if runtime.WindowID != "codeswitch-project-session-001" {
 		t.Fatalf("window id 不对: %+v", runtime)
 	}
-	if runtime.TabTitle != "[PM]session-001|Alpha" {
+	if runtime.TabTitle != "[PM]session-001 - Alpha" {
 		t.Fatalf("tab title 不对: %+v", runtime)
 	}
 	if runtime.TabIndex != 0 {
@@ -49,7 +49,7 @@ func TestLoadProjectManagerSessionRuntimeIfExistsReturnsRuntimeWhenPresent(t *te
 	home := setupProjectManagerTestHome(t)
 	sessionID := "session-001"
 	runtimePath := filepath.Join(home, ".code-switch", "project-manager-runtime", "session-001.json")
-	content := `{"session_id":"session-001","shell_pid":321,"launch_source":"project-manager","window_id":"codeswitch-project-001","tab_title":"[PM]session-001|Alpha","tab_index":2}`
+	content := `{"session_id":"session-001","shell_pid":321,"launch_source":"project-manager","window_id":"codeswitch-project-001","tab_title":"[PM]session-001 - Alpha","tab_index":2}`
 
 	if err := AtomicWriteText(runtimePath, content); err != nil {
 		t.Fatalf("写入 runtime fixture 失败: %v", err)

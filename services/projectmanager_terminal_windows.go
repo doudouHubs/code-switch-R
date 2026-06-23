@@ -57,7 +57,12 @@ func projectManagerSessionTabTitle(session SessionSummary) string {
 	if name == "" {
 		name = strings.TrimSpace(session.ID)
 	}
-	return fmt.Sprintf("[PM]%s|%s", strings.TrimSpace(session.ID), name)
+
+	// 这里不能再用 `|` 作为标题分隔符。
+	// 实测在打包后的 windowsgui 进程里，`wt new-tab --title "[PM]id|name" -- pwsh.exe ...`
+	// 会把后续 shell 命令解析炸掉，最终报 0x80070002。
+	// 会话识别本来就靠 runtime/session id，不靠标题分隔符吃业务语义，所以直接换成安全 ASCII 分隔符。
+	return fmt.Sprintf("[PM]%s - %s", strings.TrimSpace(session.ID), name)
 }
 
 func (s *ProjectManagerService) loadProjectManagerActiveRuntimes() (map[string]projectManagerSessionRuntime, error) {
