@@ -60,10 +60,17 @@ func TestBuildProjectManagerWTArgs(t *testing.T) {
 		"-d", launchDir,
 		"--title", tabTitle,
 		"--",
-		`E:\software\PowerShell7\7\pwsh.exe`,
-		"-NoExit",
-		"-EncodedCommand",
-		encodeProjectManagerPowerShellCommand(buildProjectManagerPowerShellLaunchCommand(sessionID, runtimePath, windowID, tabTitle, tabIndex)),
+		"cmd.exe",
+		"/d",
+		"/c",
+		buildProjectManagerCmdCommandLine(buildProjectManagerPowerShellCommandArgs(
+			`E:\software\PowerShell7\7\pwsh.exe`,
+			sessionID,
+			runtimePath,
+			windowID,
+			tabTitle,
+			tabIndex,
+		)),
 	}
 
 	if !reflect.DeepEqual(got, want) {
@@ -92,14 +99,49 @@ func TestBuildProjectManagerProjectTerminalWTArgs(t *testing.T) {
 		"new-tab",
 		"-d", projectPath,
 		"--",
-		`E:\software\PowerShell7\7\pwsh.exe`,
-		"-NoExit",
-		"-EncodedCommand",
-		encodeProjectManagerPowerShellCommand(buildProjectManagerProjectTerminalPowerShellCommand(projectPath)),
+		"cmd.exe",
+		"/d",
+		"/c",
+		buildProjectManagerCmdCommandLine(buildProjectManagerProjectTerminalCommandArgs(`E:\software\PowerShell7\7\pwsh.exe`, projectPath)),
 	}
 
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("项目终端 WT 参数不对，want=%v got=%v", want, got)
+	}
+}
+
+func TestBuildProjectManagerWTCommandArgsWrapsPwshWithCmd(t *testing.T) {
+	shellArgs := []string{
+		`E:\software\PowerShell7\7\pwsh.exe`,
+		"-NoExit",
+		"-EncodedCommand",
+		"BASE64",
+	}
+
+	got := buildProjectManagerWTCommandArgs(shellArgs)
+	want := []string{
+		"cmd.exe",
+		"/d",
+		"/c",
+		`E:\software\PowerShell7\7\pwsh.exe -NoExit -EncodedCommand BASE64`,
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("WT 子命令必须经 cmd.exe 稳定转发，want=%v got=%v", want, got)
+	}
+}
+
+func TestBuildProjectManagerCmdCommandLineQuotesSpecialArguments(t *testing.T) {
+	got := buildProjectManagerCmdCommandLine([]string{
+		`C:\Program Files\PowerShell\7\pwsh.exe`,
+		"-NoExit",
+		"-EncodedCommand",
+		"BASE64",
+	})
+	want := `"C:\Program Files\PowerShell\7\pwsh.exe" -NoExit -EncodedCommand BASE64`
+
+	if got != want {
+		t.Fatalf("cmd 命令行转义不对，want=%q got=%q", want, got)
 	}
 }
 

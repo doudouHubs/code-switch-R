@@ -313,7 +313,7 @@ func buildProjectManagerWTArgs(
 		"-d", launchDir,
 		"--title", tabTitle,
 		"--",
-	}, buildProjectManagerPowerShellCommandArgs(shellExecutable, sessionID, runtimePath, windowID, tabTitle, tabIndex)...)
+	}, buildProjectManagerWTCommandArgs(buildProjectManagerPowerShellCommandArgs(shellExecutable, sessionID, runtimePath, windowID, tabTitle, tabIndex))...)
 }
 
 func buildProjectManagerProjectTerminalWTArgs(projectPath string, windowID string) []string {
@@ -323,7 +323,42 @@ func buildProjectManagerProjectTerminalWTArgs(projectPath string, windowID strin
 		"new-tab",
 		"-d", projectPath,
 		"--",
-	}, buildProjectManagerProjectTerminalCommandArgs(shellExecutable, projectPath)...)
+	}, buildProjectManagerWTCommandArgs(buildProjectManagerProjectTerminalCommandArgs(shellExecutable, projectPath))...)
+}
+
+func buildProjectManagerWTCommandArgs(shellArgs []string) []string {
+	// Windows Terminal 的 commandline 解析对 `pwsh.exe -NoExit -EncodedCommand ...`
+	// 这种复杂子命令很敏感，生产构建下经 GUI 进程/Start-Process 传递时容易把整串当成可执行文件名。
+	// 这里固定让 WT 启动 cmd.exe，再由 cmd 按 Windows 原生命令行规则拉起 pwsh；
+	// 用户实际看到和操作的仍然是 pwsh/codex，cmd 只做稳定解析层。
+	return []string{
+		"cmd.exe",
+		"/d",
+		"/c",
+		buildProjectManagerCmdCommandLine(shellArgs),
+	}
+}
+
+func buildProjectManagerCmdCommandLine(args []string) string {
+	quotedArgs := make([]string, 0, len(args))
+	for _, arg := range args {
+		quotedArgs = append(quotedArgs, quoteProjectManagerCmdArgument(arg))
+	}
+	return strings.Join(quotedArgs, " ")
+}
+
+func quoteProjectManagerCmdArgument(arg string) string {
+	if arg == "" {
+		return `""`
+	}
+
+	if !strings.ContainsAny(arg, " \t&()[]{}^=;!'+,`~|<>\"") {
+		return arg
+	}
+
+	// 当前调用只承载可执行文件路径、flag 和 EncodedCommand。
+	// 仍然按通用 cmd 双引号转义处理，避免路径中出现空格或特殊字符时被 cmd 拆开。
+	return `"` + strings.ReplaceAll(arg, `"`, `\"`) + `"`
 }
 
 func startProjectManagerWTCommand(workingDir string, wtPath string, wtArgs []string) error {
