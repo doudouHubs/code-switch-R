@@ -313,7 +313,7 @@ func buildProjectManagerWTArgs(
 		"-d", launchDir,
 		"--title", tabTitle,
 		"--",
-	}, buildProjectManagerWTCommandArgs(buildProjectManagerPowerShellCommandArgs(shellExecutable, sessionID, runtimePath, windowID, tabTitle, tabIndex))...)
+	}, buildProjectManagerPowerShellCommandArgs(shellExecutable, sessionID, runtimePath, windowID, tabTitle, tabIndex)...)
 }
 
 func buildProjectManagerProjectTerminalWTArgs(projectPath string, windowID string) []string {
@@ -323,49 +323,13 @@ func buildProjectManagerProjectTerminalWTArgs(projectPath string, windowID strin
 		"new-tab",
 		"-d", projectPath,
 		"--",
-	}, buildProjectManagerWTCommandArgs(buildProjectManagerProjectTerminalCommandArgs(shellExecutable, projectPath))...)
-}
-
-func buildProjectManagerWTCommandArgs(shellArgs []string) []string {
-	// Windows Terminal 的 commandline 解析对 `pwsh.exe -NoExit -EncodedCommand ...`
-	// 这种复杂子命令很敏感，生产构建下经 GUI 进程/Start-Process 传递时容易把整串当成可执行文件名。
-	// 这里固定让 WT 启动 cmd.exe，再由 cmd 按 Windows 原生命令行规则拉起 pwsh；
-	// 用户实际看到和操作的仍然是 pwsh/codex，cmd 只做稳定解析层。
-	return []string{
-		"cmd.exe",
-		"/d",
-		"/c",
-		buildProjectManagerCmdCommandLine(shellArgs),
-	}
-}
-
-func buildProjectManagerCmdCommandLine(args []string) string {
-	quotedArgs := make([]string, 0, len(args))
-	for _, arg := range args {
-		quotedArgs = append(quotedArgs, quoteProjectManagerCmdArgument(arg))
-	}
-	return strings.Join(quotedArgs, " ")
-}
-
-func quoteProjectManagerCmdArgument(arg string) string {
-	if arg == "" {
-		return `""`
-	}
-
-	if !strings.ContainsAny(arg, " \t&()[]{}^=;!'+,`~|<>\"") {
-		return arg
-	}
-
-	// 当前调用只承载可执行文件路径、flag 和 EncodedCommand。
-	// 仍然按通用 cmd 双引号转义处理，避免路径中出现空格或特殊字符时被 cmd 拆开。
-	return `"` + strings.ReplaceAll(arg, `"`, `\"`) + `"`
+	}, buildProjectManagerProjectTerminalCommandArgs(shellExecutable, projectPath)...)
 }
 
 func startProjectManagerWTCommand(workingDir string, wtPath string, wtArgs []string) error {
-	// 这里不能再走隐藏 PowerShell -> Start-Process -> wt 的三段链。
-	// 那条链虽然能绕开 WT 解析 `pwsh -EncodedCommand` 的坑，但会重新引入明显冷启动延迟。
-	// 现在 `wtArgs` 内部已经固定为 `cmd.exe /d /c <pwsh...>`，复杂参数由 cmd 解析，
-	// 所以可以安全地直接启动 WT，把响应速度拉回之前优化后的水平。
+	// 这里保持最短链路：CodeSwitch -> WT -> pwsh。
+	// 之前额外套 cmd/PowerShell 虽能绕过部分参数解析问题，但会污染 PATH 命中并拖慢启动；
+	// 现在把 Codex 版本选择放回 pwsh 脚本内部处理，WT 只负责开 tab。
 	cmd := projectManagerWTCommandFactory(wtPath, wtArgs...)
 	cmd.Dir = workingDir
 	return cmd.Start()
@@ -608,7 +572,8 @@ func buildProjectManagerAICommitPowerShellCommand(projectPath string) string {
 	// 这里直接让可见 shell 自己跑完 commit 命令。
 	// 成功就 exit 0 自动关窗；失败再停留等待用户确认，这样不会为了“保留失败现场”额外再炸出第二个窗口。
 	return fmt.Sprintf(
-		"Set-Location -LiteralPath '%s'; %s; $__exitCode = $LASTEXITCODE; if ($__exitCode -eq 0) { exit 0 }; Write-Host '%s'; Read-Host | Out-Null; exit $__exitCode",
+		"%s; Set-Location -LiteralPath '%s'; %s; $__exitCode = $LASTEXITCODE; if ($__exitCode -eq 0) { exit 0 }; Write-Host '%s'; Read-Host | Out-Null; exit $__exitCode",
+		buildProjectManagerCodexResolverPowerShell(),
 		escapedProjectPath,
 		buildProjectManagerCodexCommand("-p", "commit-fast", "exec", fmt.Sprintf("'%s'", commitPrompt)),
 		failureMessage,
@@ -634,6 +599,7 @@ func buildProjectManagerPowerShellLaunchCommand(
 	escapedTabTitle := escapeProjectManagerPowerShellSingleQuoted(strings.TrimSpace(tabTitle))
 
 	parts := []string{
+		buildProjectManagerCodexResolverPowerShell(),
 		fmt.Sprintf("$__codeSwitchRuntimePath = '%s'", escapedRuntimePath),
 		"$__codeSwitchRuntimeDir = [System.IO.Path]::GetDirectoryName($__codeSwitchRuntimePath)",
 		"if (-not [string]::IsNullOrWhiteSpace($__codeSwitchRuntimeDir)) { [System.IO.Directory]::CreateDirectory($__codeSwitchRuntimeDir) | Out-Null }",
@@ -656,12 +622,25 @@ func buildProjectManagerProjectTerminalPowerShellCommand(projectPath string) str
 
 	// 这里故意只做两件事：切到项目目录，然后进入新的 codex 交互终端。
 	// 头部按钮的职责是“新开一个项目终端”，不是恢复历史会话，所以绝不能混入 resume。
-	return fmt.Sprintf("Set-Location -LiteralPath '%s'; %s", escapedProjectPath, buildProjectManagerCodexCommand())
+	return fmt.Sprintf("%s; Set-Location -LiteralPath '%s'; %s", buildProjectManagerCodexResolverPowerShell(), escapedProjectPath, buildProjectManagerCodexCommand())
 }
 
 func buildProjectManagerCodexCommand(args ...string) string {
-	parts := append([]string{"codex", projectManagerCodexDangerousBypassFlag}, args...)
+	parts := append([]string{"& $__codeSwitchCodexCommand", projectManagerCodexDangerousBypassFlag}, args...)
 	return strings.Join(parts, " ")
+}
+
+func buildProjectManagerCodexResolverPowerShell() string {
+	// 不再裸写 `codex` 交给 PATH 猜版本。
+	// 用户机器上 Volta 可能同时存在 user shim 和 node image 快照；
+	// PATH 若先命中 `tools/image/node/.../codex`，就会启动旧版 Codex。
+	// 这里优先使用 Volta 的用户 shim，它会按 Volta 当前包记录解析到最新 @openai/codex。
+	parts := []string{
+		"$__codeSwitchCodexCommand = 'codex'",
+		"$__codeSwitchVoltaCodex = Join-Path $env:LOCALAPPDATA 'Volta\\bin\\codex.cmd'",
+		"if (Test-Path -LiteralPath $__codeSwitchVoltaCodex) { $__codeSwitchCodexCommand = $__codeSwitchVoltaCodex }",
+	}
+	return strings.Join(parts, "; ")
 }
 
 func encodeProjectManagerPowerShellCommand(command string) string {

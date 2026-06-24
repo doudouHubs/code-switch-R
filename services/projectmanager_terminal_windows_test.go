@@ -60,17 +60,10 @@ func TestBuildProjectManagerWTArgs(t *testing.T) {
 		"-d", launchDir,
 		"--title", tabTitle,
 		"--",
-		"cmd.exe",
-		"/d",
-		"/c",
-		buildProjectManagerCmdCommandLine(buildProjectManagerPowerShellCommandArgs(
-			`E:\software\PowerShell7\7\pwsh.exe`,
-			sessionID,
-			runtimePath,
-			windowID,
-			tabTitle,
-			tabIndex,
-		)),
+		`E:\software\PowerShell7\7\pwsh.exe`,
+		"-NoExit",
+		"-EncodedCommand",
+		encodeProjectManagerPowerShellCommand(buildProjectManagerPowerShellLaunchCommand(sessionID, runtimePath, windowID, tabTitle, tabIndex)),
 	}
 
 	if !reflect.DeepEqual(got, want) {
@@ -99,49 +92,14 @@ func TestBuildProjectManagerProjectTerminalWTArgs(t *testing.T) {
 		"new-tab",
 		"-d", projectPath,
 		"--",
-		"cmd.exe",
-		"/d",
-		"/c",
-		buildProjectManagerCmdCommandLine(buildProjectManagerProjectTerminalCommandArgs(`E:\software\PowerShell7\7\pwsh.exe`, projectPath)),
+		`E:\software\PowerShell7\7\pwsh.exe`,
+		"-NoExit",
+		"-EncodedCommand",
+		encodeProjectManagerPowerShellCommand(buildProjectManagerProjectTerminalPowerShellCommand(projectPath)),
 	}
 
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("项目终端 WT 参数不对，want=%v got=%v", want, got)
-	}
-}
-
-func TestBuildProjectManagerWTCommandArgsWrapsPwshWithCmd(t *testing.T) {
-	shellArgs := []string{
-		`E:\software\PowerShell7\7\pwsh.exe`,
-		"-NoExit",
-		"-EncodedCommand",
-		"BASE64",
-	}
-
-	got := buildProjectManagerWTCommandArgs(shellArgs)
-	want := []string{
-		"cmd.exe",
-		"/d",
-		"/c",
-		`E:\software\PowerShell7\7\pwsh.exe -NoExit -EncodedCommand BASE64`,
-	}
-
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("WT 子命令必须经 cmd.exe 稳定转发，want=%v got=%v", want, got)
-	}
-}
-
-func TestBuildProjectManagerCmdCommandLineQuotesSpecialArguments(t *testing.T) {
-	got := buildProjectManagerCmdCommandLine([]string{
-		`C:\Program Files\PowerShell\7\pwsh.exe`,
-		"-NoExit",
-		"-EncodedCommand",
-		"BASE64",
-	})
-	want := `"C:\Program Files\PowerShell\7\pwsh.exe" -NoExit -EncodedCommand BASE64`
-
-	if got != want {
-		t.Fatalf("cmd 命令行转义不对，want=%q got=%q", want, got)
 	}
 }
 
@@ -161,8 +119,10 @@ func TestBuildProjectManagerPowerShellLaunchCommand(t *testing.T) {
 		"window_id = 'codeswitch-project-deadbeef'",
 		"tab_title = '[PM]session''o1 - Alpha'",
 		"tab_index = 3",
+		"$__codeSwitchCodexCommand = 'codex'",
+		"Volta\\bin\\codex.cmd",
 		"Set-Content -LiteralPath $__codeSwitchRuntimePath -Encoding utf8 -ErrorAction Stop",
-		"codex --dangerously-bypass-approvals-and-sandbox resume 'session''o1'",
+		"& $__codeSwitchCodexCommand --dangerously-bypass-approvals-and-sandbox resume 'session''o1'",
 		"Remove-Item -LiteralPath $__codeSwitchRuntimePath -Force -ErrorAction SilentlyContinue",
 	}
 
@@ -178,8 +138,9 @@ func TestBuildProjectManagerProjectTerminalPowerShellCommand(t *testing.T) {
 
 	got := buildProjectManagerProjectTerminalPowerShellCommand(projectPath)
 	expectedParts := []string{
+		"$__codeSwitchCodexCommand = 'codex'",
 		"Set-Location -LiteralPath 'F:\\GitlabProjects\\code-switch-R'",
-		"codex",
+		"& $__codeSwitchCodexCommand --dangerously-bypass-approvals-and-sandbox",
 	}
 	for _, part := range expectedParts {
 		if !strings.Contains(got, part) {
@@ -272,7 +233,7 @@ func TestProjectManagerPreferredShellExecutable(t *testing.T) {
 
 func TestBuildProjectManagerPowerShellResumeCommand(t *testing.T) {
 	got := buildProjectManagerPowerShellResumeCommand("session'o1")
-	want := "codex --dangerously-bypass-approvals-and-sandbox resume 'session''o1'"
+	want := "& $__codeSwitchCodexCommand --dangerously-bypass-approvals-and-sandbox resume 'session''o1'"
 	if got != want {
 		t.Fatalf("resume 命令不对，want=%q got=%q", want, got)
 	}
@@ -283,8 +244,10 @@ func TestBuildProjectManagerAICommitPowerShellCommand(t *testing.T) {
 
 	got := buildProjectManagerAICommitPowerShellCommand(projectPath)
 	expectedParts := []string{
+		"$__codeSwitchCodexCommand = 'codex'",
+		"Volta\\bin\\codex.cmd",
 		"Set-Location -LiteralPath 'F:\\GitlabProjects\\code-switch-R'",
-		"codex --dangerously-bypass-approvals-and-sandbox -p commit-fast exec '$commit commit本地文件'",
+		"& $__codeSwitchCodexCommand --dangerously-bypass-approvals-and-sandbox -p commit-fast exec '$commit commit本地文件'",
 		"if ($__exitCode -eq 0) { exit 0 }",
 		"Read-Host | Out-Null",
 	}
@@ -384,7 +347,7 @@ func TestBuildProjectManagerAICommitLaunchCommand(t *testing.T) {
 		"'-ExecutionPolicy'",
 		"'Bypass'",
 		"'-Command'",
-		"codex --dangerously-bypass-approvals-and-sandbox -p commit-fast exec ''$commit commit本地文件''",
+		"& $__codeSwitchCodexCommand --dangerously-bypass-approvals-and-sandbox -p commit-fast exec ''$commit commit本地文件''",
 		"-WorkingDirectory 'F:\\GitlabProjects\\code-switch-R'",
 	}
 
