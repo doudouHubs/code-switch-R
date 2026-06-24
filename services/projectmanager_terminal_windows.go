@@ -347,10 +347,10 @@ func buildProjectManagerWTLaunchCommand(wtPath string, wtArgs []string, workingD
 		quotedWTArgs = append(quotedWTArgs, fmt.Sprintf("'%s'", escapeProjectManagerPowerShellSingleQuoted(arg)))
 	}
 
-	// 这里不再让 GUI 进程直接把参数数组硬塞给 wt.exe。
-	// 打包成 windowsgui 后，Go 这层在个别机器上会把“可执行文件 + 参数”拼成一整串 commandline，
-	// 导致 WT 把 `pwsh.exe -NoExit -EncodedCommand ...` 误判成一个文件路径，然后弹 0x80070002。
-	// 改成隐藏 shell 代为 Start-Process + ArgumentList 数组后，参数拆分交回 PowerShell/Windows 处理，实测更稳。
+	// 打包成 windowsgui 后，直接从 GUI 进程调用 Windows Terminal 的 execution alias
+	// 容易让 WT 把 `pwsh.exe -NoExit -EncodedCommand ...` 误判成一个完整可执行文件名。
+	// 这里恢复昨天验证过的稳定链路：隐藏 PowerShell 只负责 Start-Process wt.exe，
+	// 实际交互窗口仍由 Windows Terminal 打开，避免 GUI 子系统直接透传复杂子命令。
 	return fmt.Sprintf(
 		"$ErrorActionPreference = 'Stop'; Start-Process -FilePath '%s' -ArgumentList @(%s) -WorkingDirectory '%s' | Out-Null",
 		escapeProjectManagerPowerShellSingleQuoted(wtPath),
