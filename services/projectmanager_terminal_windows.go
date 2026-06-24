@@ -33,7 +33,7 @@ var (
 	projectManagerExecCommand       = func(name string, args ...string) projectManagerCommandRunner {
 		return exec.Command(name, args...)
 	}
-	projectManagerWTCommandFactory       = hideWindowCmd
+	projectManagerWTCommandFactory       = exec.Command
 	projectManagerAICommitCommandFactory = hideWindowCmd
 )
 
@@ -362,36 +362,13 @@ func quoteProjectManagerCmdArgument(arg string) string {
 }
 
 func startProjectManagerWTCommand(workingDir string, wtPath string, wtArgs []string) error {
-	launcher := projectManagerWTLauncherExecutable()
-	cmd := projectManagerWTCommandFactory(launcher, buildProjectManagerWTLauncherArgs(wtPath, wtArgs, workingDir)...)
+	// 这里不能再走隐藏 PowerShell -> Start-Process -> wt 的三段链。
+	// 那条链虽然能绕开 WT 解析 `pwsh -EncodedCommand` 的坑，但会重新引入明显冷启动延迟。
+	// 现在 `wtArgs` 内部已经固定为 `cmd.exe /d /c <pwsh...>`，复杂参数由 cmd 解析，
+	// 所以可以安全地直接启动 WT，把响应速度拉回之前优化后的水平。
+	cmd := projectManagerWTCommandFactory(wtPath, wtArgs...)
 	cmd.Dir = workingDir
 	return cmd.Start()
-}
-
-func buildProjectManagerWTLauncherArgs(wtPath string, wtArgs []string, workingDir string) []string {
-	return []string{
-		"-NoProfile",
-		"-EncodedCommand",
-		encodeProjectManagerPowerShellCommand(buildProjectManagerWTLaunchCommand(wtPath, wtArgs, workingDir)),
-	}
-}
-
-func buildProjectManagerWTLaunchCommand(wtPath string, wtArgs []string, workingDir string) string {
-	quotedWTArgs := make([]string, 0, len(wtArgs))
-	for _, arg := range wtArgs {
-		quotedWTArgs = append(quotedWTArgs, fmt.Sprintf("'%s'", escapeProjectManagerPowerShellSingleQuoted(arg)))
-	}
-
-	// 打包成 windowsgui 后，直接从 GUI 进程调用 Windows Terminal 的 execution alias
-	// 容易让 WT 把 `pwsh.exe -NoExit -EncodedCommand ...` 误判成一个完整可执行文件名。
-	// 这里恢复昨天验证过的稳定链路：隐藏 PowerShell 只负责 Start-Process wt.exe，
-	// 实际交互窗口仍由 Windows Terminal 打开，避免 GUI 子系统直接透传复杂子命令。
-	return fmt.Sprintf(
-		"$ErrorActionPreference = 'Stop'; Start-Process -FilePath '%s' -ArgumentList @(%s) -WorkingDirectory '%s' | Out-Null",
-		escapeProjectManagerPowerShellSingleQuoted(wtPath),
-		strings.Join(quotedWTArgs, ", "),
-		escapeProjectManagerPowerShellSingleQuoted(workingDir),
-	)
 }
 
 func resolveProjectManagerWTWindowName(windowID string) string {
@@ -525,30 +502,6 @@ func buildProjectManagerProjectTerminalCommandArgs(shell string, projectPath str
 		"-EncodedCommand",
 		encodeProjectManagerPowerShellCommand(buildProjectManagerProjectTerminalPowerShellCommand(projectPath)),
 	}
-}
-
-func projectManagerWTLauncherExecutable() string {
-	windir := strings.TrimSpace(os.Getenv("WINDIR"))
-	if windir != "" {
-		candidate := filepath.Join(windir, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
-		}
-	}
-
-	candidates := []string{"powershell.exe", "pwsh.exe"}
-	for _, candidate := range candidates {
-		resolved, err := projectManagerLookPath(candidate)
-		if err != nil {
-			continue
-		}
-		resolved = strings.TrimSpace(resolved)
-		if resolved != "" {
-			return resolved
-		}
-	}
-
-	return "powershell.exe"
 }
 
 func projectManagerPreferredShellExecutable() string {

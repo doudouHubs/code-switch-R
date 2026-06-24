@@ -145,62 +145,6 @@ func TestBuildProjectManagerCmdCommandLineQuotesSpecialArguments(t *testing.T) {
 	}
 }
 
-func TestBuildProjectManagerWTLaunchCommand(t *testing.T) {
-	wtPath := `C:\Users\X1\AppData\Local\Microsoft\WindowsApps\wt.exe`
-	workingDir := `F:\GitlabProjects\code-switch-R`
-	wtArgs := []string{
-		"-w", "codeswitch-project-deadbeef",
-		"new-tab",
-		"-d", workingDir,
-		"--title", "[PM]session-001 - Alpha",
-		"--",
-		`E:\software\PowerShell7\7\pwsh.exe`,
-		"-NoExit",
-		"-EncodedCommand",
-		"BASE64",
-	}
-
-	got := buildProjectManagerWTLaunchCommand(wtPath, wtArgs, workingDir)
-	expectedParts := []string{
-		"Start-Process -FilePath 'C:\\Users\\X1\\AppData\\Local\\Microsoft\\WindowsApps\\wt.exe'",
-		"-ArgumentList @(",
-		"'-w'",
-		"'codeswitch-project-deadbeef'",
-		"'new-tab'",
-		"'--title'",
-		"'[PM]session-001 - Alpha'",
-		"'--'",
-		"'E:\\software\\PowerShell7\\7\\pwsh.exe'",
-		"'-EncodedCommand'",
-		"'BASE64'",
-		"-WorkingDirectory 'F:\\GitlabProjects\\code-switch-R'",
-	}
-
-	for _, part := range expectedParts {
-		if !strings.Contains(got, part) {
-			t.Fatalf("WT 启动命令缺少片段 %q，got=%q", part, got)
-		}
-	}
-}
-
-func TestBuildProjectManagerWTLauncherArgs(t *testing.T) {
-	wtPath := `C:\Users\X1\AppData\Local\Microsoft\WindowsApps\wt.exe`
-	workingDir := `F:\GitlabProjects\code-switch-R`
-	wtArgs := []string{"-w", "codeswitch-project-deadbeef", "new-tab"}
-
-	got := buildProjectManagerWTLauncherArgs(wtPath, wtArgs, workingDir)
-	wantPrefix := []string{"-NoProfile", "-EncodedCommand"}
-	if !reflect.DeepEqual(got[:2], wantPrefix) {
-		t.Fatalf("WT launcher 参数前缀不对，want=%v got=%v", wantPrefix, got[:2])
-	}
-
-	decoded := decodeProjectManagerPowerShellEncodedCommand(t, got[2])
-	wantCommand := buildProjectManagerWTLaunchCommand(wtPath, wtArgs, workingDir)
-	if decoded != wantCommand {
-		t.Fatalf("WT launcher EncodedCommand 解码后不对，want=%q got=%q", wantCommand, decoded)
-	}
-}
-
 func TestBuildProjectManagerPowerShellLaunchCommand(t *testing.T) {
 	sessionID := "session'o1"
 	runtimePath := `C:\Users\X1\.code-switch\project-manager-runtime\session-o1.json`
@@ -352,57 +296,11 @@ func TestBuildProjectManagerAICommitPowerShellCommand(t *testing.T) {
 	}
 }
 
-func TestProjectManagerWTLauncherExecutable(t *testing.T) {
-	originalLookPath := projectManagerLookPath
-	originalWindir := os.Getenv("WINDIR")
-	t.Cleanup(func() {
-		projectManagerLookPath = originalLookPath
-		_ = os.Setenv("WINDIR", originalWindir)
-	})
-
-	tempRoot := t.TempDir()
-	system32 := filepath.Join(tempRoot, "System32", "WindowsPowerShell", "v1.0")
-	if err := os.MkdirAll(system32, 0o755); err != nil {
-		t.Fatalf("创建 fake system32 失败: %v", err)
-	}
-	builtInPowerShell := filepath.Join(system32, "powershell.exe")
-	if err := os.WriteFile(builtInPowerShell, []byte(""), 0o644); err != nil {
-		t.Fatalf("写入 fake powershell.exe 失败: %v", err)
-	}
-	if err := os.Setenv("WINDIR", tempRoot); err != nil {
-		t.Fatalf("设置 WINDIR 失败: %v", err)
-	}
-
-	projectManagerLookPath = func(file string) (string, error) {
-		return "", errors.New("not found")
-	}
-
-	got := projectManagerWTLauncherExecutable()
-	if got != builtInPowerShell {
-		t.Fatalf("WT launcher 可执行文件不对，want=%q got=%q", builtInPowerShell, got)
-	}
-}
-
-func TestStartProjectManagerWTCommandUsesHiddenLauncher(t *testing.T) {
+func TestStartProjectManagerWTCommandStartsWTDirectly(t *testing.T) {
 	originalFactory := projectManagerWTCommandFactory
-	originalWindir := os.Getenv("WINDIR")
 	t.Cleanup(func() {
 		projectManagerWTCommandFactory = originalFactory
-		_ = os.Setenv("WINDIR", originalWindir)
 	})
-
-	tempRoot := t.TempDir()
-	system32 := filepath.Join(tempRoot, "System32", "WindowsPowerShell", "v1.0")
-	if err := os.MkdirAll(system32, 0o755); err != nil {
-		t.Fatalf("创建 fake system32 失败: %v", err)
-	}
-	builtInPowerShell := filepath.Join(system32, "powershell.exe")
-	if err := os.WriteFile(builtInPowerShell, []byte(""), 0o644); err != nil {
-		t.Fatalf("写入 fake powershell.exe 失败: %v", err)
-	}
-	if err := os.Setenv("WINDIR", tempRoot); err != nil {
-		t.Fatalf("设置 WINDIR 失败: %v", err)
-	}
 
 	var captured *exec.Cmd
 	projectManagerWTCommandFactory = func(name string, args ...string) *exec.Cmd {
@@ -417,34 +315,21 @@ func TestStartProjectManagerWTCommandUsesHiddenLauncher(t *testing.T) {
 	wtPath := `C:\Users\X1\AppData\Local\Microsoft\WindowsApps\wt.exe`
 	wtArgs := []string{"-w", "codeswitch-project-deadbeef", "new-tab"}
 
-	// 这里不能真去执行 fake powershell.exe。
-	// 测试目标只是验证“是否按隐藏 launcher + EncodedCommand 正确组装”，
-	// 真执行会被 Windows 当成无效可执行文件，反而把测试绑死在伪造环境上。
-	if err := startProjectManagerWTCommand(workingDir, wtPath, wtArgs); err != nil && !strings.Contains(err.Error(), "not a valid Win32 application") {
-		t.Fatalf("期望 WT 启动器构造成功，got err=%v", err)
+	if err := startProjectManagerWTCommand(workingDir, wtPath, wtArgs); err != nil {
+		t.Fatalf("期望 WT 直接启动成功，got err=%v", err)
 	}
 	if captured == nil {
-		t.Fatalf("期望捕获到 WT launcher 命令")
+		t.Fatalf("期望捕获到 WT 启动命令")
 	}
-	if captured.Path != builtInPowerShell {
-		t.Fatalf("WT launcher 可执行文件不对，want=%q got=%q", builtInPowerShell, captured.Path)
+	if captured.Path != wtPath {
+		t.Fatalf("WT 应直接作为可执行文件启动，want=%q got=%q", wtPath, captured.Path)
 	}
 	if captured.Dir != workingDir {
-		t.Fatalf("WT launcher 工作目录不对，want=%q got=%q", workingDir, captured.Dir)
+		t.Fatalf("WT 工作目录不对，want=%q got=%q", workingDir, captured.Dir)
 	}
-	if len(captured.Args) != 4 {
-		t.Fatalf("WT launcher 参数数量不对，got=%v", captured.Args)
-	}
-	if captured.Args[1] != "-NoProfile" || captured.Args[2] != "-EncodedCommand" {
-		t.Fatalf("WT launcher 参数前缀不对，got=%v", captured.Args)
-	}
-	decoded := decodeProjectManagerPowerShellEncodedCommand(t, captured.Args[3])
-	wantCommand := buildProjectManagerWTLaunchCommand(wtPath, wtArgs, workingDir)
-	if decoded != wantCommand {
-		t.Fatalf("WT launcher 命令解码后不对，want=%q got=%q", wantCommand, decoded)
-	}
-	if captured.SysProcAttr == nil || !captured.SysProcAttr.HideWindow {
-		t.Fatalf("WT launcher 必须隐藏窗口，got=%+v", captured.SysProcAttr)
+	wantArgs := append([]string{wtPath}, wtArgs...)
+	if !reflect.DeepEqual(captured.Args, wantArgs) {
+		t.Fatalf("WT 参数不对，want=%v got=%v", wantArgs, captured.Args)
 	}
 }
 
