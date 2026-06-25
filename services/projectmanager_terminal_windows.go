@@ -307,22 +307,26 @@ func buildProjectManagerWTArgs(
 	tabIndex int,
 ) []string {
 	shellExecutable := projectManagerPreferredShellExecutable()
+	// WT 的 `new-tab` 已经把后续 token 视为 shell command line。
+	// 这里不能追加 `--`：Windows Terminal 会在二次解析时把带空格的
+	// `pwsh.exe -NoExit -EncodedCommand ...` 当成单个可执行文件路径，
+	// 最终触发 0x80070002。保持 token 直传，才能稳定实现 wt -> pwsh -> codex。
 	return append([]string{
 		"-w", resolveProjectManagerWTWindowName(windowID),
 		"new-tab",
 		"-d", launchDir,
 		"--title", tabTitle,
-		"--",
 	}, buildProjectManagerPowerShellCommandArgs(shellExecutable, sessionID, runtimePath, windowID, tabTitle, tabIndex)...)
 }
 
 func buildProjectManagerProjectTerminalWTArgs(projectPath string, windowID string) []string {
 	shellExecutable := projectManagerPreferredShellExecutable()
+	// 与会话终端保持同一条 WT 参数边界：让 WT 直接接收 pwsh executable
+	// 和参数 token，避免 `--` 触发 Windows Terminal commandline 二次误解析。
 	return append([]string{
 		"-w", resolveProjectManagerWTWindowName(windowID),
 		"new-tab",
 		"-d", projectPath,
-		"--",
 	}, buildProjectManagerProjectTerminalCommandArgs(shellExecutable, projectPath)...)
 }
 
