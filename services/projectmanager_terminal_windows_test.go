@@ -40,10 +40,8 @@ func TestBuildProjectManagerWTArgs(t *testing.T) {
 		projectManagerLookPath = originalLookPath
 	})
 	projectManagerLookPath = func(file string) (string, error) {
-		if file == "pwsh.exe" {
-			return `E:\software\PowerShell7\7\pwsh.exe`, nil
-		}
-		return "", errors.New("not found")
+		t.Fatalf("WT 主路径不应提前解析 shell 路径，got LookPath(%q)", file)
+		return "", errors.New("unexpected lookpath")
 	}
 
 	launchDir := `F:\GitlabProjects\code-switch-R`
@@ -59,7 +57,7 @@ func TestBuildProjectManagerWTArgs(t *testing.T) {
 		"new-tab",
 		"-d", launchDir,
 		"--title", tabTitle,
-		`E:\software\PowerShell7\7\pwsh.exe`,
+		"pwsh.exe",
 		"-NoExit",
 		"-EncodedCommand",
 		encodeProjectManagerPowerShellCommand(buildProjectManagerPowerShellLaunchCommand(sessionID, runtimePath, windowID, tabTitle, tabIndex)),
@@ -76,10 +74,8 @@ func TestBuildProjectManagerProjectTerminalWTArgs(t *testing.T) {
 		projectManagerLookPath = originalLookPath
 	})
 	projectManagerLookPath = func(file string) (string, error) {
-		if file == "pwsh.exe" {
-			return `E:\software\PowerShell7\7\pwsh.exe`, nil
-		}
-		return "", errors.New("not found")
+		t.Fatalf("WT 项目终端主路径不应提前解析 shell 路径，got LookPath(%q)", file)
+		return "", errors.New("unexpected lookpath")
 	}
 
 	projectPath := `F:\GitlabProjects\code-switch-R`
@@ -90,7 +86,7 @@ func TestBuildProjectManagerProjectTerminalWTArgs(t *testing.T) {
 		"-w", windowID,
 		"new-tab",
 		"-d", projectPath,
-		`E:\software\PowerShell7\7\pwsh.exe`,
+		"pwsh.exe",
 		"-NoExit",
 		"-EncodedCommand",
 		encodeProjectManagerPowerShellCommand(buildProjectManagerProjectTerminalPowerShellCommand(projectPath)),

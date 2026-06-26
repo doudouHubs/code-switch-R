@@ -306,11 +306,11 @@ func buildProjectManagerWTArgs(
 	tabTitle string,
 	tabIndex int,
 ) []string {
-	shellExecutable := projectManagerPreferredShellExecutable()
-	// WT 的 `new-tab` 已经把后续 token 视为 shell command line。
-	// 这里不能追加 `--`：Windows Terminal 会在二次解析时把带空格的
-	// `pwsh.exe -NoExit -EncodedCommand ...` 当成单个可执行文件路径，
-	// 最终触发 0x80070002。保持 token 直传，才能稳定实现 wt -> pwsh -> codex。
+	// WT 主路径故意使用裸 `pwsh.exe`，不再提前解析成完整路径。
+	// Windows Terminal 会对 new-tab 的 commandline 做二次解析；完整路径加参数在某些版本里
+	// 会被合成一个带空格的 executable，最终触发 0x80070002。
+	// 用户环境已保证 pwsh.exe 在全局 PATH，由 WT 自己解析才能稳定保持 wt -> pwsh -> codex。
+	shellExecutable := "pwsh.exe"
 	return append([]string{
 		"-w", resolveProjectManagerWTWindowName(windowID),
 		"new-tab",
@@ -320,9 +320,9 @@ func buildProjectManagerWTArgs(
 }
 
 func buildProjectManagerProjectTerminalWTArgs(projectPath string, windowID string) []string {
-	shellExecutable := projectManagerPreferredShellExecutable()
-	// 与会话终端保持同一条 WT 参数边界：让 WT 直接接收 pwsh executable
-	// 和参数 token，避免 `--` 触发 Windows Terminal commandline 二次误解析。
+	// 项目终端与会话终端共享同一条主链路约束：WT 只接收裸 `pwsh.exe` 和参数 token。
+	// fallback 才负责解析完整 shell 路径，主路径不能把本机绝对路径塞给 WT。
+	shellExecutable := "pwsh.exe"
 	return append([]string{
 		"-w", resolveProjectManagerWTWindowName(windowID),
 		"new-tab",
