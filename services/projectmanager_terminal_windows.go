@@ -309,24 +309,27 @@ func buildProjectManagerWTArgs(
 	// WT 主路径故意使用裸 `pwsh.exe`，不再提前解析成完整路径。
 	// Windows Terminal 会对 new-tab 的 commandline 做二次解析；完整路径加参数在某些版本里
 	// 会被合成一个带空格的 executable，最终触发 0x80070002。
-	// 用户环境已保证 pwsh.exe 在全局 PATH，由 WT 自己解析才能稳定保持 wt -> pwsh -> codex。
+	// `--` 是 WT 自身参数和目标 commandline 的硬边界；没有它，WT 仍可能把后续 token 错当自身参数或整体重组。
+	// 用户环境已保证 pwsh.exe 在全局 PATH，由 WT 自己解析裸命令才能稳定保持 wt -> pwsh -> codex。
 	shellExecutable := "pwsh.exe"
 	return append([]string{
 		"-w", resolveProjectManagerWTWindowName(windowID),
 		"new-tab",
 		"-d", launchDir,
 		"--title", tabTitle,
+		"--",
 	}, buildProjectManagerPowerShellCommandArgs(shellExecutable, sessionID, runtimePath, windowID, tabTitle, tabIndex)...)
 }
 
 func buildProjectManagerProjectTerminalWTArgs(projectPath string, windowID string) []string {
 	// 项目终端与会话终端共享同一条主链路约束：WT 只接收裸 `pwsh.exe` 和参数 token。
-	// fallback 才负责解析完整 shell 路径，主路径不能把本机绝对路径塞给 WT。
+	// `--` 明确切断 WT 参数解析，fallback 才负责解析完整 shell 路径，主路径不能把本机绝对路径塞给 WT。
 	shellExecutable := "pwsh.exe"
 	return append([]string{
 		"-w", resolveProjectManagerWTWindowName(windowID),
 		"new-tab",
 		"-d", projectPath,
+		"--",
 	}, buildProjectManagerProjectTerminalCommandArgs(shellExecutable, projectPath)...)
 }
 
@@ -334,6 +337,7 @@ func startProjectManagerWTCommand(workingDir string, wtPath string, wtArgs []str
 	// 这里保持最短链路：CodeSwitch -> WT -> pwsh。
 	// 之前额外套 cmd/PowerShell 虽能绕过部分参数解析问题，但会污染 PATH 命中并拖慢启动；
 	// 现在把 Codex 版本选择放回 pwsh 脚本内部处理，WT 只负责开 tab。
+	log.Printf("[ProjectManager] 准备启动 WT working_dir=%q wt=%q args=%q", workingDir, wtPath, wtArgs)
 	cmd := projectManagerWTCommandFactory(wtPath, wtArgs...)
 	cmd.Dir = workingDir
 	return cmd.Start()
