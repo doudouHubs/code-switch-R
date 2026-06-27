@@ -49,21 +49,16 @@ func TestBuildProjectManagerWTArgs(t *testing.T) {
 	launchDir := `F:\GitlabProjects\code-switch-R`
 	windowID := projectManagerProjectWindowID(launchDir)
 	tabTitle := "[PM]session-001 - Session 001"
-	scriptPath := `C:\Users\X1\.code-switch\project-manager-terminal-scripts\session-001.ps1`
+	wrapperPath := `C:\Users\X1\.code-switch\project-manager-terminal-wrappers\session-001.cmd`
 
-	got := buildProjectManagerWTArgs(launchDir, scriptPath, windowID, tabTitle)
+	got := buildProjectManagerWTArgs(launchDir, wrapperPath, windowID, tabTitle)
 	want := []string{
 		"-w", windowID,
 		"new-tab",
 		"-d", launchDir,
 		"--title", tabTitle,
 		"--",
-		`E:\software\PowerShell7\7\pwsh.exe`,
-		"-NoExit",
-		"-ExecutionPolicy",
-		"Bypass",
-		"-File",
-		scriptPath,
+		wrapperPath,
 	}
 
 	if !reflect.DeepEqual(got, want) {
@@ -85,20 +80,15 @@ func TestBuildProjectManagerProjectTerminalWTArgs(t *testing.T) {
 
 	projectPath := `F:\GitlabProjects\code-switch-R`
 	windowID := projectManagerProjectWindowID(projectPath)
-	scriptPath := `C:\Users\X1\.code-switch\project-manager-terminal-scripts\project.ps1`
+	wrapperPath := `C:\Users\X1\.code-switch\project-manager-terminal-wrappers\project.cmd`
 
-	got := buildProjectManagerProjectTerminalWTArgs(projectPath, windowID, scriptPath)
+	got := buildProjectManagerProjectTerminalWTArgs(projectPath, windowID, wrapperPath)
 	want := []string{
 		"-w", windowID,
 		"new-tab",
 		"-d", projectPath,
 		"--",
-		`E:\software\PowerShell7\7\pwsh.exe`,
-		"-NoExit",
-		"-ExecutionPolicy",
-		"Bypass",
-		"-File",
-		scriptPath,
+		wrapperPath,
 	}
 
 	if !reflect.DeepEqual(got, want) {
@@ -227,7 +217,24 @@ func TestBuildProjectManagerTerminalScriptContent(t *testing.T) {
 	}
 }
 
-func TestBuildProjectManagerWTArgsDoesNotExposeEncodedCommandToWT(t *testing.T) {
+func TestBuildProjectManagerTerminalWrapperContent(t *testing.T) {
+	got := buildProjectManagerTerminalWrapperContent(
+		`E:\software\PowerShell7\7\pwsh.exe`,
+		`C:\Users\X1\.code-switch\project-manager-terminal-scripts\project.ps1`,
+	)
+	expectedParts := []string{
+		"@echo off",
+		`call "E:\software\PowerShell7\7\pwsh.exe" -NoExit -ExecutionPolicy Bypass -File "C:\Users\X1\.code-switch\project-manager-terminal-scripts\project.ps1"`,
+		"exit /b %ERRORLEVEL%",
+	}
+	for _, part := range expectedParts {
+		if !strings.Contains(got, part) {
+			t.Fatalf("终端 wrapper 缺少片段 %q，got=%q", part, got)
+		}
+	}
+}
+
+func TestBuildProjectManagerWTArgsOnlyPassesWrapperToWT(t *testing.T) {
 	originalLookPath := projectManagerLookPath
 	t.Cleanup(func() {
 		projectManagerLookPath = originalLookPath
@@ -241,16 +248,18 @@ func TestBuildProjectManagerWTArgsDoesNotExposeEncodedCommandToWT(t *testing.T) 
 
 	got := buildProjectManagerWTArgs(
 		`F:\GitlabProjects\code-switch-R`,
-		`C:\Users\X1\.code-switch\project-manager-terminal-scripts\project.ps1`,
+		`C:\Users\X1\.code-switch\project-manager-terminal-wrappers\project.cmd`,
 		"codeswitch-project-deadbeef",
 		"[PM]session-001 - Alpha",
 	)
 	joined := strings.Join(got, " ")
-	if strings.Contains(joined, "-EncodedCommand") {
-		t.Fatalf("WT 参数不应再直接携带 EncodedCommand，got=%v", got)
+	for _, forbidden := range []string{"pwsh.exe", "-NoExit", "-EncodedCommand", "-ExecutionPolicy", "-File"} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("WT 参数不应再直接携带 %s，got=%v", forbidden, got)
+		}
 	}
-	if !strings.Contains(joined, "-File") {
-		t.Fatalf("WT 参数应通过 ps1 文件启动 pwsh，got=%v", got)
+	if got[len(got)-1] != `C:\Users\X1\.code-switch\project-manager-terminal-wrappers\project.cmd` {
+		t.Fatalf("WT 尾部只应接收 wrapper.cmd，got=%v", got)
 	}
 }
 
@@ -264,12 +273,7 @@ func TestBuildProjectManagerWTLaunchCommand(t *testing.T) {
 		"-d",
 		workingDir,
 		"--",
-		`E:\software\PowerShell7\7\pwsh.exe`,
-		"-NoExit",
-		"-ExecutionPolicy",
-		"Bypass",
-		"-File",
-		`C:\Users\X1\.code-switch\project-manager-terminal-scripts\project.ps1`,
+		`C:\Users\X1\.code-switch\project-manager-terminal-wrappers\project.cmd`,
 	}
 
 	got := buildProjectManagerWTLaunchCommand(wtPath, wtArgs, workingDir)
@@ -281,9 +285,7 @@ func TestBuildProjectManagerWTLaunchCommand(t *testing.T) {
 		"'-w'",
 		"'codeswitch-project-deadbeef'",
 		"'--'",
-		"'E:\\software\\PowerShell7\\7\\pwsh.exe'",
-		"'-File'",
-		"'C:\\Users\\X1\\.code-switch\\project-manager-terminal-scripts\\project.ps1'",
+		"'C:\\Users\\X1\\.code-switch\\project-manager-terminal-wrappers\\project.cmd'",
 	}
 	for _, part := range expectedParts {
 		if !strings.Contains(got, part) {

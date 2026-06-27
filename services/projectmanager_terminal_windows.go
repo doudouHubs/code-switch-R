@@ -21,6 +21,7 @@ const projectManagerWTFocusTimeout = 350 * time.Millisecond
 const projectManagerCodexDangerousBypassFlag = "--dangerously-bypass-approvals-and-sandbox"
 const projectManagerWTPowerShellProfile = "{61c54bbd-c2c6-5271-96e7-009a87ff44bf}"
 const projectManagerTerminalScriptDir = "project-manager-terminal-scripts"
+const projectManagerTerminalWrapperDir = "project-manager-terminal-wrappers"
 
 type projectManagerCommandRunner interface {
 	Start() error
@@ -172,7 +173,7 @@ func (s *ProjectManagerService) openProjectManagerSessionTerminal(session Sessio
 			log.Printf("[ProjectManager] 同项目窗口已存在，准备追加新 tab session=%s window=%s title=%q", session.ID, projectWindowID, tabTitle)
 		}
 
-		scriptPath, err := createProjectManagerTerminalScript(
+		_, wrapperPath, err := createProjectManagerTerminalLaunchFiles(
 			"session-"+session.ID,
 			buildProjectManagerPowerShellLaunchCommand(session.ID, runtimePath, projectWindowID, tabTitle, tabIndex),
 		)
@@ -180,7 +181,7 @@ func (s *ProjectManagerService) openProjectManagerSessionTerminal(session Sessio
 			return fmt.Errorf("创建项目管理器终端脚本失败: %w", err)
 		}
 
-		args := buildProjectManagerWTArgs(launchDir, scriptPath, projectWindowID, tabTitle)
+		args := buildProjectManagerWTArgs(launchDir, wrapperPath, projectWindowID, tabTitle)
 		if err := startProjectManagerWTCommand(launchDir, wtPath, args); err == nil {
 			log.Printf("[ProjectManager] 已启动 WT 会话 tab session=%s window=%s dir=%s title=%q", session.ID, projectWindowID, launchDir, tabTitle)
 			return nil
@@ -237,7 +238,7 @@ func (s *ProjectManagerService) openProjectManagerProjectTerminal(projectPath st
 	projectWindowID := projectManagerProjectWindowID(projectPath)
 	wtPath := findProjectManagerWTExecutable()
 	if wtPath != "" {
-		scriptPath, err := createProjectManagerTerminalScript(
+		_, wrapperPath, err := createProjectManagerTerminalLaunchFiles(
 			projectWindowID,
 			buildProjectManagerProjectTerminalPowerShellCommand(projectPath),
 		)
@@ -245,7 +246,7 @@ func (s *ProjectManagerService) openProjectManagerProjectTerminal(projectPath st
 			return fmt.Errorf("创建项目终端脚本失败: %w", err)
 		}
 
-		args := buildProjectManagerProjectTerminalWTArgs(projectPath, projectWindowID, scriptPath)
+		args := buildProjectManagerProjectTerminalWTArgs(projectPath, projectWindowID, wrapperPath)
 		if err := startProjectManagerWTCommand(projectPath, wtPath, args); err == nil {
 			log.Printf("[ProjectManager] 已启动项目新终端 project=%s window=%s", projectPath, projectWindowID)
 			return nil
@@ -318,28 +319,28 @@ func (s *ProjectManagerService) tryReuseProjectManagerSessionTerminal(session Se
 
 func buildProjectManagerWTArgs(
 	launchDir string,
-	scriptPath string,
+	wrapperPath string,
 	windowID string,
 	tabTitle string,
 ) []string {
-	shellExecutable := projectManagerPreferredShellExecutable()
-	return append([]string{
+	return []string{
 		"-w", resolveProjectManagerWTWindowName(windowID),
 		"new-tab",
 		"-d", launchDir,
 		"--title", tabTitle,
 		"--",
-	}, buildProjectManagerPowerShellFileArgs(shellExecutable, scriptPath)...)
+		wrapperPath,
+	}
 }
 
-func buildProjectManagerProjectTerminalWTArgs(projectPath string, windowID string, scriptPath string) []string {
-	shellExecutable := projectManagerPreferredShellExecutable()
-	return append([]string{
+func buildProjectManagerProjectTerminalWTArgs(projectPath string, windowID string, wrapperPath string) []string {
+	return []string{
 		"-w", resolveProjectManagerWTWindowName(windowID),
 		"new-tab",
 		"-d", projectPath,
 		"--",
-	}, buildProjectManagerPowerShellFileArgs(shellExecutable, scriptPath)...)
+		wrapperPath,
+	}
 }
 
 func startProjectManagerWTCommand(workingDir string, wtPath string, wtArgs []string) error {
@@ -676,6 +677,22 @@ func buildProjectManagerProjectTerminalPowerShellCommand(projectPath string) str
 	return fmt.Sprintf("%s; Set-Location -LiteralPath '%s'; %s", buildProjectManagerCodexResolverPowerShell(), escapedProjectPath, buildProjectManagerCodexCommand())
 }
 
+func createProjectManagerTerminalLaunchFiles(prefix string, command string) (string, string, error) {
+	shellExecutable, err := projectManagerRequiredPwshExecutable()
+	if err != nil {
+		return "", "", err
+	}
+	scriptPath, err := createProjectManagerTerminalScript(prefix, command)
+	if err != nil {
+		return "", "", err
+	}
+	wrapperPath, err := createProjectManagerTerminalWrapper(prefix, shellExecutable, scriptPath)
+	if err != nil {
+		return "", "", err
+	}
+	return scriptPath, wrapperPath, nil
+}
+
 func createProjectManagerTerminalScript(prefix string, command string) (string, error) {
 	root, err := projectManagerTerminalScriptRootPath()
 	if err != nil {
@@ -695,12 +712,39 @@ func createProjectManagerTerminalScript(prefix string, command string) (string, 
 	return scriptPath, nil
 }
 
+func createProjectManagerTerminalWrapper(prefix string, shellExecutable string, scriptPath string) (string, error) {
+	root, err := projectManagerTerminalWrapperRootPath()
+	if err != nil {
+		return "", err
+	}
+
+	safePrefix := sanitizeProjectManagerTerminalScriptPrefix(prefix)
+	if safePrefix == "" {
+		safePrefix = "terminal"
+	}
+	wrapperPath := filepath.Join(root, fmt.Sprintf("%s-%d.cmd", safePrefix, time.Now().UnixNano()))
+	content := buildProjectManagerTerminalWrapperContent(shellExecutable, scriptPath)
+	if err := AtomicWriteText(wrapperPath, content); err != nil {
+		return "", err
+	}
+	projectManagerWriteTerminalWrapperDebug(wrapperPath, shellExecutable, scriptPath)
+	return wrapperPath, nil
+}
+
 func projectManagerTerminalScriptRootPath() (string, error) {
 	home, err := getUserHomeDir()
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(home, appSettingsDir, projectManagerTerminalScriptDir), nil
+}
+
+func projectManagerTerminalWrapperRootPath() (string, error) {
+	home, err := getUserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, appSettingsDir, projectManagerTerminalWrapperDir), nil
 }
 
 func buildProjectManagerTerminalScriptContent(command string) string {
@@ -712,6 +756,22 @@ func buildProjectManagerTerminalScriptContent(command string) string {
 		command,
 		"",
 	}, "\r\n")
+}
+
+func buildProjectManagerTerminalWrapperContent(shellExecutable string, scriptPath string) string {
+	// WT 在 app 的 hidden launcher 链路里会把 `pwsh.exe -File xxx.ps1` 整段误当 executable。
+	// 所以 WT 只接收这个 .cmd 文件路径；参数转发放到 cmd 文件内部完成，避免 WT 再解析多参数尾巴。
+	// `call` 之后显式 exit /b，确保 wrapper 不抢走 pwsh/codex 的退出状态。
+	return strings.Join([]string{
+		"@echo off",
+		fmt.Sprintf("call %s -NoExit -ExecutionPolicy Bypass -File %s", quoteProjectManagerCmdFileArgument(shellExecutable), quoteProjectManagerCmdFileArgument(scriptPath)),
+		"exit /b %ERRORLEVEL%",
+		"",
+	}, "\r\n")
+}
+
+func quoteProjectManagerCmdFileArgument(value string) string {
+	return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
 }
 
 func sanitizeProjectManagerTerminalScriptPrefix(prefix string) string {
@@ -796,6 +856,16 @@ func projectManagerWriteTerminalScriptDebug(scriptPath string, command string) {
 		fmt.Sprintf("time=%s stage=script", time.Now().Format(time.RFC3339Nano)),
 		fmt.Sprintf("script=%s", scriptPath),
 		fmt.Sprintf("command=%s", command),
+		"",
+	}, "\n"))
+}
+
+func projectManagerWriteTerminalWrapperDebug(wrapperPath string, shellExecutable string, scriptPath string) {
+	projectManagerAppendTerminalDebug(strings.Join([]string{
+		fmt.Sprintf("time=%s stage=wrapper", time.Now().Format(time.RFC3339Nano)),
+		fmt.Sprintf("wrapper=%s", wrapperPath),
+		fmt.Sprintf("shell=%s", shellExecutable),
+		fmt.Sprintf("script=%s", scriptPath),
 		"",
 	}, "\n"))
 }
