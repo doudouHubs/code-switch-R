@@ -274,15 +274,16 @@ func TestBuildProjectManagerWTLaunchCommand(t *testing.T) {
 
 	got := buildProjectManagerWTLaunchCommand(wtPath, wtArgs, workingDir)
 	expectedParts := []string{
-		"Start-Process -FilePath 'C:\\Users\\X1\\AppData\\Local\\Microsoft\\WindowsApps\\wt.exe'",
-		"-ArgumentList @(",
+		"Set-Location -LiteralPath 'F:\\GitlabProjects\\code-switch-R'",
+		"$__codeSwitchWT = 'C:\\Users\\X1\\AppData\\Local\\Microsoft\\WindowsApps\\wt.exe'",
+		"$__codeSwitchWTArgs = @(",
+		"& $__codeSwitchWT @__codeSwitchWTArgs",
 		"'-w'",
 		"'codeswitch-project-deadbeef'",
 		"'--'",
 		"'E:\\software\\PowerShell7\\7\\pwsh.exe'",
 		"'-File'",
 		"'C:\\Users\\X1\\.code-switch\\project-manager-terminal-scripts\\project.ps1'",
-		"-WorkingDirectory 'F:\\GitlabProjects\\code-switch-R'",
 	}
 	for _, part := range expectedParts {
 		if !strings.Contains(got, part) {

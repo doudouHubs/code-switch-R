@@ -375,13 +375,14 @@ func buildProjectManagerWTLaunchCommand(wtPath string, wtArgs []string, workingD
 	}
 
 	// 保留目标链路：CodeSwitch -> hidden pwsh launcher -> WT tab -> pwsh -> codex。
-	// 直接从 windowsgui 进程启动 WT 时，WT 容易把 `pwsh.exe -NoExit ...` 合并成单个 executable；
-	// 外层 launcher 只负责启动 WT，真正的 Codex 逻辑已经写入脚本，避免 WT 解析超长 EncodedCommand。
+	// 这里不能再用 Start-Process -ArgumentList，PowerShell 会把数组重新拼成一条命令行字符串，
+	// WT 接到后仍可能把 `pwsh.exe -File ...` 误吞成单个 executable。`& $wt @args` 才是 pwsh 内的原生 argv 调用。
+	// 真正的 Codex 逻辑已经写入脚本，WT 只需要处理短参数，避免再次触发 0x80070002。
 	return fmt.Sprintf(
-		"$ErrorActionPreference = 'Stop'; Start-Process -FilePath '%s' -ArgumentList @(%s) -WorkingDirectory '%s' | Out-Null",
+		"$ErrorActionPreference = 'Stop'; Set-Location -LiteralPath '%s'; $__codeSwitchWT = '%s'; $__codeSwitchWTArgs = @(%s); & $__codeSwitchWT @__codeSwitchWTArgs | Out-Null",
+		escapeProjectManagerPowerShellSingleQuoted(workingDir),
 		escapeProjectManagerPowerShellSingleQuoted(wtPath),
 		strings.Join(quotedWTArgs, ", "),
-		escapeProjectManagerPowerShellSingleQuoted(workingDir),
 	)
 }
 
