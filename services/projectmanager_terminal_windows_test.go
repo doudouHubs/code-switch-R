@@ -40,7 +40,7 @@ func TestBuildProjectManagerWTArgs(t *testing.T) {
 		projectManagerLookPath = originalLookPath
 	})
 	projectManagerLookPath = func(file string) (string, error) {
-		t.Fatalf("WT 主路径不应提前解析 shell 路径，got LookPath(%q)", file)
+		t.Fatalf("WT 主路径应通过 profile 启动 shell，不应提前解析 shell 路径，got LookPath(%q)", file)
 		return "", errors.New("unexpected lookpath")
 	}
 
@@ -57,11 +57,9 @@ func TestBuildProjectManagerWTArgs(t *testing.T) {
 		"new-tab",
 		"-d", launchDir,
 		"--title", tabTitle,
-		"--",
-		"pwsh.exe",
-		"-NoExit",
-		"-EncodedCommand",
-		encodeProjectManagerPowerShellCommand(buildProjectManagerPowerShellLaunchCommand(sessionID, runtimePath, windowID, tabTitle, tabIndex)),
+		"-p", "PowerShell",
+		"--appendCommandLine",
+		buildProjectManagerWTAppendCommandLine(encodeProjectManagerPowerShellCommand(buildProjectManagerPowerShellLaunchCommand(sessionID, runtimePath, windowID, tabTitle, tabIndex))),
 	}
 
 	if !reflect.DeepEqual(got, want) {
@@ -75,7 +73,7 @@ func TestBuildProjectManagerProjectTerminalWTArgs(t *testing.T) {
 		projectManagerLookPath = originalLookPath
 	})
 	projectManagerLookPath = func(file string) (string, error) {
-		t.Fatalf("WT 项目终端主路径不应提前解析 shell 路径，got LookPath(%q)", file)
+		t.Fatalf("WT 项目终端主路径应通过 profile 启动 shell，不应提前解析 shell 路径，got LookPath(%q)", file)
 		return "", errors.New("unexpected lookpath")
 	}
 
@@ -87,11 +85,9 @@ func TestBuildProjectManagerProjectTerminalWTArgs(t *testing.T) {
 		"-w", windowID,
 		"new-tab",
 		"-d", projectPath,
-		"--",
-		"pwsh.exe",
-		"-NoExit",
-		"-EncodedCommand",
-		encodeProjectManagerPowerShellCommand(buildProjectManagerProjectTerminalPowerShellCommand(projectPath)),
+		"-p", "PowerShell",
+		"--appendCommandLine",
+		buildProjectManagerWTAppendCommandLine(encodeProjectManagerPowerShellCommand(buildProjectManagerProjectTerminalPowerShellCommand(projectPath))),
 	}
 
 	if !reflect.DeepEqual(got, want) {
@@ -181,6 +177,14 @@ func TestBuildProjectManagerProjectTerminalCommandArgs(t *testing.T) {
 	wantCommand := buildProjectManagerProjectTerminalPowerShellCommand(projectPath)
 	if decoded != wantCommand {
 		t.Fatalf("项目终端 EncodedCommand 解码后不对，want=%q got=%q", wantCommand, decoded)
+	}
+}
+
+func TestBuildProjectManagerWTAppendCommandLine(t *testing.T) {
+	got := buildProjectManagerWTAppendCommandLine("encoded-command")
+	want := "-NoExit -EncodedCommand encoded-command"
+	if got != want {
+		t.Fatalf("WT appendCommandLine 不对，want=%q got=%q", want, got)
 	}
 }
 

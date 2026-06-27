@@ -306,31 +306,32 @@ func buildProjectManagerWTArgs(
 	tabTitle string,
 	tabIndex int,
 ) []string {
-	// WT 主路径故意使用裸 `pwsh.exe`，不再提前解析成完整路径。
-	// Windows Terminal 会对 new-tab 的 commandline 做二次解析；完整路径加参数在某些版本里
-	// 会被合成一个带空格的 executable，最终触发 0x80070002。
-	// `--` 是 WT 自身参数和目标 commandline 的硬边界；没有它，WT 仍可能把后续 token 错当自身参数或整体重组。
-	// 用户环境已保证 pwsh.exe 在全局 PATH，由 WT 自己解析裸命令才能稳定保持 wt -> pwsh -> codex。
-	shellExecutable := "pwsh.exe"
-	return append([]string{
+	// WT 的 new-tab 尾部 commandline 会被再次重组；实测无论传绝对路径还是裸 `pwsh.exe`，
+	// 都可能被 WT 包成 `"pwsh.exe -NoExit ..."` 这个单一 executable，最终 0x80070002。
+	// 因此主路径改用 WT 官方 profile 机制启动 PowerShell，再通过 appendCommandLine 追加 Codex 启动参数。
+	// 这样 shell 的选择权交给 WT profile，CodeSwitch 只提供 PowerShell 参数，避开目标进程名和参数被合并的问题。
+	return []string{
 		"-w", resolveProjectManagerWTWindowName(windowID),
 		"new-tab",
 		"-d", launchDir,
 		"--title", tabTitle,
-		"--",
-	}, buildProjectManagerPowerShellCommandArgs(shellExecutable, sessionID, runtimePath, windowID, tabTitle, tabIndex)...)
+		"-p", "PowerShell",
+		"--appendCommandLine",
+		buildProjectManagerWTAppendCommandLine(encodeProjectManagerPowerShellCommand(buildProjectManagerPowerShellLaunchCommand(sessionID, runtimePath, windowID, tabTitle, tabIndex))),
+	}
 }
 
 func buildProjectManagerProjectTerminalWTArgs(projectPath string, windowID string) []string {
-	// 项目终端与会话终端共享同一条主链路约束：WT 只接收裸 `pwsh.exe` 和参数 token。
-	// `--` 明确切断 WT 参数解析，fallback 才负责解析完整 shell 路径，主路径不能把本机绝对路径塞给 WT。
-	shellExecutable := "pwsh.exe"
-	return append([]string{
+	// 项目终端同样使用 WT profile 启动 shell，再把 PowerShell 参数追加进去。
+	// 这里不再把 `pwsh.exe` 放进 new-tab commandline，避免 WT 把程序名和参数整体当文件路径启动。
+	return []string{
 		"-w", resolveProjectManagerWTWindowName(windowID),
 		"new-tab",
 		"-d", projectPath,
-		"--",
-	}, buildProjectManagerProjectTerminalCommandArgs(shellExecutable, projectPath)...)
+		"-p", "PowerShell",
+		"--appendCommandLine",
+		buildProjectManagerWTAppendCommandLine(encodeProjectManagerPowerShellCommand(buildProjectManagerProjectTerminalPowerShellCommand(projectPath))),
+	}
 }
 
 func startProjectManagerWTCommand(workingDir string, wtPath string, wtArgs []string) error {
@@ -474,6 +475,14 @@ func buildProjectManagerProjectTerminalCommandArgs(shell string, projectPath str
 		"-EncodedCommand",
 		encodeProjectManagerPowerShellCommand(buildProjectManagerProjectTerminalPowerShellCommand(projectPath)),
 	}
+}
+
+func buildProjectManagerWTAppendCommandLine(encodedCommand string) string {
+	return strings.Join([]string{
+		"-NoExit",
+		"-EncodedCommand",
+		encodedCommand,
+	}, " ")
 }
 
 func projectManagerPreferredShellExecutable() string {
