@@ -40,8 +40,10 @@ func TestBuildProjectManagerWTArgs(t *testing.T) {
 		projectManagerLookPath = originalLookPath
 	})
 	projectManagerLookPath = func(file string) (string, error) {
-		t.Fatalf("WT 主路径应通过 profile 启动 shell，不应提前解析 shell 路径，got LookPath(%q)", file)
-		return "", errors.New("unexpected lookpath")
+		if file == "pwsh.exe" {
+			return `E:\software\PowerShell7\7\pwsh.exe`, nil
+		}
+		return "", errors.New("not found")
 	}
 
 	launchDir := `F:\GitlabProjects\code-switch-R`
@@ -57,9 +59,11 @@ func TestBuildProjectManagerWTArgs(t *testing.T) {
 		"new-tab",
 		"-d", launchDir,
 		"--title", tabTitle,
-		"-p", projectManagerWTPowerShellProfile,
-		"--appendCommandLine",
-		buildProjectManagerWTAppendCommandLine(encodeProjectManagerPowerShellCommand(buildProjectManagerPowerShellLaunchCommand(sessionID, runtimePath, windowID, tabTitle, tabIndex))),
+		"--",
+		`E:\software\PowerShell7\7\pwsh.exe`,
+		"-NoExit",
+		"-EncodedCommand",
+		encodeProjectManagerPowerShellCommand(buildProjectManagerPowerShellLaunchCommand(sessionID, runtimePath, windowID, tabTitle, tabIndex)),
 	}
 
 	if !reflect.DeepEqual(got, want) {
@@ -73,8 +77,10 @@ func TestBuildProjectManagerProjectTerminalWTArgs(t *testing.T) {
 		projectManagerLookPath = originalLookPath
 	})
 	projectManagerLookPath = func(file string) (string, error) {
-		t.Fatalf("WT 项目终端主路径应通过 profile 启动 shell，不应提前解析 shell 路径，got LookPath(%q)", file)
-		return "", errors.New("unexpected lookpath")
+		if file == "pwsh.exe" {
+			return `E:\software\PowerShell7\7\pwsh.exe`, nil
+		}
+		return "", errors.New("not found")
 	}
 
 	projectPath := `F:\GitlabProjects\code-switch-R`
@@ -85,9 +91,11 @@ func TestBuildProjectManagerProjectTerminalWTArgs(t *testing.T) {
 		"-w", windowID,
 		"new-tab",
 		"-d", projectPath,
-		"-p", projectManagerWTPowerShellProfile,
-		"--appendCommandLine",
-		buildProjectManagerWTAppendCommandLine(encodeProjectManagerPowerShellCommand(buildProjectManagerProjectTerminalPowerShellCommand(projectPath))),
+		"--",
+		`E:\software\PowerShell7\7\pwsh.exe`,
+		"-NoExit",
+		"-EncodedCommand",
+		encodeProjectManagerPowerShellCommand(buildProjectManagerProjectTerminalPowerShellCommand(projectPath)),
 	}
 
 	if !reflect.DeepEqual(got, want) {
@@ -180,11 +188,56 @@ func TestBuildProjectManagerProjectTerminalCommandArgs(t *testing.T) {
 	}
 }
 
-func TestBuildProjectManagerWTAppendCommandLine(t *testing.T) {
-	got := buildProjectManagerWTAppendCommandLine("encoded-command")
-	want := "-NoExit -EncodedCommand encoded-command"
-	if got != want {
-		t.Fatalf("WT appendCommandLine 不对，want=%q got=%q", want, got)
+func TestBuildProjectManagerWTLaunchCommand(t *testing.T) {
+	wtPath := `C:\Users\X1\AppData\Local\Microsoft\WindowsApps\wt.exe`
+	workingDir := `F:\GitlabProjects\code-switch-R`
+	wtArgs := []string{
+		"-w",
+		"codeswitch-project-deadbeef",
+		"new-tab",
+		"-d",
+		workingDir,
+		"--",
+		`E:\software\PowerShell7\7\pwsh.exe`,
+		"-NoExit",
+		"-EncodedCommand",
+		"encoded-command",
+	}
+
+	got := buildProjectManagerWTLaunchCommand(wtPath, wtArgs, workingDir)
+	expectedParts := []string{
+		"Start-Process -FilePath 'C:\\Users\\X1\\AppData\\Local\\Microsoft\\WindowsApps\\wt.exe'",
+		"-ArgumentList @(",
+		"'-w'",
+		"'codeswitch-project-deadbeef'",
+		"'--'",
+		"'E:\\software\\PowerShell7\\7\\pwsh.exe'",
+		"'-EncodedCommand'",
+		"'encoded-command'",
+		"-WorkingDirectory 'F:\\GitlabProjects\\code-switch-R'",
+	}
+	for _, part := range expectedParts {
+		if !strings.Contains(got, part) {
+			t.Fatalf("WT launcher 命令缺少片段 %q，got=%q", part, got)
+		}
+	}
+}
+
+func TestBuildProjectManagerWTLauncherArgs(t *testing.T) {
+	wtPath := `C:\Users\X1\AppData\Local\Microsoft\WindowsApps\wt.exe`
+	workingDir := `F:\GitlabProjects\code-switch-R`
+	wtArgs := []string{"-w", "codeswitch-project-deadbeef", "new-tab"}
+
+	got := buildProjectManagerWTLauncherArgs(wtPath, wtArgs, workingDir)
+	wantPrefix := []string{"-NoProfile", "-EncodedCommand"}
+	if !reflect.DeepEqual(got[:2], wantPrefix) {
+		t.Fatalf("WT launcher 参数前缀不对，want=%v got=%v", wantPrefix, got[:2])
+	}
+
+	decoded := decodeProjectManagerPowerShellEncodedCommand(t, got[2])
+	want := buildProjectManagerWTLaunchCommand(wtPath, wtArgs, workingDir)
+	if decoded != want {
+		t.Fatalf("WT launcher EncodedCommand 解码后不对，want=%q got=%q", want, decoded)
 	}
 }
 
@@ -259,11 +312,19 @@ func TestBuildProjectManagerAICommitPowerShellCommand(t *testing.T) {
 	}
 }
 
-func TestStartProjectManagerWTCommandStartsWTDirectly(t *testing.T) {
+func TestStartProjectManagerWTCommandUsesHiddenPowerShellLauncher(t *testing.T) {
 	originalFactory := projectManagerWTCommandFactory
+	originalLookPath := projectManagerLookPath
 	t.Cleanup(func() {
 		projectManagerWTCommandFactory = originalFactory
+		projectManagerLookPath = originalLookPath
 	})
+	projectManagerLookPath = func(file string) (string, error) {
+		if file == "powershell.exe" {
+			return `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`, nil
+		}
+		return "", errors.New("not found")
+	}
 
 	var captured *exec.Cmd
 	projectManagerWTCommandFactory = func(name string, args ...string) *exec.Cmd {
@@ -284,15 +345,20 @@ func TestStartProjectManagerWTCommandStartsWTDirectly(t *testing.T) {
 	if captured == nil {
 		t.Fatalf("期望捕获到 WT 启动命令")
 	}
-	if captured.Path != wtPath {
-		t.Fatalf("WT 应直接作为可执行文件启动，want=%q got=%q", wtPath, captured.Path)
+	launcher := `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`
+	if captured.Path != launcher {
+		t.Fatalf("WT 应通过隐藏 PowerShell launcher 启动，want=%q got=%q", launcher, captured.Path)
 	}
 	if captured.Dir != workingDir {
-		t.Fatalf("WT 工作目录不对，want=%q got=%q", workingDir, captured.Dir)
+		t.Fatalf("launcher 工作目录不对，want=%q got=%q", workingDir, captured.Dir)
 	}
-	wantArgs := append([]string{wtPath}, wtArgs...)
-	if !reflect.DeepEqual(captured.Args, wantArgs) {
-		t.Fatalf("WT 参数不对，want=%v got=%v", wantArgs, captured.Args)
+	if len(captured.Args) != 4 || captured.Args[1] != "-NoProfile" || captured.Args[2] != "-EncodedCommand" {
+		t.Fatalf("launcher 参数前缀不对，got=%v", captured.Args)
+	}
+	decoded := decodeProjectManagerPowerShellEncodedCommand(t, captured.Args[3])
+	wantCommand := buildProjectManagerWTLaunchCommand(wtPath, wtArgs, workingDir)
+	if decoded != wantCommand {
+		t.Fatalf("launcher EncodedCommand 解码后不对，want=%q got=%q", wantCommand, decoded)
 	}
 }
 
