@@ -47,13 +47,11 @@ func TestBuildProjectManagerWTArgs(t *testing.T) {
 	}
 
 	launchDir := `F:\GitlabProjects\code-switch-R`
-	sessionID := "session-001"
-	runtimePath := `C:\Users\X1\.code-switch\project-manager-runtime\session-001.json`
 	windowID := projectManagerProjectWindowID(launchDir)
 	tabTitle := "[PM]session-001 - Session 001"
-	tabIndex := 2
+	scriptPath := `C:\Users\X1\.code-switch\project-manager-terminal-scripts\session-001.ps1`
 
-	got := buildProjectManagerWTArgs(launchDir, sessionID, runtimePath, windowID, tabTitle, tabIndex)
+	got := buildProjectManagerWTArgs(launchDir, scriptPath, windowID, tabTitle)
 	want := []string{
 		"-w", windowID,
 		"new-tab",
@@ -62,8 +60,10 @@ func TestBuildProjectManagerWTArgs(t *testing.T) {
 		"--",
 		`E:\software\PowerShell7\7\pwsh.exe`,
 		"-NoExit",
-		"-EncodedCommand",
-		encodeProjectManagerPowerShellCommand(buildProjectManagerPowerShellLaunchCommand(sessionID, runtimePath, windowID, tabTitle, tabIndex)),
+		"-ExecutionPolicy",
+		"Bypass",
+		"-File",
+		scriptPath,
 	}
 
 	if !reflect.DeepEqual(got, want) {
@@ -85,8 +85,9 @@ func TestBuildProjectManagerProjectTerminalWTArgs(t *testing.T) {
 
 	projectPath := `F:\GitlabProjects\code-switch-R`
 	windowID := projectManagerProjectWindowID(projectPath)
+	scriptPath := `C:\Users\X1\.code-switch\project-manager-terminal-scripts\project.ps1`
 
-	got := buildProjectManagerProjectTerminalWTArgs(projectPath, windowID)
+	got := buildProjectManagerProjectTerminalWTArgs(projectPath, windowID, scriptPath)
 	want := []string{
 		"-w", windowID,
 		"new-tab",
@@ -94,8 +95,10 @@ func TestBuildProjectManagerProjectTerminalWTArgs(t *testing.T) {
 		"--",
 		`E:\software\PowerShell7\7\pwsh.exe`,
 		"-NoExit",
-		"-EncodedCommand",
-		encodeProjectManagerPowerShellCommand(buildProjectManagerProjectTerminalPowerShellCommand(projectPath)),
+		"-ExecutionPolicy",
+		"Bypass",
+		"-File",
+		scriptPath,
 	}
 
 	if !reflect.DeepEqual(got, want) {
@@ -188,6 +191,69 @@ func TestBuildProjectManagerProjectTerminalCommandArgs(t *testing.T) {
 	}
 }
 
+func TestBuildProjectManagerPowerShellFileArgs(t *testing.T) {
+	scriptPath := `C:\Users\X1\.code-switch\project-manager-terminal-scripts\project.ps1`
+
+	got := buildProjectManagerPowerShellFileArgs(`E:\software\PowerShell7\7\pwsh.exe`, scriptPath)
+	want := []string{
+		`E:\software\PowerShell7\7\pwsh.exe`,
+		"-NoExit",
+		"-ExecutionPolicy",
+		"Bypass",
+		"-File",
+		scriptPath,
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("PowerShell File 参数不对，want=%v got=%v", want, got)
+	}
+}
+
+func TestBuildProjectManagerTerminalScriptContent(t *testing.T) {
+	command := "Set-Location -LiteralPath 'F:\\GitlabProjects\\code-switch-R'; codex"
+
+	got := buildProjectManagerTerminalScriptContent(command)
+	expectedParts := []string{
+		"$ErrorActionPreference = 'Stop'",
+		command,
+	}
+	for _, part := range expectedParts {
+		if !strings.Contains(got, part) {
+			t.Fatalf("终端脚本缺少片段 %q，got=%q", part, got)
+		}
+	}
+	if !strings.Contains(got, "\r\n") {
+		t.Fatalf("Windows 终端脚本应使用 CRLF，got=%q", got)
+	}
+}
+
+func TestBuildProjectManagerWTArgsDoesNotExposeEncodedCommandToWT(t *testing.T) {
+	originalLookPath := projectManagerLookPath
+	t.Cleanup(func() {
+		projectManagerLookPath = originalLookPath
+	})
+	projectManagerLookPath = func(file string) (string, error) {
+		if file == "pwsh.exe" {
+			return `E:\software\PowerShell7\7\pwsh.exe`, nil
+		}
+		return "", errors.New("not found")
+	}
+
+	got := buildProjectManagerWTArgs(
+		`F:\GitlabProjects\code-switch-R`,
+		`C:\Users\X1\.code-switch\project-manager-terminal-scripts\project.ps1`,
+		"codeswitch-project-deadbeef",
+		"[PM]session-001 - Alpha",
+	)
+	joined := strings.Join(got, " ")
+	if strings.Contains(joined, "-EncodedCommand") {
+		t.Fatalf("WT 参数不应再直接携带 EncodedCommand，got=%v", got)
+	}
+	if !strings.Contains(joined, "-File") {
+		t.Fatalf("WT 参数应通过 ps1 文件启动 pwsh，got=%v", got)
+	}
+}
+
 func TestBuildProjectManagerWTLaunchCommand(t *testing.T) {
 	wtPath := `C:\Users\X1\AppData\Local\Microsoft\WindowsApps\wt.exe`
 	workingDir := `F:\GitlabProjects\code-switch-R`
@@ -200,8 +266,10 @@ func TestBuildProjectManagerWTLaunchCommand(t *testing.T) {
 		"--",
 		`E:\software\PowerShell7\7\pwsh.exe`,
 		"-NoExit",
-		"-EncodedCommand",
-		"encoded-command",
+		"-ExecutionPolicy",
+		"Bypass",
+		"-File",
+		`C:\Users\X1\.code-switch\project-manager-terminal-scripts\project.ps1`,
 	}
 
 	got := buildProjectManagerWTLaunchCommand(wtPath, wtArgs, workingDir)
@@ -212,8 +280,8 @@ func TestBuildProjectManagerWTLaunchCommand(t *testing.T) {
 		"'codeswitch-project-deadbeef'",
 		"'--'",
 		"'E:\\software\\PowerShell7\\7\\pwsh.exe'",
-		"'-EncodedCommand'",
-		"'encoded-command'",
+		"'-File'",
+		"'C:\\Users\\X1\\.code-switch\\project-manager-terminal-scripts\\project.ps1'",
 		"-WorkingDirectory 'F:\\GitlabProjects\\code-switch-R'",
 	}
 	for _, part := range expectedParts {
@@ -266,20 +334,18 @@ func TestProjectManagerPreferredShellExecutable(t *testing.T) {
 		}
 	})
 
-	t.Run("fallback to powershell", func(t *testing.T) {
+	t.Run("does not fallback to powershell", func(t *testing.T) {
 		projectManagerLookPath = func(file string) (string, error) {
-			switch file {
-			case "powershell.exe":
+			if file == "powershell.exe" {
 				return `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`, nil
-			default:
-				return "", errors.New("not found")
 			}
+			return "", errors.New("not found")
 		}
 
 		got := projectManagerPreferredShellExecutable()
-		want := `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`
+		want := `pwsh.exe`
 		if got != want {
-			t.Fatalf("fallback shell 不对，want=%q got=%q", want, got)
+			t.Fatalf("缺少 pwsh 时不应回退 powershell.exe，want=%q got=%q", want, got)
 		}
 	})
 }
@@ -312,7 +378,29 @@ func TestBuildProjectManagerAICommitPowerShellCommand(t *testing.T) {
 	}
 }
 
-func TestStartProjectManagerWTCommandUsesHiddenPowerShellLauncher(t *testing.T) {
+func TestProjectManagerWTLauncherExecutableUsesPwshOnly(t *testing.T) {
+	originalLookPath := projectManagerLookPath
+	t.Cleanup(func() {
+		projectManagerLookPath = originalLookPath
+	})
+
+	projectManagerLookPath = func(file string) (string, error) {
+		if file != "pwsh.exe" {
+			t.Fatalf("WT launcher 只允许查找 pwsh.exe，got=%q", file)
+		}
+		return `E:\software\PowerShell7\7\pwsh.exe`, nil
+	}
+
+	got, err := projectManagerWTLauncherExecutable()
+	if err != nil {
+		t.Fatalf("期望解析 pwsh launcher 成功，got err=%v", err)
+	}
+	if got != `E:\software\PowerShell7\7\pwsh.exe` {
+		t.Fatalf("WT launcher 不对，want=%q got=%q", `E:\software\PowerShell7\7\pwsh.exe`, got)
+	}
+}
+
+func TestStartProjectManagerWTCommandUsesHiddenPwshLauncher(t *testing.T) {
 	originalFactory := projectManagerWTCommandFactory
 	originalLookPath := projectManagerLookPath
 	t.Cleanup(func() {
@@ -320,8 +408,8 @@ func TestStartProjectManagerWTCommandUsesHiddenPowerShellLauncher(t *testing.T) 
 		projectManagerLookPath = originalLookPath
 	})
 	projectManagerLookPath = func(file string) (string, error) {
-		if file == "powershell.exe" {
-			return `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`, nil
+		if file == "pwsh.exe" {
+			return `E:\software\PowerShell7\7\pwsh.exe`, nil
 		}
 		return "", errors.New("not found")
 	}
@@ -345,9 +433,9 @@ func TestStartProjectManagerWTCommandUsesHiddenPowerShellLauncher(t *testing.T) 
 	if captured == nil {
 		t.Fatalf("期望捕获到 WT 启动命令")
 	}
-	launcher := `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`
+	launcher := `E:\software\PowerShell7\7\pwsh.exe`
 	if captured.Path != launcher {
-		t.Fatalf("WT 应通过隐藏 PowerShell launcher 启动，want=%q got=%q", launcher, captured.Path)
+		t.Fatalf("WT 应通过隐藏 pwsh launcher 启动，want=%q got=%q", launcher, captured.Path)
 	}
 	if captured.Dir != workingDir {
 		t.Fatalf("launcher 工作目录不对，want=%q got=%q", workingDir, captured.Dir)

@@ -20,6 +20,7 @@ import (
 const projectManagerWTFocusTimeout = 350 * time.Millisecond
 const projectManagerCodexDangerousBypassFlag = "--dangerously-bypass-approvals-and-sandbox"
 const projectManagerWTPowerShellProfile = "{61c54bbd-c2c6-5271-96e7-009a87ff44bf}"
+const projectManagerTerminalScriptDir = "project-manager-terminal-scripts"
 
 type projectManagerCommandRunner interface {
 	Start() error
@@ -171,7 +172,15 @@ func (s *ProjectManagerService) openProjectManagerSessionTerminal(session Sessio
 			log.Printf("[ProjectManager] 同项目窗口已存在，准备追加新 tab session=%s window=%s title=%q", session.ID, projectWindowID, tabTitle)
 		}
 
-		args := buildProjectManagerWTArgs(launchDir, session.ID, runtimePath, projectWindowID, tabTitle, tabIndex)
+		scriptPath, err := createProjectManagerTerminalScript(
+			"session-"+session.ID,
+			buildProjectManagerPowerShellLaunchCommand(session.ID, runtimePath, projectWindowID, tabTitle, tabIndex),
+		)
+		if err != nil {
+			return fmt.Errorf("创建项目管理器终端脚本失败: %w", err)
+		}
+
+		args := buildProjectManagerWTArgs(launchDir, scriptPath, projectWindowID, tabTitle)
 		if err := startProjectManagerWTCommand(launchDir, wtPath, args); err == nil {
 			log.Printf("[ProjectManager] 已启动 WT 会话 tab session=%s window=%s dir=%s title=%q", session.ID, projectWindowID, launchDir, tabTitle)
 			return nil
@@ -228,7 +237,15 @@ func (s *ProjectManagerService) openProjectManagerProjectTerminal(projectPath st
 	projectWindowID := projectManagerProjectWindowID(projectPath)
 	wtPath := findProjectManagerWTExecutable()
 	if wtPath != "" {
-		args := buildProjectManagerProjectTerminalWTArgs(projectPath, projectWindowID)
+		scriptPath, err := createProjectManagerTerminalScript(
+			projectWindowID,
+			buildProjectManagerProjectTerminalPowerShellCommand(projectPath),
+		)
+		if err != nil {
+			return fmt.Errorf("创建项目终端脚本失败: %w", err)
+		}
+
+		args := buildProjectManagerProjectTerminalWTArgs(projectPath, projectWindowID, scriptPath)
 		if err := startProjectManagerWTCommand(projectPath, wtPath, args); err == nil {
 			log.Printf("[ProjectManager] 已启动项目新终端 project=%s window=%s", projectPath, projectWindowID)
 			return nil
@@ -301,11 +318,9 @@ func (s *ProjectManagerService) tryReuseProjectManagerSessionTerminal(session Se
 
 func buildProjectManagerWTArgs(
 	launchDir string,
-	sessionID string,
-	runtimePath string,
+	scriptPath string,
 	windowID string,
 	tabTitle string,
-	tabIndex int,
 ) []string {
 	shellExecutable := projectManagerPreferredShellExecutable()
 	return append([]string{
@@ -314,25 +329,35 @@ func buildProjectManagerWTArgs(
 		"-d", launchDir,
 		"--title", tabTitle,
 		"--",
-	}, buildProjectManagerPowerShellCommandArgs(shellExecutable, sessionID, runtimePath, windowID, tabTitle, tabIndex)...)
+	}, buildProjectManagerPowerShellFileArgs(shellExecutable, scriptPath)...)
 }
 
-func buildProjectManagerProjectTerminalWTArgs(projectPath string, windowID string) []string {
+func buildProjectManagerProjectTerminalWTArgs(projectPath string, windowID string, scriptPath string) []string {
 	shellExecutable := projectManagerPreferredShellExecutable()
 	return append([]string{
 		"-w", resolveProjectManagerWTWindowName(windowID),
 		"new-tab",
 		"-d", projectPath,
 		"--",
-	}, buildProjectManagerProjectTerminalCommandArgs(shellExecutable, projectPath)...)
+	}, buildProjectManagerPowerShellFileArgs(shellExecutable, scriptPath)...)
 }
 
 func startProjectManagerWTCommand(workingDir string, wtPath string, wtArgs []string) error {
-	launcher := projectManagerWTLauncherExecutable()
+	launcher, err := projectManagerWTLauncherExecutable()
+	if err != nil {
+		projectManagerWriteTerminalDebug("launcher-missing", workingDir, "", wtPath, wtArgs, err)
+		return err
+	}
 	log.Printf("[ProjectManager] 准备通过 launcher 启动 WT working_dir=%q launcher=%q wt=%q args=%q", workingDir, launcher, wtPath, wtArgs)
 	cmd := projectManagerWTCommandFactory(launcher, buildProjectManagerWTLauncherArgs(wtPath, wtArgs, workingDir)...)
 	cmd.Dir = workingDir
-	return cmd.Start()
+	projectManagerWriteTerminalDebug("start", workingDir, launcher, wtPath, wtArgs, nil)
+	if err := cmd.Start(); err != nil {
+		projectManagerWriteTerminalDebug("start-error", workingDir, launcher, wtPath, wtArgs, err)
+		return err
+	}
+	projectManagerWriteTerminalDebug("started", workingDir, launcher, wtPath, wtArgs, nil)
+	return nil
 }
 
 func buildProjectManagerWTLauncherArgs(wtPath string, wtArgs []string, workingDir string) []string {
@@ -349,9 +374,9 @@ func buildProjectManagerWTLaunchCommand(wtPath string, wtArgs []string, workingD
 		quotedWTArgs = append(quotedWTArgs, fmt.Sprintf("'%s'", escapeProjectManagerPowerShellSingleQuoted(arg)))
 	}
 
-	// 保留已经验证过的稳定链路：CodeSwitch -> hidden PowerShell launcher -> WT tab -> pwsh -> codex。
+	// 保留目标链路：CodeSwitch -> hidden pwsh launcher -> WT tab -> pwsh -> codex。
 	// 直接从 windowsgui 进程启动 WT 时，WT 容易把 `pwsh.exe -NoExit ...` 合并成单个 executable；
-	// 由 PowerShell 的 Start-Process -ArgumentList 数组转交 WT，能把 WT 参数边界重新交给 Windows 正常处理。
+	// 外层 launcher 只负责启动 WT，真正的 Codex 逻辑已经写入脚本，避免 WT 解析超长 EncodedCommand。
 	return fmt.Sprintf(
 		"$ErrorActionPreference = 'Stop'; Start-Process -FilePath '%s' -ArgumentList @(%s) -WorkingDirectory '%s' | Out-Null",
 		escapeProjectManagerPowerShellSingleQuoted(wtPath),
@@ -419,51 +444,43 @@ func startProjectManagerFallbackTerminal(
 	tabTitle string,
 	tabIndex int,
 ) error {
-	fallbackShell := projectManagerPreferredShellExecutable()
-	innerArgs := buildProjectManagerPowerShellCommandArgs(fallbackShell, sessionID, runtimePath, windowID, tabTitle, tabIndex)
-	quotedInnerArgs := make([]string, 0, len(innerArgs))
-	for _, arg := range innerArgs[1:] {
-		quotedInnerArgs = append(quotedInnerArgs, fmt.Sprintf("'%s'", escapeProjectManagerPowerShellSingleQuoted(arg)))
+	shellExecutable, err := projectManagerRequiredPwshExecutable()
+	if err != nil {
+		return err
 	}
+	scriptPath, err := createProjectManagerTerminalScript(
+		"fallback-session-"+sessionID,
+		buildProjectManagerPowerShellLaunchCommand(sessionID, runtimePath, windowID, tabTitle, tabIndex),
+	)
+	if err != nil {
+		return err
+	}
+	innerArgs := buildProjectManagerPowerShellFileArgs(shellExecutable, scriptPath)
 
 	// 这里是用户要直接看到并操作的交互式终端，不能再偷偷用 Hidden 把窗口藏起来。
 	// 当 WT 不可用时，退回直接启动 shell，也必须保持可见，否则前端点击就会表现成“没反应”。
-	cmd := exec.Command(
-		"powershell.exe",
-		"-NoProfile",
-		"-Command",
-		fmt.Sprintf(
-			"Start-Process -FilePath '%s' -ArgumentList %s -WorkingDirectory '%s'",
-			escapeProjectManagerPowerShellSingleQuoted(innerArgs[0]),
-			strings.Join(quotedInnerArgs, ","),
-			escapeProjectManagerPowerShellSingleQuoted(launchDir),
-		),
-	)
+	cmd := exec.Command(innerArgs[0], innerArgs[1:]...)
 	cmd.Dir = launchDir
 	return cmd.Start()
 }
 
 func startProjectManagerProjectFallbackTerminal(projectPath string) error {
-	fallbackShell := projectManagerPreferredShellExecutable()
-	innerArgs := buildProjectManagerProjectTerminalCommandArgs(fallbackShell, projectPath)
-	quotedInnerArgs := make([]string, 0, len(innerArgs))
-	for _, arg := range innerArgs[1:] {
-		quotedInnerArgs = append(quotedInnerArgs, fmt.Sprintf("'%s'", escapeProjectManagerPowerShellSingleQuoted(arg)))
+	shellExecutable, err := projectManagerRequiredPwshExecutable()
+	if err != nil {
+		return err
 	}
+	scriptPath, err := createProjectManagerTerminalScript(
+		projectManagerProjectWindowID(projectPath),
+		buildProjectManagerProjectTerminalPowerShellCommand(projectPath),
+	)
+	if err != nil {
+		return err
+	}
+	innerArgs := buildProjectManagerPowerShellFileArgs(shellExecutable, scriptPath)
 
 	// 这里是用户主动点“打开终端”要拿到一个全新的可交互 codex 终端，
 	// 所以 fallback 也必须像系统“在终端中打开”那样直接起可见 shell，不能偷藏后台进程。
-	cmd := exec.Command(
-		"powershell.exe",
-		"-NoProfile",
-		"-Command",
-		fmt.Sprintf(
-			"Start-Process -FilePath '%s' -ArgumentList %s -WorkingDirectory '%s'",
-			escapeProjectManagerPowerShellSingleQuoted(innerArgs[0]),
-			strings.Join(quotedInnerArgs, ","),
-			escapeProjectManagerPowerShellSingleQuoted(projectPath),
-		),
-	)
+	cmd := exec.Command(innerArgs[0], innerArgs[1:]...)
 	cmd.Dir = projectPath
 	return cmd.Start()
 }
@@ -493,43 +510,27 @@ func buildProjectManagerProjectTerminalCommandArgs(shell string, projectPath str
 	}
 }
 
-func projectManagerPreferredShellExecutable() string {
-	candidates := []string{"pwsh.exe", "powershell.exe"}
-	for _, candidate := range candidates {
-		resolved, err := projectManagerLookPath(candidate)
-		if err != nil {
-			continue
-		}
-		resolved = strings.TrimSpace(resolved)
-		if resolved != "" {
-			return resolved
-		}
+func buildProjectManagerPowerShellFileArgs(shell string, scriptPath string) []string {
+	return []string{
+		shell,
+		"-NoExit",
+		"-ExecutionPolicy",
+		"Bypass",
+		"-File",
+		scriptPath,
 	}
-	return "powershell.exe"
 }
 
-func projectManagerWTLauncherExecutable() string {
-	windir := strings.TrimSpace(os.Getenv("WINDIR"))
-	if windir != "" {
-		candidate := filepath.Join(windir, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
-		}
+func projectManagerPreferredShellExecutable() string {
+	resolved, err := projectManagerRequiredPwshExecutable()
+	if err == nil {
+		return resolved
 	}
+	return "pwsh.exe"
+}
 
-	candidates := []string{"powershell.exe", "pwsh.exe"}
-	for _, candidate := range candidates {
-		resolved, err := projectManagerLookPath(candidate)
-		if err != nil {
-			continue
-		}
-		resolved = strings.TrimSpace(resolved)
-		if resolved != "" {
-			return resolved
-		}
-	}
-
-	return "powershell.exe"
+func projectManagerWTLauncherExecutable() (string, error) {
+	return projectManagerRequiredPwshExecutable()
 }
 
 func projectManagerRequiredPwshExecutable() (string, error) {
@@ -674,6 +675,68 @@ func buildProjectManagerProjectTerminalPowerShellCommand(projectPath string) str
 	return fmt.Sprintf("%s; Set-Location -LiteralPath '%s'; %s", buildProjectManagerCodexResolverPowerShell(), escapedProjectPath, buildProjectManagerCodexCommand())
 }
 
+func createProjectManagerTerminalScript(prefix string, command string) (string, error) {
+	root, err := projectManagerTerminalScriptRootPath()
+	if err != nil {
+		return "", err
+	}
+
+	safePrefix := sanitizeProjectManagerTerminalScriptPrefix(prefix)
+	if safePrefix == "" {
+		safePrefix = "terminal"
+	}
+	scriptPath := filepath.Join(root, fmt.Sprintf("%s-%d.ps1", safePrefix, time.Now().UnixNano()))
+	content := buildProjectManagerTerminalScriptContent(command)
+	if err := AtomicWriteText(scriptPath, content); err != nil {
+		return "", err
+	}
+	projectManagerWriteTerminalScriptDebug(scriptPath, command)
+	return scriptPath, nil
+}
+
+func projectManagerTerminalScriptRootPath() (string, error) {
+	home, err := getUserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, appSettingsDir, projectManagerTerminalScriptDir), nil
+}
+
+func buildProjectManagerTerminalScriptContent(command string) string {
+	// 脚本文件是 WT 与 pwsh 的稳定衔接点。
+	// WT 只需要启动 `pwsh -File xxx.ps1`，复杂的 Codex 启动逻辑全部在 pwsh 内部执行，
+	// 这样能避开 WT 对超长 `-EncodedCommand` 子命令边界的二次解析坑。
+	return strings.Join([]string{
+		"$ErrorActionPreference = 'Stop'",
+		command,
+		"",
+	}, "\r\n")
+}
+
+func sanitizeProjectManagerTerminalScriptPrefix(prefix string) string {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return ""
+	}
+
+	var builder strings.Builder
+	for _, r := range prefix {
+		switch {
+		case r >= 'a' && r <= 'z':
+			builder.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			builder.WriteRune(r)
+		case r >= '0' && r <= '9':
+			builder.WriteRune(r)
+		case r == '-' || r == '_':
+			builder.WriteRune(r)
+		default:
+			builder.WriteRune('-')
+		}
+	}
+	return strings.Trim(builder.String(), "-_")
+}
+
 func buildProjectManagerCodexCommand(args ...string) string {
 	parts := append([]string{"& $__codeSwitchCodexCommand", projectManagerCodexDangerousBypassFlag}, args...)
 	return strings.Join(parts, " ")
@@ -725,6 +788,52 @@ func findProjectManagerWTExecutable() string {
 		return ""
 	}
 	return projectManagerWTExecutablePath
+}
+
+func projectManagerWriteTerminalScriptDebug(scriptPath string, command string) {
+	projectManagerAppendTerminalDebug(strings.Join([]string{
+		fmt.Sprintf("time=%s stage=script", time.Now().Format(time.RFC3339Nano)),
+		fmt.Sprintf("script=%s", scriptPath),
+		fmt.Sprintf("command=%s", command),
+		"",
+	}, "\n"))
+}
+
+func projectManagerWriteTerminalDebug(stage string, workingDir string, launcher string, wtPath string, wtArgs []string, err error) {
+	lines := []string{
+		fmt.Sprintf("time=%s stage=%s", time.Now().Format(time.RFC3339Nano), stage),
+		fmt.Sprintf("exe=%s", os.Args[0]),
+		fmt.Sprintf("workingDir=%s", workingDir),
+		fmt.Sprintf("launcher=%s", launcher),
+		fmt.Sprintf("wtPath=%s", wtPath),
+		fmt.Sprintf("argCount=%d", len(wtArgs)),
+	}
+	for index, arg := range wtArgs {
+		lines = append(lines, fmt.Sprintf("arg[%02d]=%q", index, arg))
+	}
+	if err != nil {
+		lines = append(lines, fmt.Sprintf("err=%v", err))
+	}
+	lines = append(lines, "")
+	projectManagerAppendTerminalDebug(strings.Join(lines, "\n"))
+}
+
+func projectManagerAppendTerminalDebug(content string) {
+	home, err := getUserHomeDir()
+	if err != nil {
+		return
+	}
+	path := filepath.Join(home, appSettingsDir, "project-manager-terminal-debug.log")
+	if err := EnsureDir(filepath.Dir(path)); err != nil {
+		return
+	}
+
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+	_, _ = file.WriteString(content)
 }
 
 func escapeProjectManagerPowerShellSingleQuoted(value string) string {
