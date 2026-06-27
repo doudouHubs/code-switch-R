@@ -19,6 +19,7 @@ import (
 
 const projectManagerWTFocusTimeout = 350 * time.Millisecond
 const projectManagerCodexDangerousBypassFlag = "--dangerously-bypass-approvals-and-sandbox"
+const projectManagerWTPowerShellProfile = "{61c54bbd-c2c6-5271-96e7-009a87ff44bf}"
 
 type projectManagerCommandRunner interface {
 	Start() error
@@ -308,14 +309,15 @@ func buildProjectManagerWTArgs(
 ) []string {
 	// WT 的 new-tab 尾部 commandline 会被再次重组；实测无论传绝对路径还是裸 `pwsh.exe`，
 	// 都可能被 WT 包成 `"pwsh.exe -NoExit ..."` 这个单一 executable，最终 0x80070002。
-	// 因此主路径改用 WT 官方 profile 机制启动 PowerShell，再通过 appendCommandLine 追加 Codex 启动参数。
-	// 这样 shell 的选择权交给 WT profile，CodeSwitch 只提供 PowerShell 参数，避开目标进程名和参数被合并的问题。
+	// 因此主路径改用 WT profile 机制启动 PowerShell，再通过 appendCommandLine 追加 Codex 启动参数。
+	// 这里使用内置 PowerShell profile 的稳定 GUID，不使用名称；用户本机 profile 名可能叫 "Windows PowerShell"，
+	// 但 commandline 实际指向 PowerShell 7，靠名称匹配容易落到错误 profile 或默认 profile。
 	return []string{
 		"-w", resolveProjectManagerWTWindowName(windowID),
 		"new-tab",
 		"-d", launchDir,
 		"--title", tabTitle,
-		"-p", "PowerShell",
+		"-p", projectManagerWTPowerShellProfile,
 		"--appendCommandLine",
 		buildProjectManagerWTAppendCommandLine(encodeProjectManagerPowerShellCommand(buildProjectManagerPowerShellLaunchCommand(sessionID, runtimePath, windowID, tabTitle, tabIndex))),
 	}
@@ -328,7 +330,7 @@ func buildProjectManagerProjectTerminalWTArgs(projectPath string, windowID strin
 		"-w", resolveProjectManagerWTWindowName(windowID),
 		"new-tab",
 		"-d", projectPath,
-		"-p", "PowerShell",
+		"-p", projectManagerWTPowerShellProfile,
 		"--appendCommandLine",
 		buildProjectManagerWTAppendCommandLine(encodeProjectManagerPowerShellCommand(buildProjectManagerProjectTerminalPowerShellCommand(projectPath))),
 	}

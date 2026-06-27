@@ -57,7 +57,7 @@ func TestBuildProjectManagerWTArgs(t *testing.T) {
 		"new-tab",
 		"-d", launchDir,
 		"--title", tabTitle,
-		"-p", "PowerShell",
+		"-p", projectManagerWTPowerShellProfile,
 		"--appendCommandLine",
 		buildProjectManagerWTAppendCommandLine(encodeProjectManagerPowerShellCommand(buildProjectManagerPowerShellLaunchCommand(sessionID, runtimePath, windowID, tabTitle, tabIndex))),
 	}
@@ -85,7 +85,7 @@ func TestBuildProjectManagerProjectTerminalWTArgs(t *testing.T) {
 		"-w", windowID,
 		"new-tab",
 		"-d", projectPath,
-		"-p", "PowerShell",
+		"-p", projectManagerWTPowerShellProfile,
 		"--appendCommandLine",
 		buildProjectManagerWTAppendCommandLine(encodeProjectManagerPowerShellCommand(buildProjectManagerProjectTerminalPowerShellCommand(projectPath))),
 	}
