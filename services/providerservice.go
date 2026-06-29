@@ -175,6 +175,7 @@ func (ps *ProviderService) saveProvidersLocked(kind string, providers []Provider
 	if err != nil {
 		return err
 	}
+	providers = sanitizeProvidersForKind(kind, providers)
 
 	// 加载现有配置，用于检查 name 是否被修改
 	// 使用原样读取，避免触发迁移导致死锁
@@ -258,6 +259,7 @@ func (ps *ProviderService) LoadProviders(kind string) ([]Provider, error) {
 	if err := json.Unmarshal(data, &envelope); err != nil {
 		return nil, err
 	}
+	envelope.Providers = sanitizeProvidersForKind(kind, envelope.Providers)
 
 	// 执行字段迁移：将旧字段值迁移到新字段
 	migrated := false
@@ -283,6 +285,51 @@ func (ps *ProviderService) LoadProviders(kind string) ([]Provider, error) {
 	}
 
 	return envelope.Providers, nil
+}
+
+// sanitizeProvidersForKind 清理 provider 列表中的非真实业务数据。
+// 当前只处理 Claude：历史调试/测试流程可能把名为 "B" 的空壳 provider 混入配置。
+// 过滤必须放在 ProviderService 这个事实源边界，而不是前端页面里打补丁；
+// 这样代理、可用性检查、端点同步等所有读取方都会拿到同一份真实数据。
+func sanitizeProvidersForKind(kind string, providers []Provider) []Provider {
+	if !isClaudeProviderKind(kind) || len(providers) == 0 {
+		return providers
+	}
+
+	filtered := make([]Provider, 0, len(providers))
+	changed := false
+	for _, provider := range providers {
+		if isPlaceholderClaudeBProvider(provider) {
+			changed = true
+			continue
+		}
+		filtered = append(filtered, provider)
+	}
+	if !changed {
+		return providers
+	}
+	return filtered
+}
+
+func isClaudeProviderKind(kind string) bool {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "claude", "claude-code", "claude_code":
+		return true
+	default:
+		return false
+	}
+}
+
+func isPlaceholderClaudeBProvider(provider Provider) bool {
+	if !strings.EqualFold(strings.TrimSpace(provider.Name), "B") {
+		return false
+	}
+
+	// 只删除缺少真实连接信息的 B，避免误删用户主动创建的真实 B 供应商。
+	// icon/tint/accent 这类展示字段不能证明 provider 可用；apiUrl/apiKey/officialSite 才是业务数据。
+	return strings.TrimSpace(provider.APIURL) == "" &&
+		strings.TrimSpace(provider.APIKey) == "" &&
+		strings.TrimSpace(provider.Site) == ""
 }
 
 // loadProvidersNoLock 内部加载方法，在持有锁的情况下调用（避免递归加锁）

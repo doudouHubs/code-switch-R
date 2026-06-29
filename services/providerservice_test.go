@@ -2,11 +2,152 @@ package services
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"sort"
 	"testing"
+
+	"github.com/daodao97/xgo/xdb"
 )
 
 // ==================== 通配符匹配测试 ====================
+
+func setupProviderFileTestEnv(t *testing.T) {
+	t.Helper()
+
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("USERPROFILE", tmpHome)
+
+	configDir := filepath.Join(tmpHome, ".code-switch")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("创建临时配置目录失败: %v", err)
+	}
+}
+
+func setupProviderAliasDB(t *testing.T) {
+	t.Helper()
+
+	configDir := filepath.Join(os.Getenv("USERPROFILE"), ".code-switch")
+	dbPath := filepath.Join(configDir, "app.db?cache=shared&mode=rwc")
+	if err := xdb.Inits([]xdb.Config{{Name: "default", Driver: "sqlite", DSN: dbPath}}); err != nil {
+		t.Fatalf("初始化测试数据库失败: %v", err)
+	}
+	db, err := xdb.DB("default")
+	if err != nil {
+		t.Fatalf("获取测试数据库失败: %v", err)
+	}
+	_, _ = db.Exec("PRAGMA busy_timeout = 30000")
+
+	// SaveProviders 会校验 rename alias 占用，测试也要提供同样的最小事实源。
+	if err := ensureProviderAliasTable(); err != nil {
+		t.Fatalf("初始化 provider_alias 表失败: %v", err)
+	}
+
+	t.Cleanup(func() {
+		if d, e := xdb.DB("default"); e == nil && d != nil {
+			_ = d.Close()
+		}
+	})
+}
+
+func writeProviderFixture(t *testing.T, kind string, providers []Provider) {
+	t.Helper()
+
+	path, err := providerFilePath(kind)
+	if err != nil {
+		t.Fatalf("获取 provider 路径失败: %v", err)
+	}
+	data, err := serializeProviders(providers)
+	if err != nil {
+		t.Fatalf("序列化 provider fixture 失败: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("写入 provider fixture 失败: %v", err)
+	}
+}
+
+func TestProviderServiceLoadProviders_EmptyClaudeListStaysEmpty(t *testing.T) {
+	setupProviderFileTestEnv(t)
+	writeProviderFixture(t, "claude", []Provider{})
+
+	providers, err := NewProviderService().LoadProviders("claude")
+	if err != nil {
+		t.Fatalf("LoadProviders 失败: %v", err)
+	}
+	if len(providers) != 0 {
+		t.Fatalf("空配置不应被补默认 provider，实际: %#v", providers)
+	}
+}
+
+func TestProviderServiceLoadProviders_FiltersPlaceholderClaudeB(t *testing.T) {
+	setupProviderFileTestEnv(t)
+	writeProviderFixture(t, "claude", []Provider{
+		{ID: 1, Name: "A", APIURL: "https://api.example.com", APIKey: "sk-real"},
+		{ID: 2, Name: " B "},
+	})
+
+	providers, err := NewProviderService().LoadProviders("claude")
+	if err != nil {
+		t.Fatalf("LoadProviders 失败: %v", err)
+	}
+	if len(providers) != 1 {
+		t.Fatalf("应只保留真实 provider，实际数量: %d, 数据: %#v", len(providers), providers)
+	}
+	if providers[0].Name != "A" {
+		t.Fatalf("真实 provider 被误删，实际: %#v", providers)
+	}
+}
+
+func TestProviderServiceLoadProviders_KeepsRealClaudeB(t *testing.T) {
+	setupProviderFileTestEnv(t)
+	writeProviderFixture(t, "claude", []Provider{
+		{ID: 1, Name: "B", APIURL: "https://api.example.com", APIKey: "sk-real"},
+	})
+
+	providers, err := NewProviderService().LoadProviders("claude")
+	if err != nil {
+		t.Fatalf("LoadProviders 失败: %v", err)
+	}
+	if len(providers) != 1 {
+		t.Fatalf("真实 B provider 不应被过滤，实际: %#v", providers)
+	}
+	if providers[0].Name != "B" || providers[0].APIURL == "" {
+		t.Fatalf("真实 B provider 内容不正确: %#v", providers[0])
+	}
+}
+
+func TestProviderServiceSaveProviders_DoesNotPersistPlaceholderClaudeB(t *testing.T) {
+	setupProviderFileTestEnv(t)
+	setupProviderAliasDB(t)
+
+	ps := NewProviderService()
+	if err := ps.SaveProviders("claude", []Provider{
+		{ID: 1, Name: "B"},
+		{ID: 2, Name: "Real", APIURL: "https://api.example.com", APIKey: "sk-real"},
+	}); err != nil {
+		t.Fatalf("SaveProviders 失败: %v", err)
+	}
+
+	path, err := providerFilePath("claude")
+	if err != nil {
+		t.Fatalf("获取 provider 路径失败: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("读取 provider 文件失败: %v", err)
+	}
+	var envelope providerEnvelope
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		t.Fatalf("解析 provider 文件失败: %v", err)
+	}
+	if len(envelope.Providers) != 1 {
+		t.Fatalf("占位 B 不应落盘，实际: %#v", envelope.Providers)
+	}
+	if envelope.Providers[0].Name != "Real" {
+		t.Fatalf("应保留真实 provider，实际: %#v", envelope.Providers[0])
+	}
+}
 
 func TestMatchWildcard(t *testing.T) {
 	tests := []struct {
@@ -530,7 +671,7 @@ func TestProviderLevelGrouping(t *testing.T) {
 			name: "默认 Level（未设置）",
 			providers: []Provider{
 				{ID: 1, Name: "Provider-A", Level: 0}, // 0 应默认为 1
-				{ID: 2, Name: "Provider-B"},            // 未设置应默认为 1
+				{ID: 2, Name: "Provider-B"},           // 未设置应默认为 1
 			},
 			expected: map[int][]string{
 				1: {"Provider-A", "Provider-B"},
