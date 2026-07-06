@@ -264,6 +264,66 @@ func TestProjectManagerRenamePersistsAliases(t *testing.T) {
 	}
 }
 
+func TestProjectManagerCodexProviderBindingSurvivesRenameAndEnrichesSnapshot(t *testing.T) {
+	home := setupProjectManagerTestHome(t)
+	service := NewProjectManagerService()
+
+	projectDir := filepath.Join(home, "workspace", "provider-bound")
+	sessionID := "019f3509-provider-bound"
+	writeProviderFixture(t, "codex", []Provider{
+		{ID: 11, Name: "Global", APIURL: "https://global.example.com", APIKey: "sk-global", Enabled: true},
+		{ID: 22, Name: "Project Fast", APIURL: "https://project.example.com", APIKey: "sk-project", Enabled: true},
+	})
+	writeProjectManagerSessionIndex(t, home, sessionID, "Provider Bound", "2026-06-15T09:40:00Z")
+	writeProjectManagerCodexSessionFixture(t, home, sessionID, projectDir, "绑定项目供应商", "2026-06-15T09:58:00Z", "2026-06-15T10:00:00Z")
+
+	if err := service.SetProjectCodexProvider(projectDir, 22); err != nil {
+		t.Fatalf("SetProjectCodexProvider 失败: %v", err)
+	}
+	if err := service.RenameProject(projectDir, "Provider Bound Alias"); err != nil {
+		t.Fatalf("RenameProject 失败: %v", err)
+	}
+
+	store, err := service.store.load()
+	if err != nil {
+		t.Fatalf("读取 project manager store 失败: %v", err)
+	}
+	normalizedProject := normalizeProjectManagerProjectPath(projectDir)
+	meta := store.Projects[normalizedProject]
+	if meta.DisplayName != "Provider Bound Alias" {
+		t.Fatalf("项目别名未保留，got=%q", meta.DisplayName)
+	}
+	if meta.CodexProviderID != 22 {
+		t.Fatalf("项目 provider 绑定未保留，want=22 got=%d", meta.CodexProviderID)
+	}
+
+	snapshot, err := service.RefreshProjectIndex()
+	if err != nil {
+		t.Fatalf("RefreshProjectIndex 失败: %v", err)
+	}
+	if len(snapshot.Projects) != 1 {
+		t.Fatalf("项目数不对，want=1 got=%d", len(snapshot.Projects))
+	}
+	project := snapshot.Projects[0]
+	if project.CodexProviderID != 22 {
+		t.Fatalf("快照 provider id 不对，want=22 got=%d", project.CodexProviderID)
+	}
+	if project.CodexProviderName != "Project Fast" {
+		t.Fatalf("快照 provider 名称不对，want=%q got=%q", "Project Fast", project.CodexProviderName)
+	}
+
+	if err := service.ClearProjectCodexProvider(projectDir); err != nil {
+		t.Fatalf("ClearProjectCodexProvider 失败: %v", err)
+	}
+	store, err = service.store.load()
+	if err != nil {
+		t.Fatalf("重新读取 project manager store 失败: %v", err)
+	}
+	if got := store.Projects[normalizedProject].CodexProviderID; got != 0 {
+		t.Fatalf("清除 provider 绑定失败，got=%d", got)
+	}
+}
+
 func TestProjectManagerGetSnapshotAggregatesCodexArtifacts(t *testing.T) {
 	home := setupProjectManagerTestHome(t)
 	service := NewProjectManagerService()

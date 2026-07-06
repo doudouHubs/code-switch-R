@@ -19,6 +19,7 @@ import ProjectManagerSessionGrid from "./ProjectManagerSessionGrid.vue";
 import ProjectManagerStatePanel from "./ProjectManagerStatePanel.vue";
 import "./projectManager.css";
 import {
+  clearProjectCodexProvider,
   deleteProject,
   deleteSession,
   fetchProjectManagerSnapshot,
@@ -29,10 +30,13 @@ import {
   refreshProjectManagerSnapshot,
   renameProject,
   renameSession,
+  setProjectCodexProvider,
   type ProjectSummary,
   type ProjectManagerSnapshot,
   type SessionSummary,
 } from "../../services/projectManager";
+import { LoadProviders } from "../../../bindings/codeswitch/services/providerservice";
+import type { Provider } from "../../../bindings/codeswitch/services/models";
 import { extractErrorMessage } from "../../utils/error";
 import { showToast } from "../../utils/toast";
 import type {
@@ -46,6 +50,8 @@ const router = useRouter();
 const loading = ref(false);
 const refreshing = ref(false);
 const renameSaving = ref(false);
+const providerSaving = ref(false);
+const providerLoading = ref(false);
 const openingSessionIds = ref<string[]>([]);
 const openingProjectTerminalId = ref("");
 const committingProjectId = ref("");
@@ -60,6 +66,14 @@ const renameModalOpen = ref(false);
 const renameTargetType = ref<ProjectManagerRenameTarget>("project");
 const renameTargetId = ref("");
 const renameValue = ref("");
+const codexProviders = ref<Provider[]>([]);
+const providerModalState = reactive({
+  open: false,
+  projectId: "",
+  projectPath: "",
+  projectName: "",
+  selectedProviderId: 0,
+});
 const deleteState = reactive({
   open: false,
   targetType: "project" as "project" | "session",
@@ -227,6 +241,39 @@ const closeRenameModal = () => {
   renameModalOpen.value = false;
 };
 
+const openProviderModal = async (project: ProjectSummary) => {
+  if (!project?.path || providerSaving.value) {
+    return;
+  }
+  providerModalState.projectId = project.id;
+  providerModalState.projectPath = project.path;
+  providerModalState.projectName = project.display_name;
+  providerModalState.selectedProviderId = project.codex_provider_id ?? 0;
+  providerModalState.open = true;
+
+  if (codexProviders.value.length > 0) {
+    return;
+  }
+
+  providerLoading.value = true;
+  try {
+    const providers = await LoadProviders("codex");
+    codexProviders.value = providers ?? [];
+  } catch (error) {
+    console.error("failed to load codex providers", error);
+    showToast(extractErrorMessage(error), "error");
+  } finally {
+    providerLoading.value = false;
+  }
+};
+
+const closeProviderModal = () => {
+  if (providerSaving.value) {
+    return;
+  }
+  providerModalState.open = false;
+};
+
 const openDeleteModal = (
   type: "project" | "session",
   payload: ProjectSummary | SessionSummary,
@@ -281,6 +328,46 @@ const saveRename = async () => {
     showToast(extractErrorMessage(error), "error");
   } finally {
     renameSaving.value = false;
+  }
+};
+
+const saveProjectCodexProvider = async () => {
+  const projectPath = providerModalState.projectPath;
+  const providerId = providerModalState.selectedProviderId;
+  if (!projectPath) {
+    showToast(t("components.projectManager.errors.projectNotFound"), "error");
+    return;
+  }
+
+  providerSaving.value = true;
+  try {
+    if (providerId > 0) {
+      await setProjectCodexProvider(projectPath, providerId);
+    } else {
+      await clearProjectCodexProvider(projectPath);
+    }
+
+    const providerName =
+      codexProviders.value.find((provider) => provider.id === providerId)?.name ??
+      "";
+    snapshotProjects.value = snapshotProjects.value.map((project) => {
+      if (project.path !== projectPath) {
+        return project;
+      }
+      return {
+        ...project,
+        codex_provider_id: providerId || undefined,
+        codex_provider_name: providerName || undefined,
+      };
+    });
+    providerModalState.open = false;
+    showToast(t("components.projectManager.provider.saved"), "success");
+    await loadSnapshot(true);
+  } catch (error) {
+    console.error("failed to save project codex provider", error);
+    showToast(extractErrorMessage(error), "error");
+  } finally {
+    providerSaving.value = false;
   }
 };
 
@@ -579,6 +666,7 @@ onBeforeUnmount(() => {
       @enter="enterProject"
       @delete="openDeleteModal('project', $event)"
       @open-folder="handleOpenProjectFolder"
+      @set-codex-provider="openProviderModal"
       @commit="handleRunProjectAICommit"
     />
 
@@ -604,6 +692,78 @@ onBeforeUnmount(() => {
       @close="closeRenameModal"
       @save="saveRename"
     />
+
+    <BaseModal
+      :open="providerModalState.open"
+      :title="t('components.projectManager.provider.title')"
+      @close="closeProviderModal"
+    >
+      <div class="rename-body">
+        <p class="rename-hint">
+          {{
+            t("components.projectManager.provider.hint", {
+              name: providerModalState.projectName,
+            })
+          }}
+        </p>
+
+        <div v-if="providerLoading" class="provider-picker-state">
+          {{ t("components.projectManager.provider.loading") }}
+        </div>
+        <div v-else class="provider-picker-list">
+          <label class="provider-picker-option">
+            <input
+              v-model.number="providerModalState.selectedProviderId"
+              type="radio"
+              :value="0"
+            />
+            <span>
+              <strong>{{ t("components.projectManager.provider.defaultOption") }}</strong>
+              <small>{{ t("components.projectManager.provider.defaultHint") }}</small>
+            </span>
+          </label>
+
+          <label
+            v-for="provider in codexProviders"
+            :key="provider.id"
+            class="provider-picker-option"
+          >
+            <input
+              v-model.number="providerModalState.selectedProviderId"
+              type="radio"
+              :value="provider.id"
+            />
+            <span>
+              <strong>
+                {{ provider.name }}
+                <em v-if="!provider.enabled" class="provider-picker-disabled-badge">
+                  {{ t("components.projectManager.provider.disabledBadge") }}
+                </em>
+              </strong>
+              <small>{{ provider.apiUrl }}</small>
+            </span>
+          </label>
+
+          <p v-if="codexProviders.length === 0" class="provider-picker-empty">
+            {{ t("components.projectManager.provider.empty") }}
+          </p>
+        </div>
+
+        <footer class="form-actions rename-actions">
+          <BaseButton variant="outline" type="button" @click="closeProviderModal">
+            {{ t("components.projectManager.rename.cancel") }}
+          </BaseButton>
+          <BaseButton
+            type="button"
+            :disabled="providerLoading || providerSaving"
+            :loading="providerSaving"
+            @click="saveProjectCodexProvider"
+          >
+            {{ t("components.projectManager.provider.save") }}
+          </BaseButton>
+        </footer>
+      </div>
+    </BaseModal>
 
     <BaseModal
       :open="deleteState.open"

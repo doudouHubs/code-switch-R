@@ -433,6 +433,38 @@
   word-break: break-word;
 }
 
+.project-manager-page .card-provider {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0;
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.08);
+  color: var(--mac-text-secondary);
+  font-size: 0.76rem;
+  line-height: 1.2;
+}
+
+.project-manager-page .card-provider strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #2563eb;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dark .project-manager-page .card-provider {
+  background: rgba(76, 128, 214, 0.18);
+}
+
+.dark .project-manager-page .card-provider strong {
+  color: #7db5ff;
+}
+
 .project-manager-page .card-path.small {
   font-size: 0.82rem;
 }
@@ -664,6 +696,103 @@
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}
+
+.project-manager-page .provider-picker-list {
+  display: grid;
+  gap: 10px;
+}
+
+.project-manager-page .provider-picker-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(17, 28, 47, 0.08);
+  background: rgba(255, 255, 255, 0.64);
+  cursor: pointer;
+}
+
+.project-manager-page .provider-picker-option:hover {
+  border-color: rgba(37, 99, 235, 0.22);
+  background: rgba(37, 99, 235, 0.05);
+}
+
+.project-manager-page .provider-picker-option input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #2563eb;
+}
+
+.project-manager-page .provider-picker-option span {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.project-manager-page .provider-picker-option strong,
+.project-manager-page .provider-picker-option small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-manager-page .provider-picker-option strong {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--mac-text);
+  font-size: 0.9rem;
+}
+
+.project-manager-page .provider-picker-disabled-badge {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.14);
+  color: #b45309;
+  font-size: 0.68rem;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.project-manager-page .provider-picker-option small,
+.project-manager-page .provider-picker-empty,
+.project-manager-page .provider-picker-state {
+  color: var(--mac-text-secondary);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.project-manager-page .provider-picker-empty,
+.project-manager-page .provider-picker-state {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(17, 28, 47, 0.04);
+}
+
+.dark .project-manager-page .provider-picker-option {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(18, 25, 38, 0.72);
+}
+
+.dark .project-manager-page .provider-picker-option:hover {
+  border-color: rgba(125, 181, 255, 0.22);
+  background: rgba(76, 128, 214, 0.14);
+}
+
+.dark .project-manager-page .provider-picker-disabled-badge {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+}
+
+.dark .project-manager-page .provider-picker-empty,
+.dark .project-manager-page .provider-picker-state {
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .project-manager-page.project-manager-detail-page {

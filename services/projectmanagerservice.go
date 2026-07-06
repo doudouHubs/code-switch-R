@@ -14,12 +14,14 @@ import (
 )
 
 type ProjectSummary struct {
-	ID           string `json:"id"`
-	Path         string `json:"path"`
-	SourceName   string `json:"source_name"`
-	DisplayName  string `json:"display_name"`
-	UpdatedAt    int64  `json:"updated_at"`
-	SessionCount int    `json:"session_count"`
+	ID                string `json:"id"`
+	Path              string `json:"path"`
+	SourceName        string `json:"source_name"`
+	DisplayName       string `json:"display_name"`
+	UpdatedAt         int64  `json:"updated_at"`
+	SessionCount      int    `json:"session_count"`
+	CodexProviderID   int64  `json:"codex_provider_id,omitempty"`
+	CodexProviderName string `json:"codex_provider_name,omitempty"`
 }
 
 type SessionSummary struct {
@@ -133,6 +135,33 @@ func (s *ProjectManagerService) RenameProject(projectPath string, displayName st
 	}
 	s.invalidateProjectManagerSnapshotCache()
 	return nil
+}
+
+func (s *ProjectManagerService) SetProjectCodexProvider(projectPath string, providerID int64) error {
+	projectPath = normalizeProjectManagerProjectPath(projectPath)
+	if projectPath == "" {
+		return errors.New("项目路径不能为空")
+	}
+
+	if providerID > 0 {
+		providers, err := loadProviderSnapshot("codex")
+		if err != nil {
+			return fmt.Errorf("加载 Codex 供应商失败: %w", err)
+		}
+		if _, ok := findProviderByID(providers, providerID); !ok {
+			return fmt.Errorf("未找到 Codex 供应商 ID: %d", providerID)
+		}
+	}
+
+	if err := s.store.saveProjectCodexProviderID(projectPath, providerID); err != nil {
+		return err
+	}
+	s.invalidateProjectManagerSnapshotCache()
+	return nil
+}
+
+func (s *ProjectManagerService) ClearProjectCodexProvider(projectPath string) error {
+	return s.SetProjectCodexProvider(projectPath, 0)
 }
 
 func (s *ProjectManagerService) RenameSession(sessionID string, displayName string) error {

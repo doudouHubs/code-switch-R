@@ -9,6 +9,8 @@ export interface ProjectSummary {
   display_name: string;
   updated_at: number;
   session_count: number;
+  codex_provider_id?: number;
+  codex_provider_name?: string;
 }
 
 export interface SessionSummary {
@@ -81,6 +83,26 @@ export const renameSession = async (
     `${PROJECT_MANAGER_SERVICE}.RenameSession`,
     sessionID,
     displayName,
+  );
+};
+
+export const setProjectCodexProvider = async (
+  projectPath: string,
+  providerID: number,
+): Promise<void> => {
+  await Call.ByName(
+    `${PROJECT_MANAGER_SERVICE}.SetProjectCodexProvider`,
+    projectPath,
+    providerID,
+  );
+};
+
+export const clearProjectCodexProvider = async (
+  projectPath: string,
+): Promise<void> => {
+  await Call.ByName(
+    `${PROJECT_MANAGER_SERVICE}.ClearProjectCodexProvider`,
+    projectPath,
   );
 };
 

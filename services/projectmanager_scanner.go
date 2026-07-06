@@ -51,11 +51,13 @@ type projectManagerSessionFileEntry struct {
 }
 
 type projectManagerProjectState struct {
-	Path        string
-	SourceName  string
-	DisplayName string
-	UpdatedAt   time.Time
-	Sessions    []*projectManagerSessionState
+	Path              string
+	SourceName        string
+	DisplayName       string
+	UpdatedAt         time.Time
+	Sessions          []*projectManagerSessionState
+	CodexProviderID   int64
+	CodexProviderName string
 }
 
 func (s *ProjectManagerService) scanProjectManagerData() (projectManagerAggregate, error) {
@@ -382,10 +384,13 @@ func (s *ProjectManagerService) groupProjectManagerProjects(
 			if meta, ok := store.Projects[projectPath]; ok && strings.TrimSpace(meta.DisplayName) != "" {
 				displayName = strings.TrimSpace(meta.DisplayName)
 			}
+			codexProviderID, codexProviderName := resolveProjectManagerCodexProvider(store, projectPath)
 			project = &projectManagerProjectState{
-				Path:        projectPath,
-				SourceName:  sourceName,
-				DisplayName: displayName,
+				Path:              projectPath,
+				SourceName:        sourceName,
+				DisplayName:       displayName,
+				CodexProviderID:   codexProviderID,
+				CodexProviderName: codexProviderName,
 			}
 			projects[projectPath] = project
 		}
@@ -834,12 +839,14 @@ func buildProjectManagerProjectSummaries(projects map[string]*projectManagerProj
 			continue
 		}
 		result = append(result, ProjectSummary{
-			ID:           project.Path,
-			Path:         project.Path,
-			SourceName:   project.SourceName,
-			DisplayName:  project.DisplayName,
-			UpdatedAt:    project.UpdatedAt.UnixMilli(),
-			SessionCount: len(project.Sessions),
+			ID:                project.Path,
+			Path:              project.Path,
+			SourceName:        project.SourceName,
+			DisplayName:       project.DisplayName,
+			UpdatedAt:         project.UpdatedAt.UnixMilli(),
+			SessionCount:      len(project.Sessions),
+			CodexProviderID:   project.CodexProviderID,
+			CodexProviderName: project.CodexProviderName,
 		})
 	}
 	return result

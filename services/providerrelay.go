@@ -380,6 +380,13 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 			fmt.Printf("[WARN] 请求未指定模型名，无法执行模型智能降级\n")
 		}
 
+		query := flattenQuery(c.Request.URL.Query())
+		clientHeaders := cloneHeaders(c.Request.Header)
+		preferredProviderID := int64(0)
+		if strings.EqualFold(kind, "codex") {
+			preferredProviderID = projectManagerCodexProviderIDForRequest(clientHeaders, bodyBytes)
+		}
+
 		providers, err := prs.providerService.LoadProviders(kind)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load providers"})
@@ -389,8 +396,11 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 		active := make([]Provider, 0, len(providers))
 		skippedCount := 0
 		for _, provider := range providers {
-			// 基础过滤：enabled、URL、APIKey
-			if !provider.Enabled || provider.APIURL == "" || provider.APIKey == "" {
+			isProjectPreferredProvider := preferredProviderID > 0 && provider.ID == preferredProviderID
+
+			// 基础过滤：普通全局候选仍必须在首页启用；项目首选 provider 允许绕过 enabled。
+			// 这样“项目级置顶”只表达项目绑定意图，不要求用户为了某个项目把该 provider 加入全局轮询。
+			if (!isProjectPreferredProvider && !provider.Enabled) || provider.APIURL == "" || provider.APIKey == "" {
 				continue
 			}
 
@@ -417,6 +427,7 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 
 			active = append(active, provider)
 		}
+		active = prioritizeProjectPreferredProvider(active, preferredProviderID)
 
 		if len(active) == 0 {
 			if requestedModel != "" {
@@ -435,11 +446,14 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 		}
 		fmt.Println()
 
-		// 按 Level 分组
+		// 按 Level 分组。项目首选 provider 已在 active 中置顶；
+		// 这里用请求级 Level 0 表达“优先尝试”，不修改 provider 持久配置。
 		levelGroups := make(map[int][]Provider)
 		for _, provider := range active {
 			level := provider.Level
-			if level <= 0 {
+			if preferredProviderID > 0 && provider.ID == preferredProviderID {
+				level = 0
+			} else if level <= 0 {
 				level = 1 // 未配置或零值时默认为 Level 1
 			}
 			levelGroups[level] = append(levelGroups[level], provider)
@@ -454,8 +468,6 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 
 		fmt.Printf("[INFO] 共 %d 个 Level 分组：%v\n", len(levels), levels)
 
-		query := flattenQuery(c.Request.URL.Query())
-		clientHeaders := cloneHeaders(c.Request.Header)
 		prs.captureRequest(RequestCaptureContext{
 			Platform: kind,
 			Method:   c.Request.Method,

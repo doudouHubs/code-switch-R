@@ -21,12 +21,18 @@ const emit = defineEmits<{
   enter: [project: ProjectSummary]
   delete: [project: ProjectSummary]
   'open-folder': [project: ProjectSummary]
+  'set-codex-provider': [project: ProjectSummary]
   commit: [project: ProjectSummary]
 }>()
 
 const { t } = useI18n()
 
 const resolveProjectActions = (project: ProjectSummary): ProjectManagerCardMenuAction[] => [
+  {
+    key: `set-codex-provider:${project.id}`,
+    label: t('components.projectManager.card.setCodexProvider'),
+    accent: true,
+  },
   {
     key: `delete:${project.id}`,
     label: t('components.projectManager.card.deleteProject'),
@@ -37,6 +43,10 @@ const resolveProjectActions = (project: ProjectSummary): ProjectManagerCardMenuA
 const handleProjectAction = (project: ProjectSummary, actionKey: string) => {
   if (actionKey.startsWith('open-folder:')) {
     emit('open-folder', project)
+    return
+  }
+  if (actionKey.startsWith('set-codex-provider:')) {
+    emit('set-codex-provider', project)
     return
   }
   if (actionKey.startsWith('delete:')) {
@@ -65,6 +75,15 @@ const handleProjectAction = (project: ProjectSummary, actionKey: string) => {
       </div>
       <div class="card-copy">
         <p class="card-path">{{ project.path }}</p>
+        <p class="card-provider">
+          <span>{{ t('components.projectManager.card.codexProvider') }}</span>
+          <strong>
+            {{
+              project.codex_provider_name ||
+              t('components.projectManager.card.codexProviderDefault')
+            }}
+          </strong>
+        </p>
       </div>
       <div class="card-footer">
         <span class="card-time">{{ formatUpdatedAt(project.updated_at) }}</span>

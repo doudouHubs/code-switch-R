@@ -513,10 +513,24 @@
         "rename": "重命名",
         "deleteProject": "删除项目",
         "deleteSession": "删除会话",
+        "setCodexProvider": "设置 Codex 供应商",
+        "codexProvider": "Codex 供应商",
+        "codexProviderDefault": "默认路由",
         "openFolder": "打开目录",
         "openSession": "打开终端",
         "openingSession": "打开中...",
         "pathDetail": "看路径"
+      },
+      "provider": {
+        "title": "设置 Codex 供应商",
+        "hint": "为“{name}”选择一个 Codex 首选供应商。项目首选不需要在首页启用；不可用、不支持模型或被拉黑时，会自动回落到全局路由。",
+        "loading": "正在加载 Codex 供应商...",
+        "empty": "暂无 Codex 供应商配置。你仍可保存为默认路由。",
+        "defaultOption": "默认路由",
+        "defaultHint": "按全局 Level、轮询与黑名单策略选择供应商",
+        "disabledBadge": "未启用",
+        "save": "保存",
+        "saved": "Codex 供应商已更新"
       },
       "detail": {
         "eyebrow": "会话详情",

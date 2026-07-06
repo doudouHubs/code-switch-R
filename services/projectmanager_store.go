@@ -17,7 +17,8 @@ type projectManagerStore struct {
 }
 
 type projectManagerProjectMeta struct {
-	DisplayName string `json:"display_name"`
+	DisplayName     string `json:"display_name,omitempty"`
+	CodexProviderID int64  `json:"codex_provider_id,omitempty"`
 }
 
 type projectManagerSessionMeta struct {
@@ -63,10 +64,46 @@ func (s *projectManagerStoreService) saveProjectDisplayName(projectPath string, 
 	}
 
 	trimmed := strings.TrimSpace(displayName)
+	meta := store.Projects[key]
+	// 项目元数据由别名和 Codex provider 绑定共同组成。
+	// 修改别名时必须保留同一项目的 provider 绑定，否则一次重命名就会误删路由事实源。
+	meta.DisplayName = trimmed
 	if trimmed == "" {
+		if projectManagerProjectMetaIsEmpty(meta) {
+			delete(store.Projects, key)
+		} else {
+			store.Projects[key] = meta
+		}
+	} else {
+		store.Projects[key] = meta
+	}
+
+	return s.saveLocked(store)
+}
+
+func (s *projectManagerStoreService) saveProjectCodexProviderID(projectPath string, providerID int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	store, err := s.loadLocked()
+	if err != nil {
+		return err
+	}
+
+	key := normalizeProjectManagerProjectPath(projectPath)
+	if key == "" {
+		return errors.New("项目路径不能为空")
+	}
+
+	meta := store.Projects[key]
+	if providerID < 0 {
+		providerID = 0
+	}
+	meta.CodexProviderID = providerID
+	if projectManagerProjectMetaIsEmpty(meta) {
 		delete(store.Projects, key)
 	} else {
-		store.Projects[key] = projectManagerProjectMeta{DisplayName: trimmed}
+		store.Projects[key] = meta
 	}
 
 	return s.saveLocked(store)
@@ -154,6 +191,10 @@ func projectManagerSessionIsHidden(store projectManagerStore, sessionID string) 
 	}
 	meta, ok := store.Sessions[sessionID]
 	return ok && meta.Hidden
+}
+
+func projectManagerProjectMetaIsEmpty(meta projectManagerProjectMeta) bool {
+	return strings.TrimSpace(meta.DisplayName) == "" && meta.CodexProviderID <= 0
 }
 
 func (s *projectManagerStoreService) loadLocked() (projectManagerStore, error) {

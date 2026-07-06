@@ -1,9 +1,17 @@
 package services
 
 import (
+	"bytes"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/daodao97/xgo/xdb"
+	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 )
 
@@ -129,19 +137,19 @@ func TestModelMappingEndToEnd(t *testing.T) {
 	provider := Provider{
 		Name: "OpenRouter",
 		SupportedModels: map[string]bool{
-			"anthropic/claude-sonnet-4":     true,
-			"anthropic/claude-opus-4":       true,
-			"openai/gpt-4":                  true,
-			"google/gemini-pro":             true,
-			"meta-llama/llama-3.1-405b":     true,
-			"anthropic/claude-3.5-sonnet":   true,
-			"anthropic/claude-3.5-haiku":    true,
+			"anthropic/claude-sonnet-4":   true,
+			"anthropic/claude-opus-4":     true,
+			"openai/gpt-4":                true,
+			"google/gemini-pro":           true,
+			"meta-llama/llama-3.1-405b":   true,
+			"anthropic/claude-3.5-sonnet": true,
+			"anthropic/claude-3.5-haiku":  true,
 		},
 		ModelMapping: map[string]string{
-			"claude-*":                     "anthropic/claude-*",
-			"gpt-*":                        "openai/gpt-*",
-			"gemini-*":                     "google/gemini-*",
-			"llama-*":                      "meta-llama/llama-*",
+			"claude-*": "anthropic/claude-*",
+			"gpt-*":    "openai/gpt-*",
+			"gemini-*": "google/gemini-*",
+			"llama-*":  "meta-llama/llama-*",
 		},
 	}
 
@@ -250,6 +258,290 @@ func TestProviderConfigValidation(t *testing.T) {
 	errors = wildcardProvider.ValidateConfiguration()
 	if len(errors) != 0 {
 		t.Errorf("通配符配置不应有错误，但返回了: %v", errors)
+	}
+}
+
+func TestCodexProjectPreferredProviderRoutesFirst(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	home := setupRenameTestEnv(t)
+
+	projectDir := filepath.Join(home, "workspace", "preferred")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("创建项目目录失败: %v", err)
+	}
+
+	hits := map[string]int{}
+	globalServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits["global"]++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"provider":"global"}`))
+	}))
+	defer globalServer.Close()
+	projectServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits["project"]++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"provider":"project"}`))
+	}))
+	defer projectServer.Close()
+
+	providerService := NewProviderService()
+	if err := providerService.SaveProviders("codex", []Provider{
+		{ID: 1, Name: "Global", APIURL: globalServer.URL, APIKey: "sk-global", Enabled: true, Level: 1},
+		{ID: 2, Name: "Project", APIURL: projectServer.URL, APIKey: "sk-project", Enabled: true, Level: 10},
+	}); err != nil {
+		t.Fatalf("保存 provider 配置失败: %v", err)
+	}
+
+	projectManager := NewProjectManagerService()
+	if err := projectManager.SetProjectCodexProvider(projectDir, 2); err != nil {
+		t.Fatalf("SetProjectCodexProvider 失败: %v", err)
+	}
+
+	router := gin.New()
+	newTestRelayService(providerService).registerRoutes(router)
+
+	body := []byte(`{"model":"gpt-5-codex","stream":false}`)
+	req := httptest.NewRequest(http.MethodPost, "/responses", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	metadata, err := json.Marshal(codexTurnMetadata{
+		SessionID: "session-preferred",
+		Workspaces: map[string]json.RawMessage{
+			projectDir: json.RawMessage(`{}`),
+		},
+	})
+	if err != nil {
+		t.Fatalf("构造 Codex turn metadata 失败: %v", err)
+	}
+	req.Header.Set("X-Codex-Turn-Metadata", string(metadata))
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("期望状态码 200，got=%d body=%s", w.Code, w.Body.String())
+	}
+	if hits["project"] != 1 {
+		t.Fatalf("项目首选 provider 未命中，hits=%v", hits)
+	}
+	if hits["global"] != 0 {
+		t.Fatalf("首选 provider 成功时不应回落全局 provider，hits=%v", hits)
+	}
+	if got := gjson.Get(w.Body.String(), "provider").String(); got != "project" {
+		t.Fatalf("响应 provider 不对，want=project got=%q", got)
+	}
+}
+
+func TestCodexProjectPreferredProviderRoutesFirstWhenDisabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	home := setupRenameTestEnv(t)
+
+	projectDir := filepath.Join(home, "workspace", "disabled-preferred")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("创建项目目录失败: %v", err)
+	}
+
+	hits := map[string]int{}
+	globalServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits["global"]++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"provider":"global"}`))
+	}))
+	defer globalServer.Close()
+	projectServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits["project"]++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"provider":"project"}`))
+	}))
+	defer projectServer.Close()
+
+	providerService := NewProviderService()
+	if err := providerService.SaveProviders("codex", []Provider{
+		{ID: 1, Name: "Global", APIURL: globalServer.URL, APIKey: "sk-global", Enabled: true, Level: 1},
+		// 项目级首选允许不在首页启用，避免它被纳入其他项目的全局轮询。
+		{ID: 2, Name: "Project", APIURL: projectServer.URL, APIKey: "sk-project", Enabled: false, Level: 10},
+	}); err != nil {
+		t.Fatalf("保存 provider 配置失败: %v", err)
+	}
+
+	projectManager := NewProjectManagerService()
+	if err := projectManager.SetProjectCodexProvider(projectDir, 2); err != nil {
+		t.Fatalf("SetProjectCodexProvider 失败: %v", err)
+	}
+
+	router := gin.New()
+	newTestRelayService(providerService).registerRoutes(router)
+
+	body := []byte(`{"model":"gpt-5-codex","stream":false}`)
+	req := httptest.NewRequest(http.MethodPost, "/responses", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Project-Root-Path", projectDir)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("期望状态码 200，got=%d body=%s", w.Code, w.Body.String())
+	}
+	if hits["project"] != 1 {
+		t.Fatalf("未启用的项目首选 provider 应该被命中，hits=%v", hits)
+	}
+	if hits["global"] != 0 {
+		t.Fatalf("未启用项目首选成功时不应回落全局 provider，hits=%v", hits)
+	}
+	if got := gjson.Get(w.Body.String(), "provider").String(); got != "project" {
+		t.Fatalf("响应 provider 不对，want=project got=%q", got)
+	}
+}
+
+func TestCodexProjectPreferredProviderFallsBackWhenModelUnsupported(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	home := setupRenameTestEnv(t)
+
+	projectDir := filepath.Join(home, "workspace", "fallback")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("创建项目目录失败: %v", err)
+	}
+
+	hits := map[string]int{}
+	globalServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits["global"]++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"provider":"global"}`))
+	}))
+	defer globalServer.Close()
+	projectServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits["project"]++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"provider":"project"}`))
+	}))
+	defer projectServer.Close()
+
+	providerService := NewProviderService()
+	if err := providerService.SaveProviders("codex", []Provider{
+		{ID: 1, Name: "Global", APIURL: globalServer.URL, APIKey: "sk-global", Enabled: true, Level: 1},
+		{ID: 2, Name: "Project", APIURL: projectServer.URL, APIKey: "sk-project", Enabled: true, Level: 10, SupportedModels: map[string]bool{"project-only": true}},
+	}); err != nil {
+		t.Fatalf("保存 provider 配置失败: %v", err)
+	}
+
+	projectManager := NewProjectManagerService()
+	if err := projectManager.SetProjectCodexProvider(projectDir, 2); err != nil {
+		t.Fatalf("SetProjectCodexProvider 失败: %v", err)
+	}
+
+	router := gin.New()
+	newTestRelayService(providerService).registerRoutes(router)
+
+	body := []byte(`{"model":"gpt-5-codex","stream":false}`)
+	req := httptest.NewRequest(http.MethodPost, "/responses", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Project-Root-Path", projectDir)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("期望状态码 200，got=%d body=%s", w.Code, w.Body.String())
+	}
+	if hits["project"] != 0 {
+		t.Fatalf("不支持模型的项目首选 provider 不应被调用，hits=%v", hits)
+	}
+	if hits["global"] != 1 {
+		t.Fatalf("应回落到全局 provider，hits=%v", hits)
+	}
+	if got := gjson.Get(w.Body.String(), "provider").String(); got != "global" {
+		t.Fatalf("响应 provider 不对，want=global got=%q", got)
+	}
+}
+
+func TestCodexProjectPreferredProviderFallsBackWhenBlacklisted(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	home := setupRenameTestEnv(t)
+	if err := ensureBlacklistTables(); err != nil {
+		t.Fatalf("初始化黑名单表失败: %v", err)
+	}
+
+	projectDir := filepath.Join(home, "workspace", "blacklisted")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("创建项目目录失败: %v", err)
+	}
+
+	hits := map[string]int{}
+	globalServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits["global"]++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"provider":"global"}`))
+	}))
+	defer globalServer.Close()
+	projectServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits["project"]++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"provider":"project"}`))
+	}))
+	defer projectServer.Close()
+
+	providerService := NewProviderService()
+	if err := providerService.SaveProviders("codex", []Provider{
+		{ID: 1, Name: "Global", APIURL: globalServer.URL, APIKey: "sk-global", Enabled: true, Level: 1},
+		{ID: 2, Name: "Project", APIURL: projectServer.URL, APIKey: "sk-project", Enabled: true, Level: 10},
+	}); err != nil {
+		t.Fatalf("保存 provider 配置失败: %v", err)
+	}
+
+	db, err := xdb.DB("default")
+	if err != nil {
+		t.Fatalf("获取数据库失败: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE app_settings SET value = 'true' WHERE key = 'enable_blacklist'`); err != nil {
+		t.Fatalf("开启黑名单失败: %v", err)
+	}
+	_, err = db.Exec(
+		`INSERT INTO provider_blacklist (platform, provider_name, failure_count, blacklisted_at, blacklisted_until) VALUES (?, ?, ?, ?, ?)`,
+		"codex",
+		"Project",
+		3,
+		time.Now().UTC(),
+		time.Now().Add(time.Hour).UTC(),
+	)
+	if err != nil {
+		t.Fatalf("写入黑名单 fixture 失败: %v", err)
+	}
+
+	projectManager := NewProjectManagerService()
+	if err := projectManager.SetProjectCodexProvider(projectDir, 2); err != nil {
+		t.Fatalf("SetProjectCodexProvider 失败: %v", err)
+	}
+
+	router := gin.New()
+	newTestRelayService(providerService).registerRoutes(router)
+
+	body := []byte(`{"model":"gpt-5-codex","stream":false}`)
+	req := httptest.NewRequest(http.MethodPost, "/responses", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Project-Root-Path", projectDir)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("期望状态码 200，got=%d body=%s", w.Code, w.Body.String())
+	}
+	if hits["project"] != 0 {
+		t.Fatalf("被黑名单拦截的项目首选 provider 不应被调用，hits=%v", hits)
+	}
+	if hits["global"] != 1 {
+		t.Fatalf("应继续回落到全局 provider，hits=%v", hits)
+	}
+	if got := gjson.Get(w.Body.String(), "provider").String(); got != "global" {
+		t.Fatalf("响应 provider 不对，want=global got=%q", got)
 	}
 }
 
