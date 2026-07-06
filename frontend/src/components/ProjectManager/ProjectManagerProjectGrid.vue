@@ -14,12 +14,14 @@ defineProps<{
   projects: ProjectSummary[]
   formatUpdatedAt: (timestamp: number) => string
   isProjectDeleting: (projectId: string) => boolean
+  isProjectCommitting: (projectId: string) => boolean
 }>()
 
 const emit = defineEmits<{
   enter: [project: ProjectSummary]
   delete: [project: ProjectSummary]
   'open-folder': [project: ProjectSummary]
+  commit: [project: ProjectSummary]
 }>()
 
 const { t } = useI18n()
@@ -66,14 +68,29 @@ const handleProjectAction = (project: ProjectSummary, actionKey: string) => {
       </div>
       <div class="card-footer">
         <span class="card-time">{{ formatUpdatedAt(project.updated_at) }}</span>
-        <button
-          class="card-footer-action"
-          type="button"
-          :disabled="isProjectDeleting(project.id)"
-          @click.stop="emit('open-folder', project)"
-        >
-          {{ t('components.projectManager.card.openFolder') }}
-        </button>
+        <div class="card-footer-actions">
+          <button
+            class="card-footer-action"
+            type="button"
+            :disabled="isProjectDeleting(project.id)"
+            @click.stop="emit('open-folder', project)"
+          >
+            {{ t('components.projectManager.card.openFolder') }}
+          </button>
+          <button
+            :class="['card-footer-action', { 'is-loading': isProjectCommitting(project.id) }]"
+            type="button"
+            :disabled="isProjectDeleting(project.id) || isProjectCommitting(project.id)"
+            @click.stop="emit('commit', project)"
+          >
+            <span
+              v-if="isProjectCommitting(project.id)"
+              class="card-footer-spinner"
+              aria-hidden="true"
+            ></span>
+            <span>{{ t('components.projectManager.toolbar.aiCommit') }}</span>
+          </button>
+        </div>
       </div>
     </article>
   </section>

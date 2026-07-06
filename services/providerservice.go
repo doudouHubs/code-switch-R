@@ -327,7 +327,8 @@ func isPlaceholderClaudeBProvider(provider Provider) bool {
 
 	// 只删除缺少真实连接信息的 B，避免误删用户主动创建的真实 B 供应商。
 	// icon/tint/accent 这类展示字段不能证明 provider 可用；apiUrl/apiKey/officialSite 才是业务数据。
-	return strings.TrimSpace(provider.APIURL) == "" &&
+	apiURL := strings.TrimSpace(provider.APIURL)
+	return (apiURL == "" || strings.EqualFold(apiURL, "u")) &&
 		strings.TrimSpace(provider.APIKey) == "" &&
 		strings.TrimSpace(provider.Site) == ""
 }

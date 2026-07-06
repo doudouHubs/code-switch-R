@@ -18,6 +18,7 @@ func setupRenameTestEnv(t *testing.T) string {
 
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
+	t.Setenv("USERPROFILE", tmpHome)
 
 	configDir := filepath.Join(tmpHome, ".code-switch")
 	if err := os.MkdirAll(configDir, 0o755); err != nil {

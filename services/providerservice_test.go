@@ -117,6 +117,21 @@ func TestProviderServiceLoadProviders_KeepsRealClaudeB(t *testing.T) {
 	}
 }
 
+func TestProviderServiceLoadProviders_FiltersRenameTestFixtureClaudeB(t *testing.T) {
+	setupProviderFileTestEnv(t)
+	writeProviderFixture(t, "claude", []Provider{
+		{ID: 1, Name: "B", APIURL: "u"},
+	})
+
+	providers, err := NewProviderService().LoadProviders("claude")
+	if err != nil {
+		t.Fatalf("LoadProviders 失败: %v", err)
+	}
+	if len(providers) != 0 {
+		t.Fatalf("rename 测试夹具 B 不应进入真实 provider 列表，实际: %#v", providers)
+	}
+}
+
 func TestProviderServiceSaveProviders_DoesNotPersistPlaceholderClaudeB(t *testing.T) {
 	setupProviderFileTestEnv(t)
 	setupProviderAliasDB(t)

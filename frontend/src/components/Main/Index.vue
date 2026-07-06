@@ -1504,8 +1504,8 @@ interface GeminiProvider {
 }
 
 const tabs = [
-  { id: 'claude', label: 'Claude Code' },
   { id: 'codex', label: 'Codex' },
+  { id: 'claude', label: 'Claude Code' },
   { id: 'gemini', label: 'Gemini' },
   { id: 'others', label: '其他' },
 ] as const

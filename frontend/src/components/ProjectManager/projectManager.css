@@ -317,9 +317,16 @@
 .project-manager-page .project-grid,
 .project-manager-page .session-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 18px;
   margin-top: 20px;
+}
+
+.project-manager-page .project-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+}
+
+.project-manager-page .session-grid {
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
 }
 
 .project-manager-page .project-card,
@@ -441,11 +448,25 @@
 }
 
 .project-manager-page .card-footer {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(max-content, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
   margin-top: auto;
-  gap: 14px;
+  gap: 10px;
+}
+
+.project-manager-page .card-time {
+  justify-self: start;
+  white-space: nowrap;
+}
+
+.project-manager-page .card-footer-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  justify-self: end;
+  white-space: nowrap;
 }
 
 .project-manager-page .card-action-menu {
@@ -579,17 +600,17 @@
 
 .project-manager-page .card-footer-action {
   border: none;
-  padding: 8px 12px;
+  padding: 8px 8px;
   border-radius: 999px;
   background: rgba(37, 99, 235, 0.12);
   color: #2563eb;
-  font-size: 0.78rem;
+  font-size: 0.76rem;
   font-weight: 700;
   line-height: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 4px;
   cursor: pointer;
   transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease;
 }

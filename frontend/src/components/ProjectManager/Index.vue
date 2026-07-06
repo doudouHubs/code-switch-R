@@ -514,6 +514,8 @@ const isSessionOpening = (sessionID: string) =>
   openingSessionIds.value.includes(sessionID);
 const isProjectDeleting = (projectID: string) =>
   deletingProjectIds.value.includes(projectID);
+const isProjectCommitting = (projectID: string) =>
+  committingProjectId.value === projectID;
 const isSessionDeleting = (sessionID: string) =>
   deletingSessionIds.value.includes(sessionID);
 
@@ -573,9 +575,11 @@ onBeforeUnmount(() => {
       :projects="projectCards"
       :format-updated-at="formatUpdatedAt"
       :is-project-deleting="isProjectDeleting"
+      :is-project-committing="isProjectCommitting"
       @enter="enterProject"
       @delete="openDeleteModal('project', $event)"
       @open-folder="handleOpenProjectFolder"
+      @commit="handleRunProjectAICommit"
     />
 
     <ProjectManagerSessionGrid
