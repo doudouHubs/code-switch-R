@@ -698,7 +698,7 @@ onBeforeUnmount(() => {
       :title="t('components.projectManager.provider.title')"
       @close="closeProviderModal"
     >
-      <div class="rename-body">
+      <div class="project-provider-modal-body">
         <p class="rename-hint">
           {{
             t("components.projectManager.provider.hint", {

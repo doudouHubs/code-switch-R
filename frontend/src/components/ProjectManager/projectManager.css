@@ -698,16 +698,39 @@
   gap: 10px;
 }
 
-.project-manager-page .provider-picker-list {
-  display: grid;
+.project-provider-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.project-provider-modal-body .rename-hint {
+  margin: 0;
+  color: var(--mac-text-secondary);
+  line-height: 1.6;
+}
+
+.project-provider-modal-body .rename-actions {
+  display: flex;
+  justify-content: flex-end;
   gap: 10px;
 }
 
-.project-manager-page .provider-picker-option {
+.project-provider-modal-body .provider-picker-list {
+  display: grid;
+  gap: 10px;
+  max-height: min(52vh, 420px);
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.project-provider-modal-body .provider-picker-option {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 12px;
+  width: 100%;
+  margin: 0;
   padding: 12px 14px;
   border-radius: 16px;
   border: 1px solid rgba(17, 28, 47, 0.08);
@@ -715,32 +738,32 @@
   cursor: pointer;
 }
 
-.project-manager-page .provider-picker-option:hover {
+.project-provider-modal-body .provider-picker-option:hover {
   border-color: rgba(37, 99, 235, 0.22);
   background: rgba(37, 99, 235, 0.05);
 }
 
-.project-manager-page .provider-picker-option input {
+.project-provider-modal-body .provider-picker-option input {
   width: 16px;
   height: 16px;
   margin: 0;
   accent-color: #2563eb;
 }
 
-.project-manager-page .provider-picker-option span {
+.project-provider-modal-body .provider-picker-option span {
   display: grid;
   min-width: 0;
   gap: 4px;
 }
 
-.project-manager-page .provider-picker-option strong,
-.project-manager-page .provider-picker-option small {
+.project-provider-modal-body .provider-picker-option strong,
+.project-provider-modal-body .provider-picker-option small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.project-manager-page .provider-picker-option strong {
+.project-provider-modal-body .provider-picker-option strong {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -748,7 +771,7 @@
   font-size: 0.9rem;
 }
 
-.project-manager-page .provider-picker-disabled-badge {
+.project-provider-modal-body .provider-picker-disabled-badge {
   flex: 0 0 auto;
   padding: 2px 7px;
   border-radius: 999px;
@@ -759,39 +782,39 @@
   font-weight: 800;
 }
 
-.project-manager-page .provider-picker-option small,
-.project-manager-page .provider-picker-empty,
-.project-manager-page .provider-picker-state {
+.project-provider-modal-body .provider-picker-option small,
+.project-provider-modal-body .provider-picker-empty,
+.project-provider-modal-body .provider-picker-state {
   color: var(--mac-text-secondary);
   font-size: 0.82rem;
   line-height: 1.5;
 }
 
-.project-manager-page .provider-picker-empty,
-.project-manager-page .provider-picker-state {
+.project-provider-modal-body .provider-picker-empty,
+.project-provider-modal-body .provider-picker-state {
   margin: 0;
   padding: 12px 14px;
   border-radius: 16px;
   background: rgba(17, 28, 47, 0.04);
 }
 
-.dark .project-manager-page .provider-picker-option {
+.dark .project-provider-modal-body .provider-picker-option {
   border-color: rgba(255, 255, 255, 0.08);
   background: rgba(18, 25, 38, 0.72);
 }
 
-.dark .project-manager-page .provider-picker-option:hover {
+.dark .project-provider-modal-body .provider-picker-option:hover {
   border-color: rgba(125, 181, 255, 0.22);
   background: rgba(76, 128, 214, 0.14);
 }
 
-.dark .project-manager-page .provider-picker-disabled-badge {
+.dark .project-provider-modal-body .provider-picker-disabled-badge {
   background: rgba(245, 158, 11, 0.2);
   color: #fbbf24;
 }
 
-.dark .project-manager-page .provider-picker-empty,
-.dark .project-manager-page .provider-picker-state {
+.dark .project-provider-modal-body .provider-picker-empty,
+.dark .project-provider-modal-body .provider-picker-state {
   background: rgba(255, 255, 255, 0.06);
 }
 

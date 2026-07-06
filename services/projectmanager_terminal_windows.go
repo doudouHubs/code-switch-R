@@ -37,7 +37,7 @@ var (
 		return exec.Command(name, args...)
 	}
 	projectManagerWTCommandFactory       = hideWindowCmd
-	projectManagerAICommitCommandFactory = exec.Command
+	projectManagerAICommitCommandFactory = hideWindowCmd
 )
 
 func projectManagerProjectWindowID(projectPath string) string {
@@ -571,51 +571,49 @@ func startProjectManagerAICommitTerminal(projectPath string) error {
 		return err
 	}
 
-	scriptPath, err := createProjectManagerTerminalScript(
-		projectManagerProjectWindowID(projectPath)+"-ai-commit",
-		buildProjectManagerAICommitPowerShellCommand(projectPath),
-	)
-	if err != nil {
-		return err
-	}
-	wrapperPath, err := createProjectManagerAICommitTerminalWrapper(
-		projectManagerProjectWindowID(projectPath)+"-ai-commit",
-		shellExecutable,
-		scriptPath,
-	)
-	if err != nil {
-		return err
-	}
-
-	if wtPath := findProjectManagerWTExecutable(); wtPath != "" {
-		args := buildProjectManagerAICommitWTArgs(projectPath, projectManagerProjectWindowID(projectPath), wrapperPath)
-		cmd := projectManagerAICommitCommandFactory(wtPath, args...)
-		cmd.Dir = projectPath
-		return cmd.Start()
-	}
-
-	cmd := projectManagerAICommitCommandFactory(shellExecutable, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
+	cmd := projectManagerAICommitCommandFactory(shellExecutable, buildProjectManagerAICommitLauncherArgs(projectPath, shellExecutable)...)
 	cmd.Dir = projectPath
 	return cmd.Start()
 }
 
-func buildProjectManagerAICommitWTArgs(projectPath string, windowID string, wrapperPath string) []string {
+func buildProjectManagerAICommitLauncherArgs(projectPath string, shellExecutable string) []string {
 	return []string{
-		"-w", resolveProjectManagerWTWindowName(windowID),
-		"new-tab",
-		"-d", projectPath,
-		"--title", "[PM]AI-Commit",
-		"--",
-		"cmd.exe",
-		"/d",
-		"/c",
-		wrapperPath,
+		"-NoProfile",
+		"-EncodedCommand",
+		encodeProjectManagerPowerShellCommand(buildProjectManagerAICommitLaunchCommand(projectPath, shellExecutable)),
 	}
+}
+
+func buildProjectManagerAICommitLaunchCommand(projectPath string, shellExecutable string) string {
+	escapedProjectPath := escapeProjectManagerPowerShellSingleQuoted(projectPath)
+	escapedShellExecutable := escapeProjectManagerPowerShellSingleQuoted(shellExecutable)
+	innerArgs := []string{
+		"-NoProfile",
+		"-ExecutionPolicy",
+		"Bypass",
+		"-Command",
+		buildProjectManagerAICommitPowerShellCommand(projectPath),
+	}
+	quotedInnerArgs := make([]string, 0, len(innerArgs))
+	for _, arg := range innerArgs {
+		quotedInnerArgs = append(quotedInnerArgs, fmt.Sprintf("'%s'", escapeProjectManagerPowerShellSingleQuoted(arg)))
+	}
+
+	// 这里外层不能再直接从 GUI 进程裸起一个 pwsh 去跑 commit。
+	// 那样命令虽然可能在后台执行，但不会带出用户可见的终端窗口，体感就是“点了没反应”。
+	// 所以外层隐藏 pwsh 只负责 Start-Process，真正给用户看的任务窗口必须由内层可见 pwsh 拉起。
+	return fmt.Sprintf(
+		"$ErrorActionPreference = 'Stop'; Start-Process -FilePath '%s' -ArgumentList @(%s) -WorkingDirectory '%s' | Out-Null",
+		escapedShellExecutable,
+		strings.Join(quotedInnerArgs, ", "),
+		escapedProjectPath,
+	)
 }
 
 func buildProjectManagerAICommitPowerShellCommand(projectPath string) string {
 	escapedProjectPath := escapeProjectManagerPowerShellSingleQuoted(projectPath)
 	commitPrompt := escapeProjectManagerPowerShellSingleQuoted(`$commit commit本地文件`)
+	failureMessage := escapeProjectManagerPowerShellSingleQuoted("AI-Commit 执行失败，按 Enter 关闭窗口")
 
 	// 这里必须把 -p/--profile 放在 codex 根命令层，而不是 exec 子命令层。
 	// 当前用户机器上的 codex-cli 0.122.0 存在实测差异：
@@ -626,13 +624,14 @@ func buildProjectManagerAICommitPowerShellCommand(projectPath string) string {
 	// 用 --ephemeral 从源头禁止 Codex 落盘 session，比提交后再按时间猜测并删除“最新会话”安全得多，
 	// 避免用户同时开着普通 Codex 时被误删真实 .codex/sessions。
 	//
-	// AI-Commit 是一次性任务，用户明确要求执行完成自动关闭窗口。
-	// 所以这里不再 Read-Host 保留失败现场，退出码交给 wrapper/终端自然收口，避免空窗口挂住。
+	// 这里直接让可见 shell 自己跑完 commit 命令。
+	// 成功就 exit 0 自动关窗；失败再停留等待用户确认，这样不会为了“保留失败现场”额外再炸出第二个窗口。
 	return fmt.Sprintf(
-		"%s; Set-Location -LiteralPath '%s'; %s; exit $LASTEXITCODE",
+		"%s; Set-Location -LiteralPath '%s'; %s; $__exitCode = $LASTEXITCODE; if ($__exitCode -eq 0) { exit 0 }; Write-Host '%s'; Read-Host | Out-Null; exit $__exitCode",
 		buildProjectManagerCodexResolverPowerShell(),
 		escapedProjectPath,
 		buildProjectManagerCodexCommand("-p", "commit-fast", "exec", "--ephemeral", fmt.Sprintf("'%s'", commitPrompt)),
+		failureMessage,
 	)
 }
 
@@ -735,25 +734,6 @@ func createProjectManagerTerminalWrapper(prefix string, shellExecutable string, 
 	return wrapperPath, nil
 }
 
-func createProjectManagerAICommitTerminalWrapper(prefix string, shellExecutable string, scriptPath string) (string, error) {
-	root, err := projectManagerTerminalWrapperRootPath()
-	if err != nil {
-		return "", err
-	}
-
-	safePrefix := sanitizeProjectManagerTerminalScriptPrefix(prefix)
-	if safePrefix == "" {
-		safePrefix = "ai-commit"
-	}
-	wrapperPath := filepath.Join(root, fmt.Sprintf("%s-%d.cmd", safePrefix, time.Now().UnixNano()))
-	content := buildProjectManagerAICommitTerminalWrapperContent(shellExecutable, scriptPath)
-	if err := AtomicWriteText(wrapperPath, content); err != nil {
-		return "", err
-	}
-	projectManagerWriteTerminalWrapperDebug(wrapperPath, shellExecutable, scriptPath)
-	return wrapperPath, nil
-}
-
 func projectManagerTerminalScriptRootPath() (string, error) {
 	home, err := getUserHomeDir()
 	if err != nil {
@@ -788,17 +768,6 @@ func buildProjectManagerTerminalWrapperContent(shellExecutable string, scriptPat
 	return strings.Join([]string{
 		"@echo off",
 		fmt.Sprintf("call %s -NoExit -ExecutionPolicy Bypass -File %s", quoteProjectManagerCmdFileArgument(shellExecutable), quoteProjectManagerCmdFileArgument(scriptPath)),
-		"exit /b %ERRORLEVEL%",
-		"",
-	}, "\r\n")
-}
-
-func buildProjectManagerAICommitTerminalWrapperContent(shellExecutable string, scriptPath string) string {
-	// AI-Commit 是一次性命令，不能使用普通终端 wrapper 的 -NoExit。
-	// 否则 Codex 已经结束，PowerShell 还会空挂着，用户看到的就是“完成了但窗口不关”。
-	return strings.Join([]string{
-		"@echo off",
-		fmt.Sprintf("call %s -NoProfile -ExecutionPolicy Bypass -File %s", quoteProjectManagerCmdFileArgument(shellExecutable), quoteProjectManagerCmdFileArgument(scriptPath)),
 		"exit /b %ERRORLEVEL%",
 		"",
 	}, "\r\n")

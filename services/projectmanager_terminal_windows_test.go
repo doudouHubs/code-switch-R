@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -371,16 +370,14 @@ func TestBuildProjectManagerAICommitPowerShellCommand(t *testing.T) {
 		"Volta\\bin\\codex.cmd",
 		"Set-Location -LiteralPath 'F:\\GitlabProjects\\code-switch-R'",
 		"& $__codeSwitchCodexCommand --dangerously-bypass-approvals-and-sandbox -p commit-fast exec --ephemeral '$commit commit本地文件'",
-		"exit $LASTEXITCODE",
+		"if ($__exitCode -eq 0) { exit 0 }",
+		"Read-Host | Out-Null",
 	}
 
 	for _, part := range expectedParts {
 		if !strings.Contains(got, part) {
 			t.Fatalf("AI-Commit PowerShell 命令缺少片段 %q，got=%q", part, got)
 		}
-	}
-	if strings.Contains(got, "Read-Host") || strings.Contains(got, "-NoExit") {
-		t.Fatalf("AI-Commit 执行完成应自动关闭，命令不应保留交互等待，got=%q", got)
 	}
 }
 
@@ -495,62 +492,52 @@ func TestProjectManagerRequiredPwshExecutable(t *testing.T) {
 	})
 }
 
-func TestBuildProjectManagerAICommitWTArgs(t *testing.T) {
+func TestBuildProjectManagerAICommitLaunchCommand(t *testing.T) {
 	projectPath := `F:\GitlabProjects\code-switch-R`
-	windowID := projectManagerProjectWindowID(projectPath)
-	wrapperPath := `C:\Users\X1\.code-switch\project-manager-terminal-wrappers\ai-commit.cmd`
+	shellExecutable := `E:\software\PowerShell7\7\pwsh.exe`
 
-	got := buildProjectManagerAICommitWTArgs(projectPath, windowID, wrapperPath)
-	want := []string{
-		"-w", windowID,
-		"new-tab",
-		"-d", projectPath,
-		"--title", "[PM]AI-Commit",
-		"--",
-		"cmd.exe",
-		"/d",
-		"/c",
-		wrapperPath,
-	}
-
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("AI-Commit WT 参数不对，want=%v got=%v", want, got)
-	}
-}
-
-func TestBuildProjectManagerAICommitTerminalWrapperContent(t *testing.T) {
-	got := buildProjectManagerAICommitTerminalWrapperContent(
-		`E:\software\PowerShell7\7\pwsh.exe`,
-		`C:\Users\X1\.code-switch\project-manager-terminal-scripts\ai-commit.ps1`,
-	)
+	got := buildProjectManagerAICommitLaunchCommand(projectPath, shellExecutable)
 	expectedParts := []string{
-		"@echo off",
-		`call "E:\software\PowerShell7\7\pwsh.exe" -NoProfile -ExecutionPolicy Bypass -File "C:\Users\X1\.code-switch\project-manager-terminal-scripts\ai-commit.ps1"`,
-		"exit /b %ERRORLEVEL%",
+		"Start-Process -FilePath 'E:\\software\\PowerShell7\\7\\pwsh.exe'",
+		"-ArgumentList @(",
+		"'-NoProfile'",
+		"'-ExecutionPolicy'",
+		"'Bypass'",
+		"'-Command'",
+		"& $__codeSwitchCodexCommand --dangerously-bypass-approvals-and-sandbox -p commit-fast exec --ephemeral ''$commit commit本地文件''",
+		"-WorkingDirectory 'F:\\GitlabProjects\\code-switch-R'",
 	}
+
 	for _, part := range expectedParts {
 		if !strings.Contains(got, part) {
-			t.Fatalf("AI-Commit 自动关闭 wrapper 缺少片段 %q，got=%q", part, got)
+			t.Fatalf("AI-Commit 启动命令缺少片段 %q，got=%q", part, got)
 		}
-	}
-	if strings.Contains(got, "-NoExit") {
-		t.Fatalf("AI-Commit wrapper 不应使用 -NoExit，got=%q", got)
 	}
 }
 
-func TestStartProjectManagerAICommitTerminalUsesSingleWTWrapper(t *testing.T) {
-	home := setupProjectManagerTestHome(t)
+func TestBuildProjectManagerAICommitLauncherArgs(t *testing.T) {
+	projectPath := `F:\GitlabProjects\code-switch-R`
+	shellExecutable := `E:\software\PowerShell7\7\pwsh.exe`
+
+	got := buildProjectManagerAICommitLauncherArgs(projectPath, shellExecutable)
+	wantPrefix := []string{"-NoProfile", "-EncodedCommand"}
+	if !reflect.DeepEqual(got[:2], wantPrefix) {
+		t.Fatalf("AI-Commit launcher 参数前缀不对，want=%v got=%v", wantPrefix, got[:2])
+	}
+
+	decoded := decodeProjectManagerPowerShellEncodedCommand(t, got[2])
+	wantCommand := buildProjectManagerAICommitLaunchCommand(projectPath, shellExecutable)
+	if decoded != wantCommand {
+		t.Fatalf("AI-Commit launcher EncodedCommand 解码后不对，want=%q got=%q", wantCommand, decoded)
+	}
+}
+
+func TestStartProjectManagerAICommitTerminalUsesHiddenPwshLauncher(t *testing.T) {
 	originalLookPath := projectManagerLookPath
 	originalCommandContext := projectManagerAICommitCommandFactory
-	originalWTOnce := projectManagerWTExecutableOnce
-	originalWTPath := projectManagerWTExecutablePath
-	originalWTReady := projectManagerWTExecutableReady
 	t.Cleanup(func() {
 		projectManagerLookPath = originalLookPath
 		projectManagerAICommitCommandFactory = originalCommandContext
-		projectManagerWTExecutableOnce = originalWTOnce
-		projectManagerWTExecutablePath = originalWTPath
-		projectManagerWTExecutableReady = originalWTReady
 	})
 
 	projectManagerLookPath = func(file string) (string, error) {
@@ -559,46 +546,37 @@ func TestStartProjectManagerAICommitTerminalUsesSingleWTWrapper(t *testing.T) {
 		}
 		return `E:\software\PowerShell7\7\pwsh.exe`, nil
 	}
-	wtPath := filepath.Join(home, "AppData", "Local", "Microsoft", "WindowsApps", "wt.exe")
-	if err := AtomicWriteText(wtPath, "fake wt"); err != nil {
-		t.Fatalf("写入 fake wt 失败: %v", err)
-	}
-	t.Setenv("LOCALAPPDATA", filepath.Join(home, "AppData", "Local"))
-	projectManagerWTExecutableOnce = sync.Once{}
-	projectManagerWTExecutablePath = ""
-	projectManagerWTExecutableReady = false
 
-	var capturedName string
-	var capturedArgs []string
-	var capturedCmd *exec.Cmd
+	var captured *exec.Cmd
 	projectManagerAICommitCommandFactory = func(name string, args ...string) *exec.Cmd {
-		capturedName = name
-		capturedArgs = append([]string{name}, args...)
-		capturedCmd = exec.Command("cmd", "/c", "exit", "0")
-		return capturedCmd
+		captured = exec.Command("cmd", "/c", "exit", "0")
+		captured.Path = name
+		captured.Args = append([]string{name}, args...)
+		captured.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+		return captured
 	}
 
 	projectPath := `F:\GitlabProjects\code-switch-R`
 	if err := startProjectManagerAICommitTerminal(projectPath); err != nil {
 		t.Fatalf("期望启动入口构造成功，got err=%v", err)
 	}
-	if capturedName == "" {
+	if captured == nil {
 		t.Fatalf("期望捕获到启动命令")
 	}
-	if capturedName != wtPath {
-		t.Fatalf("AI-Commit 应只启动 WT，want=%q got=%q", wtPath, capturedName)
+	if captured.Path != `E:\software\PowerShell7\7\pwsh.exe` {
+		t.Fatalf("AI-Commit 启动器不对，want=%q got=%q", `E:\software\PowerShell7\7\pwsh.exe`, captured.Path)
 	}
-	if capturedCmd == nil || capturedCmd.Dir != projectPath {
-		t.Fatalf("AI-Commit 工作目录不对，want=%q got=%q", projectPath, capturedCmd.Dir)
+	if captured.Dir != projectPath {
+		t.Fatalf("AI-Commit 工作目录不对，want=%q got=%q", projectPath, captured.Dir)
 	}
-	joined := strings.Join(capturedArgs, " ")
-	if strings.Contains(joined, "Start-Process") || strings.Contains(joined, "-EncodedCommand") || strings.Contains(joined, "-NoExit") {
-		t.Fatalf("AI-Commit WT 启动参数不应再携带旧双窗口链路，got=%v", capturedArgs)
+	if len(captured.Args) != 4 {
+		t.Fatalf("AI-Commit launcher 参数数量不对，got=%v", captured.Args)
 	}
-	wantTail := []string{"cmd.exe", "/d", "/c"}
-	tailStart := len(capturedArgs) - 4
-	if tailStart < 0 || !reflect.DeepEqual(capturedArgs[tailStart:tailStart+3], wantTail) || !strings.HasSuffix(capturedArgs[len(capturedArgs)-1], ".cmd") {
-		t.Fatalf("AI-Commit WT 尾部应通过 cmd.exe /d /c wrapper 启动，got=%v", capturedArgs)
+	if captured.Args[1] != "-NoProfile" || captured.Args[2] != "-EncodedCommand" {
+		t.Fatalf("AI-Commit launcher 参数前缀不对，got=%v", captured.Args)
+	}
+	if captured.SysProcAttr == nil || !captured.SysProcAttr.HideWindow {
+		t.Fatalf("AI-Commit 外层启动器必须隐藏窗口，got=%+v", captured.SysProcAttr)
 	}
 }
 
