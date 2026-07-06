@@ -369,7 +369,7 @@ func TestBuildProjectManagerAICommitPowerShellCommand(t *testing.T) {
 		"$__codeSwitchCodexCommand = 'codex'",
 		"Volta\\bin\\codex.cmd",
 		"Set-Location -LiteralPath 'F:\\GitlabProjects\\code-switch-R'",
-		"& $__codeSwitchCodexCommand --dangerously-bypass-approvals-and-sandbox -p commit-fast exec '$commit commit本地文件'",
+		"& $__codeSwitchCodexCommand --dangerously-bypass-approvals-and-sandbox -p commit-fast exec --ephemeral '$commit commit本地文件'",
 		"if ($__exitCode -eq 0) { exit 0 }",
 		"Read-Host | Out-Null",
 	}
@@ -504,7 +504,7 @@ func TestBuildProjectManagerAICommitLaunchCommand(t *testing.T) {
 		"'-ExecutionPolicy'",
 		"'Bypass'",
 		"'-Command'",
-		"& $__codeSwitchCodexCommand --dangerously-bypass-approvals-and-sandbox -p commit-fast exec ''$commit commit本地文件''",
+		"& $__codeSwitchCodexCommand --dangerously-bypass-approvals-and-sandbox -p commit-fast exec --ephemeral ''$commit commit本地文件''",
 		"-WorkingDirectory 'F:\\GitlabProjects\\code-switch-R'",
 	}
 

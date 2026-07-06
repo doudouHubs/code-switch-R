@@ -620,6 +620,9 @@ func buildProjectManagerAICommitPowerShellCommand(projectPath string) string {
 	// `codex exec -p commit-fast ...` 会报 profile not found，
 	// 但 `codex -p commit-fast exec ...` 才能正确加载 `CODEX_HOME/commit-fast.config.toml`。
 	// 所以这里明确使用根命令 profile 写法，别再赌 CLI 子命令参数继承。
+	// AI-Commit 是一次性自动提交任务，不是用户要继续 resume 的交互会话。
+	// 用 --ephemeral 从源头禁止 Codex 落盘 session，比提交后再按时间猜测并删除“最新会话”安全得多，
+	// 避免用户同时开着普通 Codex 时被误删真实 .codex/sessions。
 	//
 	// 这里直接让可见 shell 自己跑完 commit 命令。
 	// 成功就 exit 0 自动关窗；失败再停留等待用户确认，这样不会为了“保留失败现场”额外再炸出第二个窗口。
@@ -627,7 +630,7 @@ func buildProjectManagerAICommitPowerShellCommand(projectPath string) string {
 		"%s; Set-Location -LiteralPath '%s'; %s; $__exitCode = $LASTEXITCODE; if ($__exitCode -eq 0) { exit 0 }; Write-Host '%s'; Read-Host | Out-Null; exit $__exitCode",
 		buildProjectManagerCodexResolverPowerShell(),
 		escapedProjectPath,
-		buildProjectManagerCodexCommand("-p", "commit-fast", "exec", fmt.Sprintf("'%s'", commitPrompt)),
+		buildProjectManagerCodexCommand("-p", "commit-fast", "exec", "--ephemeral", fmt.Sprintf("'%s'", commitPrompt)),
 		failureMessage,
 	)
 }

@@ -1061,7 +1061,7 @@ func TestBuildProjectManagerAICommitPowerShellCommandUsesDangerousBypassFlag(t *
 	projectPath := filepath.Join(t.TempDir(), "workspace", "commit-fast")
 	command := buildProjectManagerAICommitPowerShellCommand(projectPath)
 
-	if !strings.Contains(command, "& $__codeSwitchCodexCommand --dangerously-bypass-approvals-and-sandbox -p commit-fast exec '$commit commit本地文件'") {
+	if !strings.Contains(command, "& $__codeSwitchCodexCommand --dangerously-bypass-approvals-and-sandbox -p commit-fast exec --ephemeral '$commit commit本地文件'") {
 		t.Fatalf("AI-Commit 命令未按预期附带危险权限参数，got=%q", command)
 	}
 	if strings.Contains(command, "codex exec -p commit-fast") {
