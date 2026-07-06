@@ -535,6 +535,87 @@ func TestProjectManagerGetSnapshotPrefersRolloutWorkspaceRoots(t *testing.T) {
 	}
 }
 
+func TestProjectManagerGetSnapshotFallsBackToSessionMetaCwd(t *testing.T) {
+	home := setupProjectManagerTestHome(t)
+	service := NewProjectManagerService()
+
+	sessionID := "019ecab9-rollout-cwd-fallback-case"
+	projectDir := filepath.Join(home, "workspace", "codex-rule-system")
+	writeProjectManagerSessionIndex(t, home, sessionID, "Cwd Fallback Session", "2026-06-16T10:01:14Z")
+	writeProjectManagerCodexSessionFixture(
+		t,
+		home,
+		sessionID,
+		projectDir,
+		"只带 session_meta.cwd 的真实 Codex 历史会话也必须进入项目列表。",
+		"2026-06-16T10:00:00Z",
+		"2026-06-16T10:02:00Z",
+	)
+
+	snapshot, err := service.GetSnapshot()
+	if err != nil {
+		t.Fatalf("GetSnapshot 失败: %v", err)
+	}
+	if len(snapshot.Sessions) != 1 {
+		t.Fatalf("会话数不对，want=1 got=%d", len(snapshot.Sessions))
+	}
+
+	session := snapshot.Sessions[0]
+	normalizedProjectDir := normalizeProjectManagerProjectPath(projectDir)
+	if session.ProjectPath != normalizedProjectDir {
+		t.Fatalf("session_meta.cwd 应作为项目路径兜底，want=%q got=%q", normalizedProjectDir, session.ProjectPath)
+	}
+	if session.ProjectSourceHint != "cwd" {
+		t.Fatalf("项目来源提示不对，want=%q got=%q", "cwd", session.ProjectSourceHint)
+	}
+	if len(snapshot.Projects) != 1 || snapshot.Projects[0].Path != normalizedProjectDir {
+		t.Fatalf("项目列表未包含 cwd 兜底项目，projects=%+v", snapshot.Projects)
+	}
+}
+
+func TestProjectManagerGetSnapshotKeepsLargeRolloutSession(t *testing.T) {
+	home := setupProjectManagerTestHome(t)
+	service := NewProjectManagerService()
+
+	sessionID := "019ecab9-large-rollout-case"
+	projectDir := filepath.Join(home, "workspace", "large-rollout")
+	writeProjectManagerSessionIndex(t, home, sessionID, "Large Rollout Session", "2026-06-16T10:01:14Z")
+
+	// 真实 Codex rollout 会把长日志、工具输出或系统上下文写成单行 JSON。
+	// 这个用例锁住“超长非关键行不应让整条会话被跳过”的扫描契约。
+	largePayload := strings.Repeat("x", 2*1024*1024)
+	writeProjectManagerCodexSessionFixture(
+		t,
+		home,
+		sessionID,
+		projectDir,
+		"前面的 cwd 已经足够识别项目，后面的超长行不能把它冲掉。",
+		"2026-06-16T10:00:00Z",
+		"2026-06-16T10:02:00Z",
+	)
+	sessionPath := filepath.Join(home, ".codex", "sessions", "2026", "06", "15", "20260615-"+sessionID+".jsonl")
+	if err := os.WriteFile(sessionPath, []byte(strings.Join([]string{
+		fmt.Sprintf(`{"type":"session_meta","timestamp":"2026-06-16T10:00:00Z","payload":{"id":%q,"cwd":%q,"timestamp":"2026-06-16T10:00:00Z"}}`, sessionID, projectDir),
+		`{"type":"response_item","timestamp":"2026-06-16T10:01:00Z","payload":{"type":"function_call_output","output":"` + largePayload + `"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:02:00Z","payload":{"type":"user_message","message":"超长 rollout 测试"}}`,
+	}, "\n")), 0o644); err != nil {
+		t.Fatalf("写入超长 rollout fixture 失败: %v", err)
+	}
+
+	snapshot, err := service.GetSnapshot()
+	if err != nil {
+		t.Fatalf("GetSnapshot 失败: %v", err)
+	}
+
+	normalizedProjectDir := normalizeProjectManagerProjectPath(projectDir)
+	for _, session := range snapshot.Sessions {
+		if session.ID == sessionID && session.ProjectPath == normalizedProjectDir {
+			return
+		}
+	}
+	t.Fatalf("超长 rollout 会话没有进入项目快照，sessions=%+v", snapshot.Sessions)
+}
+
 func TestExtractProjectManagerProjectRootFromValue(t *testing.T) {
 	projectDir := filepath.Join(t.TempDir(), "workspace", "delta")
 
@@ -1175,6 +1256,21 @@ func TestProjectManagerGetSnapshotWritesAndReusesSnapshotCache(t *testing.T) {
 	}
 	if secondSnapshot.SnapshotUpdatedAt != firstSnapshot.SnapshotUpdatedAt {
 		t.Fatalf("缓存命中时 snapshot 时间不应变化，first=%d second=%d", firstSnapshot.SnapshotUpdatedAt, secondSnapshot.SnapshotUpdatedAt)
+	}
+}
+
+func TestProjectManagerSnapshotCacheRejectsOldVersion(t *testing.T) {
+	cache := newProjectManagerSnapshotCache()
+	cache.Version = projectManagerSnapshotCacheVersion - 1
+	cache.Snapshot = ProjectManagerSnapshot{
+		Sessions: []SessionSummary{
+			{ID: "stale-session", ProjectPath: unknownProjectCaptureID},
+		},
+		SnapshotUpdatedAt: 1,
+	}
+
+	if cache.isUsable() {
+		t.Fatalf("旧版本 snapshot cache 不应继续可用，version=%d current=%d", cache.Version, projectManagerSnapshotCacheVersion)
 	}
 }
 

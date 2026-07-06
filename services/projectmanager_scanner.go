@@ -739,7 +739,9 @@ func scanProjectManagerCodexSessionFileDetails(path string) (sessionID string, c
 
 	scanner := bufio.NewScanner(file)
 	buf := make([]byte, 0, 4*1024)
-	scanner.Buffer(buf, 1024*1024)
+	// rollout 里可能包含大块 tool output / instructions，单行超过 Go Scanner 默认限制很常见。
+	// 如果这里继续卡 1MB，文件会在后半段报 token too long，前面已经读到的 session_meta.cwd 也会被整文件丢弃。
+	scanner.Buffer(buf, 16*1024*1024)
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -747,10 +749,12 @@ func scanProjectManagerCodexSessionFileDetails(path string) (sessionID string, c
 			continue
 		}
 
-		if projectPath == "" {
+		if projectPath == "" || projectSource == "cwd" {
 			if roots := extractProjectManagerWorkspaceRootsFromLine(line); len(roots) > 0 {
 				// rollout 的 turn_context 才会稳定给出 workspace_roots；
 				// 这层必须在逐行扫描时统一处理，不能只绑死在 session_meta 分支里。
+				// 如果前面已经用 session_meta.cwd 做了兜底，这里也必须覆盖回来，
+				// 否则多工作区会被较早出现但不够精确的 cwd 抢走项目归属。
 				projectPath = roots[0]
 				projectSource = "workspace_roots"
 			}
@@ -762,6 +766,13 @@ func scanProjectManagerCodexSessionFileDetails(path string) (sessionID string, c
 			}
 			if cwd == "" {
 				cwd = strings.TrimSpace(gjson.Get(line, "payload.cwd").String())
+			}
+			if projectPath == "" && cwd != "" {
+				// Codex 历史会话的 session_meta.cwd 是最早出现的项目上下文。
+				// workspace_roots 仍然优先，因为多工作区场景 cwd 可能是家目录；但如果整条会话没有
+				// workspace_roots，再不把 cwd 落成 ProjectPath，项目列表就会漏掉这类真实项目。
+				projectPath = cwd
+				projectSource = "cwd"
 			}
 			if ts := strings.TrimSpace(gjson.Get(line, "payload.timestamp").String()); ts != "" {
 				if parsed, parseErr := time.Parse(time.RFC3339Nano, ts); parseErr == nil && parsed.After(updatedAt) {
