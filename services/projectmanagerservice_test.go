@@ -277,8 +277,8 @@ func TestProjectManagerCodexProviderBindingSurvivesRenameAndEnrichesSnapshot(t *
 	writeProjectManagerSessionIndex(t, home, sessionID, "Provider Bound", "2026-06-15T09:40:00Z")
 	writeProjectManagerCodexSessionFixture(t, home, sessionID, projectDir, "绑定项目供应商", "2026-06-15T09:58:00Z", "2026-06-15T10:00:00Z")
 
-	if err := service.SetProjectCodexProvider(projectDir, 22); err != nil {
-		t.Fatalf("SetProjectCodexProvider 失败: %v", err)
+	if err := service.SetProjectCodexProviderRouting(projectDir, 22, false); err != nil {
+		t.Fatalf("SetProjectCodexProviderRouting 失败: %v", err)
 	}
 	if err := service.RenameProject(projectDir, "Provider Bound Alias"); err != nil {
 		t.Fatalf("RenameProject 失败: %v", err)
@@ -296,6 +296,9 @@ func TestProjectManagerCodexProviderBindingSurvivesRenameAndEnrichesSnapshot(t *
 	if meta.CodexProviderID != 22 {
 		t.Fatalf("项目 provider 绑定未保留，want=22 got=%d", meta.CodexProviderID)
 	}
+	if !meta.CodexProviderAutoFallbackDisabled {
+		t.Fatalf("项目 provider auto=false 未保留")
+	}
 
 	snapshot, err := service.RefreshProjectIndex()
 	if err != nil {
@@ -311,6 +314,9 @@ func TestProjectManagerCodexProviderBindingSurvivesRenameAndEnrichesSnapshot(t *
 	if project.CodexProviderName != "Project Fast" {
 		t.Fatalf("快照 provider 名称不对，want=%q got=%q", "Project Fast", project.CodexProviderName)
 	}
+	if project.CodexProviderAuto {
+		t.Fatalf("快照 provider auto 不对，want=false got=true")
+	}
 
 	if err := service.ClearProjectCodexProvider(projectDir); err != nil {
 		t.Fatalf("ClearProjectCodexProvider 失败: %v", err)
@@ -321,6 +327,9 @@ func TestProjectManagerCodexProviderBindingSurvivesRenameAndEnrichesSnapshot(t *
 	}
 	if got := store.Projects[normalizedProject].CodexProviderID; got != 0 {
 		t.Fatalf("清除 provider 绑定失败，got=%d", got)
+	}
+	if got := store.Projects[normalizedProject].CodexProviderAutoFallbackDisabled; got {
+		t.Fatalf("清除 provider 后不应保留 auto=false")
 	}
 }
 

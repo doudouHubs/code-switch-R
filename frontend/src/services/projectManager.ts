@@ -11,6 +11,7 @@ export interface ProjectSummary {
   session_count: number;
   codex_provider_id?: number;
   codex_provider_name?: string;
+  codex_provider_auto: boolean;
 }
 
 export interface SessionSummary {
@@ -89,11 +90,13 @@ export const renameSession = async (
 export const setProjectCodexProvider = async (
   projectPath: string,
   providerID: number,
+  autoFallback = true,
 ): Promise<void> => {
   await Call.ByName(
-    `${PROJECT_MANAGER_SERVICE}.SetProjectCodexProvider`,
+    `${PROJECT_MANAGER_SERVICE}.SetProjectCodexProviderRouting`,
     projectPath,
     providerID,
+    autoFallback,
   );
 };
 

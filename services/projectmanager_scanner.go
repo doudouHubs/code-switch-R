@@ -58,6 +58,7 @@ type projectManagerProjectState struct {
 	Sessions          []*projectManagerSessionState
 	CodexProviderID   int64
 	CodexProviderName string
+	CodexProviderAuto bool
 }
 
 func (s *ProjectManagerService) scanProjectManagerData() (projectManagerAggregate, error) {
@@ -385,12 +386,14 @@ func (s *ProjectManagerService) groupProjectManagerProjects(
 				displayName = strings.TrimSpace(meta.DisplayName)
 			}
 			codexProviderID, codexProviderName := resolveProjectManagerCodexProvider(store, projectPath)
+			codexProviderAuto := resolveProjectManagerCodexProviderAutoFallback(store, projectPath)
 			project = &projectManagerProjectState{
 				Path:              projectPath,
 				SourceName:        sourceName,
 				DisplayName:       displayName,
 				CodexProviderID:   codexProviderID,
 				CodexProviderName: codexProviderName,
+				CodexProviderAuto: codexProviderAuto,
 			}
 			projects[projectPath] = project
 		}
@@ -858,6 +861,7 @@ func buildProjectManagerProjectSummaries(projects map[string]*projectManagerProj
 			SessionCount:      len(project.Sessions),
 			CodexProviderID:   project.CodexProviderID,
 			CodexProviderName: project.CodexProviderName,
+			CodexProviderAuto: project.CodexProviderAuto,
 		})
 	}
 	return result

@@ -5,6 +5,11 @@ import (
 	"strings"
 )
 
+type projectManagerCodexProviderRouting struct {
+	ProviderID   int64
+	AutoFallback bool
+}
+
 func resolveProjectManagerCodexProvider(store projectManagerStore, projectPath string) (int64, string) {
 	providerID := projectManagerCodexProviderIDFromStore(store, projectPath)
 	if providerID <= 0 {
@@ -24,6 +29,18 @@ func resolveProjectManagerCodexProvider(store projectManagerStore, projectPath s
 	return providerID, strings.TrimSpace(provider.Name)
 }
 
+func resolveProjectManagerCodexProviderAutoFallback(store projectManagerStore, projectPath string) bool {
+	key := normalizeProjectManagerProjectPath(projectPath)
+	if key == "" {
+		return true
+	}
+	meta, ok := store.Projects[key]
+	if !ok || meta.CodexProviderID <= 0 {
+		return true
+	}
+	return !meta.CodexProviderAutoFallbackDisabled
+}
+
 func projectManagerCodexProviderIDFromStore(store projectManagerStore, projectPath string) int64 {
 	key := normalizeProjectManagerProjectPath(projectPath)
 	if key == "" {
@@ -40,9 +57,13 @@ func projectManagerCodexProviderIDFromStore(store projectManagerStore, projectPa
 }
 
 func projectManagerCodexProviderIDForRequest(headers map[string]string, body []byte) int64 {
+	return projectManagerCodexProviderRoutingForRequest(headers, body).ProviderID
+}
+
+func projectManagerCodexProviderRoutingForRequest(headers map[string]string, body []byte) projectManagerCodexProviderRouting {
 	projectPath := detectProjectManagerCodexProjectPath(headers, body)
 	if projectPath == "" || projectPath == unknownProjectCaptureID {
-		return 0
+		return projectManagerCodexProviderRouting{AutoFallback: true}
 	}
 
 	// relay 是高频请求路径，只读取项目绑定事实源，不在这里修复/迁移配置。
@@ -50,9 +71,16 @@ func projectManagerCodexProviderIDForRequest(headers map[string]string, body []b
 	store, err := newProjectManagerStoreService().load()
 	if err != nil {
 		fmt.Printf("[ProjectProviderRouting] 读取项目 provider 绑定失败: %v\n", err)
-		return 0
+		return projectManagerCodexProviderRouting{AutoFallback: true}
 	}
-	return projectManagerCodexProviderIDFromStore(store, projectPath)
+	providerID := projectManagerCodexProviderIDFromStore(store, projectPath)
+	if providerID <= 0 {
+		return projectManagerCodexProviderRouting{AutoFallback: true}
+	}
+	return projectManagerCodexProviderRouting{
+		ProviderID:   providerID,
+		AutoFallback: resolveProjectManagerCodexProviderAutoFallback(store, projectPath),
+	}
 }
 
 func detectProjectManagerCodexProjectPath(headers map[string]string, body []byte) string {
@@ -63,6 +91,18 @@ func detectProjectManagerCodexProjectPath(headers map[string]string, body []byte
 		}
 	}
 	return normalizeProjectManagerProjectPath(projectID)
+}
+
+func restrictToProjectPreferredProvider(active []Provider, preferredProviderID int64, autoFallback bool) []Provider {
+	if preferredProviderID <= 0 || autoFallback {
+		return active
+	}
+	for _, provider := range active {
+		if provider.ID == preferredProviderID {
+			return []Provider{provider}
+		}
+	}
+	return nil
 }
 
 func prioritizeProjectPreferredProvider(active []Provider, preferredProviderID int64) []Provider {

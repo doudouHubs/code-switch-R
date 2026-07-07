@@ -24,6 +24,7 @@ const loading = ref(false)
 const pruning = ref(false)
 const openingTerminal = ref(false)
 const selecting = ref(false)
+const userOnlyMode = ref(false)
 const detail = ref<SessionConversationDetail | null>(null)
 const expandedIDs = ref<string[]>([])
 const selectedIDs = ref<string[]>([])
@@ -35,6 +36,14 @@ const deleteState = reactive({
 })
 
 const messageRowElements = new Map<string, HTMLElement>()
+
+type ConversationDisplayEntry = {
+  id: string
+  role: SessionConversationItem['role']
+  item: SessionConversationItem
+  items: SessionConversationItem[]
+  agentGroup: boolean
+}
 
 const sessionID = computed(() => {
   const raw = route.params.sessionId
@@ -64,6 +73,95 @@ const selectionToggleLabel = computed(() =>
 const headerTitle = computed(() =>
   detail.value?.session.display_name || t('components.projectManager.detail.loadingTitle'),
 )
+const userOnlyModeLabel = computed(() =>
+  userOnlyMode.value
+    ? t('components.projectManager.detail.showFullConversation')
+    : t('components.projectManager.detail.showUserOnly'),
+)
+const getConversationContent = (item: SessionConversationItem) => {
+  if (userOnlyMode.value && item.role === 'agent') {
+    return t('components.projectManager.detail.agentCollapsed')
+  }
+  return item.content
+}
+
+const displayEntries = computed<ConversationDisplayEntry[]>(() => {
+  if (!userOnlyMode.value) {
+    return items.value.map(item => ({
+      id: item.id,
+      role: item.role,
+      item,
+      items: [item],
+      agentGroup: false,
+    }))
+  }
+
+  const repliesByUser = new Map<string, SessionConversationItem[]>()
+  const emittedReplyGroups = new Set<string>()
+  for (const item of items.value) {
+    if (item.role !== 'agent' || !item.reply_for) {
+      continue
+    }
+    const replies = repliesByUser.get(item.reply_for) ?? []
+    replies.push(item)
+    repliesByUser.set(item.reply_for, replies)
+  }
+
+  const result: ConversationDisplayEntry[] = []
+  for (const item of items.value) {
+    if (item.role === 'user') {
+      result.push({
+        id: item.id,
+        role: item.role,
+        item,
+        items: [item],
+        agentGroup: false,
+      })
+
+      const replies = repliesByUser.get(item.id) ?? []
+      if (replies.length > 0) {
+        // 一轮用户问题可能产生多段 Agent 回复。仅用户模式下必须按轮次聚合，
+        // 否则多个 Agent 气泡仍然刷屏，用户扫问题脉络时还是一脑袋包。
+        result.push({
+          id: `agent-group-${item.id}`,
+          role: 'agent',
+          item: replies[0],
+          items: replies,
+          agentGroup: true,
+        })
+        emittedReplyGroups.add(item.id)
+      }
+      continue
+    }
+
+    if (item.role === 'agent' && item.reply_for) {
+      continue
+    }
+
+    result.push({
+      id: item.id,
+      role: item.role,
+      item,
+      items: [item],
+      agentGroup: item.role === 'agent',
+    })
+  }
+
+  for (const [userID, replies] of repliesByUser) {
+    if (emittedReplyGroups.has(userID) || replies.length === 0) {
+      continue
+    }
+    result.push({
+      id: `agent-group-${userID}`,
+      role: 'agent',
+      item: replies[0],
+      items: replies,
+      agentGroup: true,
+    })
+  }
+
+  return result
+})
 
 const formatUpdatedAt = (timestamp: number) => {
   if (!timestamp) {
@@ -76,6 +174,9 @@ const findRepliesForUser = (userID: string) =>
   items.value.filter(item => item.reply_for === userID)
 
 const shouldShowExpand = (item: SessionConversationItem) => {
+  if (userOnlyMode.value) {
+    return false
+  }
   if (item.role !== 'agent') {
     return false
   }
@@ -97,34 +198,38 @@ const estimateMessageUnits = (content: string) => {
 }
 
 const estimateMessageSize = (index: number) => {
-  const item = items.value[index]
-  if (!item) {
+  const entry = displayEntries.value[index]
+  if (!entry) {
     return 120
   }
 
+  const item = entry.item
   const expandable = shouldShowExpand(item)
-  const visibleUnits = item.role === 'agent' && expandable && !isExpanded(item.id)
+  const compactAgent = entry.agentGroup || (userOnlyMode.value && item.role === 'agent')
+  const visibleUnits = compactAgent
+    ? 1
+    : item.role === 'agent' && expandable && !isExpanded(item.id)
     ? Math.min(estimateMessageUnits(item.content), 3)
     : estimateMessageUnits(item.content)
 
-  const baseHeight = item.role === 'user' ? 92 : 104
-  return baseHeight + visibleUnits * 24 + (expandable ? 24 : 0)
+  const baseHeight = compactAgent ? 72 : item.role === 'user' ? 92 : 104
+  return baseHeight + visibleUnits * 24 + (expandable && !compactAgent ? 24 : 0)
 }
 
 const virtualizer = useVirtualizer<HTMLElement, HTMLElement>(computed(() => ({
-  count: items.value.length,
+  count: displayEntries.value.length,
   getScrollElement: () => conversationViewport.value,
   estimateSize: estimateMessageSize,
   overscan: 10,
-  getItemKey: index => items.value[index]?.id ?? index,
+  getItemKey: index => displayEntries.value[index]?.id ?? index,
 })))
 
 const virtualMessages = computed(() => {
-  const next: Array<{ row: VirtualItem; item: SessionConversationItem }> = []
+  const next: Array<{ row: VirtualItem; entry: ConversationDisplayEntry }> = []
   for (const row of virtualizer.value.getVirtualItems()) {
-    const item = items.value[row.index]
-    if (item) {
-      next.push({ row, item })
+    const entry = displayEntries.value[row.index]
+    if (entry) {
+      next.push({ row, entry })
     }
   }
   return next
@@ -140,6 +245,26 @@ const waitForNextLayout = () => new Promise<void>((resolve) => {
   window.requestAnimationFrame(() => resolve())
 })
 
+const scrollConversationToLatest = async () => {
+  const latestIndex = displayEntries.value.length - 1
+  if (latestIndex < 0) {
+    return
+  }
+
+  // TanStack Virtual 的滚动元素必须是真正拥有滚动条的容器。
+  // 这里连续等两帧，是为了等 Vue 渲染、虚拟列表测量和浏览器布局全部落定；
+  // 否则首次进入详情时容易只滚到估算位置，右侧看起来还停在半路。
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    virtualizer.value.scrollToIndex(latestIndex, { align: 'end' })
+    await waitForNextLayout()
+    conversationViewport.value?.scrollTo({
+      top: conversationViewport.value.scrollHeight,
+      behavior: 'auto',
+    })
+    await waitForNextLayout()
+  }
+}
+
 const setMessageRowRef = (messageID: string, element: unknown) => {
   if (!(element instanceof HTMLElement)) {
     messageRowElements.delete(messageID)
@@ -153,7 +278,7 @@ const setMessageRowRef = (messageID: string, element: unknown) => {
 const getVirtualRowKey = (row: VirtualItem) =>
   typeof row.key === 'bigint' ? row.key.toString() : row.key
 
-const syncVirtualConversationLayout = async (options: { anchorItemID?: string; resetScroll?: boolean } = {}) => {
+const syncVirtualConversationLayout = async (options: { anchorItemID?: string; scrollToLatest?: boolean } = {}) => {
   const scrollElement = conversationViewport.value
   const anchorElement = options.anchorItemID ? messageRowElements.get(options.anchorItemID) : null
   let anchorTop: number | null = null
@@ -168,9 +293,8 @@ const syncVirtualConversationLayout = async (options: { anchorItemID?: string; r
   virtualizer.value.measure()
   await waitForNextLayout()
 
-  if (options.resetScroll && scrollElement) {
-    scrollElement.scrollTop = 0
-    virtualizer.value.scrollToOffset(0)
+  if (options.scrollToLatest && scrollElement) {
+    await scrollConversationToLatest()
   }
 
   if (anchorTop === null || !scrollElement || !options.anchorItemID) {
@@ -208,6 +332,9 @@ const toggleExpanded = async (item: SessionConversationItem) => {
 }
 
 const handleBubbleKeydown = (item: SessionConversationItem, event: KeyboardEvent) => {
+  if (userOnlyMode.value) {
+    return
+  }
   if (item.role !== 'agent') {
     return
   }
@@ -219,6 +346,8 @@ const handleBubbleKeydown = (item: SessionConversationItem, event: KeyboardEvent
 }
 
 const isSelected = (itemID: string) => selectedSet.value.has(itemID)
+const isEntrySelected = (entry: ConversationDisplayEntry) =>
+  entry.items.every(item => selectedSet.value.has(item.id))
 
 const setSelected = (itemID: string, checked: boolean) => {
   const next = new Set(selectedIDs.value)
@@ -242,16 +371,26 @@ const toggleSelected = (item: SessionConversationItem, checked: boolean) => {
   setSelected(item.id, checked)
 }
 
-const handleCheckboxChange = (item: SessionConversationItem, event: Event) => {
-  const target = event.target as HTMLInputElement
-  toggleSelected(item, target.checked)
+const toggleSelectedEntry = (entry: ConversationDisplayEntry, checked: boolean) => {
+  if (entry.agentGroup) {
+    for (const item of entry.items) {
+      setSelected(item.id, checked)
+    }
+    return
+  }
+  toggleSelected(entry.item, checked)
 }
 
-const handleMessageEntryClick = (item: SessionConversationItem) => {
+const handleCheckboxChange = (entry: ConversationDisplayEntry, event: Event) => {
+  const target = event.target as HTMLInputElement
+  toggleSelectedEntry(entry, target.checked)
+}
+
+const handleMessageEntryClick = (entry: ConversationDisplayEntry) => {
   if (!selecting.value) {
     return
   }
-  toggleSelected(item, !isSelected(item.id))
+  toggleSelectedEntry(entry, !isEntrySelected(entry))
 }
 
 const resetSelectionState = () => {
@@ -320,8 +459,18 @@ const loadDetail = async () => {
   }
 
   if (loaded) {
-    await syncVirtualConversationLayout({ resetScroll: true })
+    await syncVirtualConversationLayout({ scrollToLatest: true })
   }
+}
+
+const toggleUserOnlyMode = async () => {
+  userOnlyMode.value = !userOnlyMode.value
+  if (userOnlyMode.value) {
+    // 仅用户模式的业务目标是快速扫用户问题脉络，Agent 回答统一压成一行；
+    // 已展开状态需要清空，否则回到普通模式时会出现“模式切换前的旧展开状态”干扰阅读。
+    expandedIDs.value = []
+  }
+  await syncVirtualConversationLayout({ scrollToLatest: true })
 }
 
 const goBack = () => {
@@ -427,6 +576,15 @@ onMounted(() => {
         <button
           class="detail-header-text-button"
           type="button"
+          :class="{ active: userOnlyMode }"
+          :disabled="loading || !detail"
+          @click="toggleUserOnlyMode"
+        >
+          {{ userOnlyModeLabel }}
+        </button>
+        <button
+          class="detail-header-text-button"
+          type="button"
           :class="{ active: selecting }"
           :disabled="loading || !detail || pruning"
           @click="toggleSelectionMode"
@@ -454,50 +612,66 @@ onMounted(() => {
         <article
           v-for="entry in virtualMessages"
           :key="getVirtualRowKey(entry.row)"
-          :ref="element => setMessageRowRef(entry.item.id, element)"
+          :ref="element => setMessageRowRef(entry.entry.id, element)"
           class="conversation-virtual-row"
           :data-index="entry.row.index"
           :style="{ transform: `translateY(${entry.row.start}px)` }"
         >
           <div
-            :class="['message-entry', `is-${entry.item.role}`, { selected: isSelected(entry.item.id), 'is-selecting': selecting }]"
+            :class="['message-entry', `is-${entry.entry.role}`, { selected: isEntrySelected(entry.entry), 'is-selecting': selecting }]"
             :role="selecting ? 'checkbox' : undefined"
-            :aria-checked="selecting ? isSelected(entry.item.id) : undefined"
+            :aria-checked="selecting ? isEntrySelected(entry.entry) : undefined"
             :tabindex="selecting ? 0 : undefined"
-            @click="handleMessageEntryClick(entry.item)"
-            @keydown.enter.prevent="handleMessageEntryClick(entry.item)"
-            @keydown.space.prevent="handleMessageEntryClick(entry.item)"
+            @click="handleMessageEntryClick(entry.entry)"
+            @keydown.enter.prevent="handleMessageEntryClick(entry.entry)"
+            @keydown.space.prevent="handleMessageEntryClick(entry.entry)"
           >
             <label v-if="selecting" class="message-select-slot" @click.stop>
               <input
                 type="checkbox"
-                :checked="isSelected(entry.item.id)"
-                @change="handleCheckboxChange(entry.item, $event)"
+                :checked="isEntrySelected(entry.entry)"
+                @change="handleCheckboxChange(entry.entry, $event)"
               />
             </label>
 
             <div class="message-stack">
               <div
-                :class="['conversation-bubble', `is-${entry.item.role}`, { clickable: entry.item.role === 'agent', selected: isSelected(entry.item.id) }]"
-                :role="!selecting && entry.item.role === 'agent' ? 'button' : undefined"
-                :tabindex="!selecting && entry.item.role === 'agent' ? 0 : undefined"
-                @click="!selecting && toggleExpanded(entry.item)"
-                @keydown="!selecting && handleBubbleKeydown(entry.item, $event)"
+                :class="[
+                  'conversation-bubble',
+                  `is-${entry.entry.role}`,
+                  {
+                    clickable: entry.entry.role === 'agent' && !userOnlyMode && !entry.entry.agentGroup,
+                    selected: isEntrySelected(entry.entry),
+                    compacted: entry.entry.agentGroup || (userOnlyMode && entry.entry.role === 'agent'),
+                  },
+                ]"
+                :role="!selecting && !userOnlyMode && !entry.entry.agentGroup && entry.entry.role === 'agent' ? 'button' : undefined"
+                :tabindex="!selecting && !userOnlyMode && !entry.entry.agentGroup && entry.entry.role === 'agent' ? 0 : undefined"
+                @click="!selecting && !userOnlyMode && !entry.entry.agentGroup && toggleExpanded(entry.entry.item)"
+                @keydown="!selecting && !userOnlyMode && !entry.entry.agentGroup && handleBubbleKeydown(entry.entry.item, $event)"
               >
-                <span :class="['conversation-content', { clamped: entry.item.role === 'agent' && !isExpanded(entry.item.id) }]">
-                  {{ entry.item.content }}
+                <span
+                  :class="[
+                    'conversation-content',
+                    {
+                      clamped: entry.entry.role === 'agent' && !userOnlyMode && !entry.entry.agentGroup && !isExpanded(entry.entry.item.id),
+                      compacted: entry.entry.agentGroup || (userOnlyMode && entry.entry.role === 'agent'),
+                    },
+                  ]"
+                >
+                  {{ entry.entry.agentGroup ? t('components.projectManager.detail.agentCollapsedCount', { count: entry.entry.items.length }) : getConversationContent(entry.entry.item) }}
                 </span>
                 <span
-                  v-if="shouldShowExpand(entry.item)"
+                  v-if="!entry.entry.agentGroup && shouldShowExpand(entry.entry.item)"
                   class="conversation-toggle"
                 >
-                  {{ isExpanded(entry.item.id) ? t('components.projectManager.detail.showLess') : t('components.projectManager.detail.showMore') }}
+                  {{ isExpanded(entry.entry.item.id) ? t('components.projectManager.detail.showLess') : t('components.projectManager.detail.showMore') }}
                 </span>
               </div>
 
-              <div :class="['message-meta', `is-${entry.item.role}`]">
-                <span>{{ entry.item.role === 'user' ? t('components.projectManager.detail.userLabel') : t('components.projectManager.detail.agentLabel') }}</span>
-                <span>{{ formatUpdatedAt(entry.item.timestamp) }}</span>
+              <div :class="['message-meta', `is-${entry.entry.role}`]">
+                <span>{{ entry.entry.role === 'user' ? t('components.projectManager.detail.userLabel') : t('components.projectManager.detail.agentLabel') }}</span>
+                <span>{{ formatUpdatedAt(entry.entry.item.timestamp) }}</span>
               </div>
             </div>
           </div>

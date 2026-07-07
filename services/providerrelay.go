@@ -383,8 +383,11 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 		query := flattenQuery(c.Request.URL.Query())
 		clientHeaders := cloneHeaders(c.Request.Header)
 		preferredProviderID := int64(0)
+		preferredAutoFallback := true
 		if strings.EqualFold(kind, "codex") {
-			preferredProviderID = projectManagerCodexProviderIDForRequest(clientHeaders, bodyBytes)
+			routing := projectManagerCodexProviderRoutingForRequest(clientHeaders, bodyBytes)
+			preferredProviderID = routing.ProviderID
+			preferredAutoFallback = routing.AutoFallback
 		}
 
 		providers, err := prs.providerService.LoadProviders(kind)
@@ -428,6 +431,7 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 			active = append(active, provider)
 		}
 		active = prioritizeProjectPreferredProvider(active, preferredProviderID)
+		active = restrictToProjectPreferredProvider(active, preferredProviderID, preferredAutoFallback)
 
 		if len(active) == 0 {
 			if requestedModel != "" {

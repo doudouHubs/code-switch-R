@@ -17,8 +17,9 @@ type projectManagerStore struct {
 }
 
 type projectManagerProjectMeta struct {
-	DisplayName     string `json:"display_name,omitempty"`
-	CodexProviderID int64  `json:"codex_provider_id,omitempty"`
+	DisplayName                       string `json:"display_name,omitempty"`
+	CodexProviderID                   int64  `json:"codex_provider_id,omitempty"`
+	CodexProviderAutoFallbackDisabled bool   `json:"codex_provider_auto_fallback_disabled,omitempty"`
 }
 
 type projectManagerSessionMeta struct {
@@ -100,6 +101,40 @@ func (s *projectManagerStoreService) saveProjectCodexProviderID(projectPath stri
 		providerID = 0
 	}
 	meta.CodexProviderID = providerID
+	if providerID <= 0 {
+		meta.CodexProviderAutoFallbackDisabled = false
+	}
+	if projectManagerProjectMetaIsEmpty(meta) {
+		delete(store.Projects, key)
+	} else {
+		store.Projects[key] = meta
+	}
+
+	return s.saveLocked(store)
+}
+
+func (s *projectManagerStoreService) saveProjectCodexProviderRouting(projectPath string, providerID int64, autoFallback bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	store, err := s.loadLocked()
+	if err != nil {
+		return err
+	}
+
+	key := normalizeProjectManagerProjectPath(projectPath)
+	if key == "" {
+		return errors.New("项目路径不能为空")
+	}
+
+	meta := store.Projects[key]
+	if providerID < 0 {
+		providerID = 0
+	}
+	meta.CodexProviderID = providerID
+	// 默认值必须保持自动回落，避免老项目因为新增字段突然变成硬锁。
+	// 只有用户显式关闭 auto 时才写 disabled=true；清回默认路由时同步移除该策略。
+	meta.CodexProviderAutoFallbackDisabled = providerID > 0 && !autoFallback
 	if projectManagerProjectMetaIsEmpty(meta) {
 		delete(store.Projects, key)
 	} else {
@@ -194,7 +229,9 @@ func projectManagerSessionIsHidden(store projectManagerStore, sessionID string) 
 }
 
 func projectManagerProjectMetaIsEmpty(meta projectManagerProjectMeta) bool {
-	return strings.TrimSpace(meta.DisplayName) == "" && meta.CodexProviderID <= 0
+	return strings.TrimSpace(meta.DisplayName) == "" &&
+		meta.CodexProviderID <= 0 &&
+		!meta.CodexProviderAutoFallbackDisabled
 }
 
 func (s *projectManagerStoreService) loadLocked() (projectManagerStore, error) {

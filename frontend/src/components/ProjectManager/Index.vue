@@ -73,6 +73,7 @@ const providerModalState = reactive({
   projectPath: "",
   projectName: "",
   selectedProviderId: 0,
+  autoFallback: true,
 });
 const deleteState = reactive({
   open: false,
@@ -249,6 +250,7 @@ const openProviderModal = async (project: ProjectSummary) => {
   providerModalState.projectPath = project.path;
   providerModalState.projectName = project.display_name;
   providerModalState.selectedProviderId = project.codex_provider_id ?? 0;
+  providerModalState.autoFallback = project.codex_provider_auto !== false;
   providerModalState.open = true;
 
   if (codexProviders.value.length > 0) {
@@ -342,7 +344,11 @@ const saveProjectCodexProvider = async () => {
   providerSaving.value = true;
   try {
     if (providerId > 0) {
-      await setProjectCodexProvider(projectPath, providerId);
+      await setProjectCodexProvider(
+        projectPath,
+        providerId,
+        providerModalState.autoFallback,
+      );
     } else {
       await clearProjectCodexProvider(projectPath);
     }
@@ -358,6 +364,7 @@ const saveProjectCodexProvider = async () => {
         ...project,
         codex_provider_id: providerId || undefined,
         codex_provider_name: providerName || undefined,
+        codex_provider_auto: providerId > 0 ? providerModalState.autoFallback : true,
       };
     });
     providerModalState.open = false;
@@ -748,6 +755,22 @@ onBeforeUnmount(() => {
             {{ t("components.projectManager.provider.empty") }}
           </p>
         </div>
+
+        <label
+          class="provider-auto-switch"
+          :class="{ 'is-disabled': providerModalState.selectedProviderId <= 0 }"
+        >
+          <span>
+            <strong>{{ t("components.projectManager.provider.autoLabel") }}</strong>
+            <small>{{ t("components.projectManager.provider.autoHint") }}</small>
+          </span>
+          <input
+            v-model="providerModalState.autoFallback"
+            type="checkbox"
+            :disabled="providerModalState.selectedProviderId <= 0"
+          />
+          <i aria-hidden="true"></i>
+        </label>
 
         <footer class="form-actions rename-actions">
           <BaseButton variant="outline" type="button" @click="closeProviderModal">

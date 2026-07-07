@@ -22,6 +22,7 @@ type ProjectSummary struct {
 	SessionCount      int    `json:"session_count"`
 	CodexProviderID   int64  `json:"codex_provider_id,omitempty"`
 	CodexProviderName string `json:"codex_provider_name,omitempty"`
+	CodexProviderAuto bool   `json:"codex_provider_auto"`
 }
 
 type SessionSummary struct {
@@ -138,6 +139,10 @@ func (s *ProjectManagerService) RenameProject(projectPath string, displayName st
 }
 
 func (s *ProjectManagerService) SetProjectCodexProvider(projectPath string, providerID int64) error {
+	return s.SetProjectCodexProviderRouting(projectPath, providerID, true)
+}
+
+func (s *ProjectManagerService) SetProjectCodexProviderRouting(projectPath string, providerID int64, autoFallback bool) error {
 	projectPath = normalizeProjectManagerProjectPath(projectPath)
 	if projectPath == "" {
 		return errors.New("项目路径不能为空")
@@ -153,7 +158,7 @@ func (s *ProjectManagerService) SetProjectCodexProvider(projectPath string, prov
 		}
 	}
 
-	if err := s.store.saveProjectCodexProviderID(projectPath, providerID); err != nil {
+	if err := s.store.saveProjectCodexProviderRouting(projectPath, providerID, autoFallback); err != nil {
 		return err
 	}
 	s.invalidateProjectManagerSnapshotCache()
@@ -161,7 +166,7 @@ func (s *ProjectManagerService) SetProjectCodexProvider(projectPath string, prov
 }
 
 func (s *ProjectManagerService) ClearProjectCodexProvider(projectPath string) error {
-	return s.SetProjectCodexProvider(projectPath, 0)
+	return s.SetProjectCodexProviderRouting(projectPath, 0, true)
 }
 
 func (s *ProjectManagerService) RenameSession(sessionID string, displayName string) error {
