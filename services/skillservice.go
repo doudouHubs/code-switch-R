@@ -31,6 +31,7 @@ const (
 	// 安装位置常量
 	skillLocationUser    = "user"
 	skillLocationProject = "project"
+	skillLocationPlugin  = "plugin"
 )
 
 var (
@@ -50,16 +51,22 @@ type Skill struct {
 	Installed   bool   `json:"installed"`
 
 	// 新增字段
-	Enabled         bool   `json:"enabled"`                     // 是否启用
-	InjectEnabled   bool   `json:"inject_enabled"`              // 是否允许自动注入
-	LicenseFile     string `json:"license_file,omitempty"`      // 许可证文件路径
-	Platform        string `json:"platform,omitempty"`          // "claude" | "codex"
-	InstallLocation string `json:"install_location,omitempty"`  // "user" | "project"
+	Enabled         bool   `json:"enabled"`                    // 是否启用
+	InjectEnabled   bool   `json:"inject_enabled"`             // 是否允许自动注入
+	LicenseFile     string `json:"license_file,omitempty"`     // 许可证文件路径
+	Platform        string `json:"platform,omitempty"`         // "claude" | "codex"
+	InstallLocation string `json:"install_location,omitempty"` // "user" | "project"
+	Readonly        bool   `json:"readonly,omitempty"`         // 是否只读
 
 	// 仓库字段
 	RepoOwner  string `json:"repo_owner,omitempty"`
 	RepoName   string `json:"repo_name,omitempty"`
 	RepoBranch string `json:"repo_branch,omitempty"`
+
+	// Codex plugin 缓存来源字段
+	PluginSource  string `json:"plugin_source,omitempty"`
+	PluginName    string `json:"plugin_name,omitempty"`
+	PluginVersion string `json:"plugin_version,omitempty"`
 }
 
 type skillMetadata struct {
@@ -117,8 +124,8 @@ type installRequest struct {
 	RepoOwner string `json:"repo_owner"`
 	RepoName  string `json:"repo_name"`
 	Branch    string `json:"repo_branch"`
-	Platform  string `json:"platform"`  // "claude" | "codex"
-	Location  string `json:"location"`  // "user" | "project"
+	Platform  string `json:"platform"` // "claude" | "codex"
+	Location  string `json:"location"` // "user" | "project"
 }
 
 type SkillService struct {
@@ -154,6 +161,8 @@ func (ss *SkillService) getInstallPath(platform, location string) (string, error
 			return "", fmt.Errorf("获取工作目录失败: %w", err)
 		}
 		basePath = cwd
+	case skillLocationPlugin:
+		return "", errors.New("plugin 技能属于只读缓存，不支持作为安装目录使用")
 	case skillLocationUser:
 		fallthrough
 	default:
@@ -210,6 +219,11 @@ func (ss *SkillService) ListSkillsForPlatform(platform string) ([]Skill, error) 
 	if err == nil {
 		projectSkills := ss.scanSkillsDirectory(projectPath, platform, skillLocationProject, codexEnabledByPath)
 		allSkills = append(allSkills, projectSkills...)
+	}
+
+	if platform == skillPlatformCodex {
+		pluginSkills := ss.scanCodexPluginSkills(codexEnabledByPath)
+		allSkills = append(allSkills, pluginSkills...)
 	}
 
 	// 按名称排序
@@ -278,6 +292,206 @@ func (ss *SkillService) scanSkillsDirectory(dir, platform, location string, code
 		}
 
 		skills = append(skills, skill)
+	}
+
+	return skills
+}
+
+func (ss *SkillService) getCodexPluginCachePath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("获取用户目录失败: %w", err)
+	}
+	return filepath.Join(home, ".codex", "plugins", "cache"), nil
+}
+
+func (ss *SkillService) getCodexPluginSkillPath(key string) (string, error) {
+	parts := strings.Split(strings.TrimSpace(key), ":")
+	if len(parts) != 6 || parts[0] != skillPlatformCodex || parts[1] != skillLocationPlugin {
+		return "", errors.New("plugin 技能 key 格式无效")
+	}
+
+	for _, part := range parts[2:] {
+		if !isSafePathSegment(part) {
+			return "", fmt.Errorf("plugin 技能 key 包含非法路径段: %s", part)
+		}
+	}
+
+	cacheRoot, err := ss.getCodexPluginCachePath()
+	if err != nil {
+		return "", err
+	}
+
+	sourceName := parts[2]
+	pluginName := parts[3]
+	version := parts[4]
+	skillName := parts[5]
+	versionPath := filepath.Join(cacheRoot, sourceName, pluginName, version)
+
+	candidates := []string{
+		filepath.Join(versionPath, "skills", skillName),
+		filepath.Join(versionPath, ".codex", "skills", skillName),
+	}
+	for _, candidate := range candidates {
+		if !isPathInsideRoot(cacheRoot, candidate) {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(candidate, "SKILL.md")); err == nil {
+			return candidate, nil
+		}
+	}
+
+	return "", fmt.Errorf("未找到 plugin 技能: %s", key)
+}
+
+func isSafePathSegment(segment string) bool {
+	segment = strings.TrimSpace(segment)
+	if segment == "" || segment == "." || segment == ".." {
+		return false
+	}
+	return !strings.ContainsAny(segment, `/\`)
+}
+
+func isPathInsideRoot(root, target string) bool {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	targetAbs, err := filepath.Abs(target)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(rootAbs, targetAbs)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != "" && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)))
+}
+
+func (ss *SkillService) scanCodexPluginSkills(codexEnabledByPath map[string]bool) []Skill {
+	cacheRoot, err := ss.getCodexPluginCachePath()
+	if err != nil {
+		return nil
+	}
+	return ss.scanCodexPluginSkillsFromCache(cacheRoot, codexEnabledByPath)
+}
+
+func (ss *SkillService) scanCodexPluginSkillsFromCache(cacheRoot string, codexEnabledByPath map[string]bool) []Skill {
+	var skills []Skill
+
+	sourceEntries, err := os.ReadDir(cacheRoot)
+	if err != nil {
+		return skills
+	}
+
+	for _, sourceEntry := range sourceEntries {
+		if !sourceEntry.IsDir() {
+			continue
+		}
+		sourceName := sourceEntry.Name()
+		sourcePath := filepath.Join(cacheRoot, sourceName)
+
+		pluginEntries, err := os.ReadDir(sourcePath)
+		if err != nil {
+			continue
+		}
+		for _, pluginEntry := range pluginEntries {
+			if !pluginEntry.IsDir() {
+				continue
+			}
+			pluginName := pluginEntry.Name()
+			pluginPath := filepath.Join(sourcePath, pluginName)
+
+			versionEntries, err := os.ReadDir(pluginPath)
+			if err != nil {
+				continue
+			}
+			for _, versionEntry := range versionEntries {
+				if !versionEntry.IsDir() {
+					continue
+				}
+				version := versionEntry.Name()
+				versionPath := filepath.Join(pluginPath, version)
+
+				// Codex plugin 支持两种技能布局：插件根目录 skills，以及插件内嵌的 .codex/skills。
+				// 两者都属于插件缓存产物，按只读用户技能展示，避免误走用户安装目录的写操作。
+				for _, skillsRoot := range []string{
+					filepath.Join(versionPath, "skills"),
+					filepath.Join(versionPath, ".codex", "skills"),
+				} {
+					skills = append(skills, ss.scanCodexPluginSkillsRoot(
+						skillsRoot,
+						sourceName,
+						pluginName,
+						version,
+						codexEnabledByPath,
+					)...)
+				}
+			}
+		}
+	}
+
+	return skills
+}
+
+func (ss *SkillService) scanCodexPluginSkillsRoot(
+	skillsRoot string,
+	sourceName string,
+	pluginName string,
+	version string,
+	codexEnabledByPath map[string]bool,
+) []Skill {
+	var skills []Skill
+
+	entries, err := os.ReadDir(skillsRoot)
+	if err != nil {
+		return skills
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		skillPath := filepath.Join(skillsRoot, entry.Name())
+		if _, err := os.Stat(filepath.Join(skillPath, "SKILL.md")); err != nil {
+			continue
+		}
+
+		meta, injectEnabled, err := ss.readSkillMetadataExtended(skillPath, skillPlatformCodex)
+		if err != nil {
+			continue
+		}
+
+		name := strings.TrimSpace(meta.Name)
+		if name == "" {
+			name = entry.Name()
+		}
+
+		licenseFile := ""
+		for _, lf := range []string{"LICENSE", "LICENSE.txt", "LICENSE.md"} {
+			if _, err := os.Stat(filepath.Join(skillPath, lf)); err == nil {
+				licenseFile = lf
+				break
+			}
+		}
+
+		skills = append(skills, Skill{
+			Key:             fmt.Sprintf("codex:plugin:%s:%s:%s:%s", sourceName, pluginName, version, entry.Name()),
+			Name:            name,
+			Description:     strings.TrimSpace(meta.Description),
+			Directory:       entry.Name(),
+			Installed:       true,
+			Enabled:         ss.resolveSkillEnabled(skillPlatformCodex, skillPath, codexEnabledByPath, meta),
+			InjectEnabled:   injectEnabled,
+			LicenseFile:     licenseFile,
+			Platform:        skillPlatformCodex,
+			InstallLocation: skillLocationPlugin,
+			Readonly:        true,
+			PluginSource:    sourceName,
+			PluginName:      pluginName,
+			PluginVersion:   version,
+		})
 	}
 
 	return skills
@@ -456,6 +670,9 @@ func (ss *SkillService) ToggleSkillEnabled(directory, platform, location string,
 	if location == "" {
 		location = skillLocationUser
 	}
+	if location == skillLocationPlugin {
+		return errors.New("plugin 技能为只读缓存，不支持切换启用状态")
+	}
 
 	if platform != skillPlatformCodex {
 		return ss.toggleSkillLegacy(directory, platform, location, enabled)
@@ -503,6 +720,9 @@ func (ss *SkillService) ToggleSkillInjection(directory, platform, location strin
 	}
 	if location == "" {
 		location = skillLocationUser
+	}
+	if location == skillLocationPlugin {
+		return errors.New("plugin 技能为只读缓存，不支持切换注入状态")
 	}
 
 	if platform != skillPlatformCodex {
@@ -735,6 +955,9 @@ func (ss *SkillService) InstallSkill(req installRequest) error {
 	if req.Location == "" {
 		req.Location = skillLocationUser
 	}
+	if req.Location == skillLocationPlugin {
+		return errors.New("plugin 技能为只读缓存，不支持安装到该位置")
+	}
 
 	store, err := ss.loadStore()
 	if err != nil {
@@ -847,6 +1070,9 @@ func (ss *SkillService) UninstallSkillEx(directory, platform, location string) e
 	}
 	if location == "" {
 		location = skillLocationUser
+	}
+	if location == skillLocationPlugin {
+		return errors.New("plugin 技能为只读缓存，不支持卸载")
 	}
 
 	installPath, err := ss.getInstallPath(platform, location)
@@ -1169,6 +1395,20 @@ func (ss *SkillService) GetSkillContent(directory, platform, location string) (s
 		return "", errors.New("skill directory 不能为空")
 	}
 
+	if platform == skillPlatformCodex && location == skillLocationPlugin {
+		// Plugin 技能可能与用户技能同名，必须用完整 key 定位来源。
+		// 这里仅解析服务端生成的 codex:plugin:<source>:<plugin>:<version>:<skill>，避免任意路径读取。
+		skillPath, err := ss.getCodexPluginSkillPath(directory)
+		if err != nil {
+			return "", err
+		}
+		data, err := os.ReadFile(filepath.Join(skillPath, "SKILL.md"))
+		if err != nil {
+			return "", fmt.Errorf("读取 plugin SKILL.md 失败: %w", err)
+		}
+		return string(data), nil
+	}
+
 	installPath, err := ss.getInstallPath(platform, location)
 	if err != nil {
 		return "", err
@@ -1187,6 +1427,9 @@ func (ss *SkillService) GetSkillContent(directory, platform, location string) (s
 func (ss *SkillService) SaveSkillContent(directory, platform, location, content string) error {
 	if directory == "" {
 		return errors.New("skill directory 不能为空")
+	}
+	if location == skillLocationPlugin {
+		return errors.New("plugin 技能为只读缓存，不支持保存")
 	}
 
 	installPath, err := ss.getInstallPath(platform, location)

@@ -382,7 +382,7 @@ const projectSkills = computed(() =>
 )
 
 const userSkills = computed(() =>
-  skills.value.filter(s => s.install_location === 'user' && s.installed)
+  skills.value.filter(s => (s.install_location === 'user' || s.install_location === 'plugin') && s.installed)
 )
 
 const availableSkills = computed(() =>

@@ -13,12 +13,18 @@ export type SkillSummary = {
   inject_enabled: boolean
   license_file?: string
   platform: 'claude' | 'codex' | ''
-  install_location: 'user' | 'project' | ''
+  install_location: 'user' | 'project' | 'plugin' | ''
+  readonly?: boolean
 
   // 仓库字段
   repo_owner?: string
   repo_name?: string
   repo_branch?: string
+
+  // Codex plugin 缓存来源字段
+  plugin_source?: string
+  plugin_name?: string
+  plugin_version?: string
 }
 
 export type SkillRepoConfig = {

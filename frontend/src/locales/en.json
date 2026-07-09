@@ -986,6 +986,7 @@
       "groups": {
         "project": "Project Skills",
         "user": "User Skills",
+        "plugin": "Plugin Skills",
         "available": "Available Skills"
       },
       "actions": {

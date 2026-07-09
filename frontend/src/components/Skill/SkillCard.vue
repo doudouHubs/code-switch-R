@@ -9,7 +9,7 @@
         <p class="skill-card-desc">
           {{ skill.description || t('components.skill.list.noDescription') }}
         </p>
-        <div class="skill-card-toggle-row">
+        <div v-if="!skill.readonly" class="skill-card-toggle-row">
           <div class="toggle-chip">
             <span class="toggle-label">{{ t('components.skill.actions.enable') }}</span>
             <button
@@ -41,6 +41,9 @@
           </span>
           <span v-if="skill.install_location === 'project'" class="skill-badge project">
             {{ t('components.skill.groups.project') }}
+          </span>
+          <span v-if="skill.install_location === 'plugin'" class="skill-badge plugin">
+            {{ t('components.skill.groups.plugin') }}
           </span>
         </div>
       </div>
@@ -74,6 +77,7 @@
           </svg>
         </button>
         <button
+          v-if="!skill.readonly"
           type="button"
           class="ghost-icon sm danger"
           :title="t('components.skill.actions.uninstall')"
@@ -125,7 +129,7 @@ defineEmits<{
 }>()
 
 const { t } = useI18n()
-const showInjectToggle = computed(() => props.skill.platform === 'codex')
+const showInjectToggle = computed(() => props.skill.platform === 'codex' && !props.skill.readonly)
 
 const content = ref('')
 const loadingContent = ref(false)
@@ -136,7 +140,8 @@ watch(() => props.expanded, async (isExpanded) => {
     loadingContent.value = true
     try {
       content.value = await getSkillContent(
-        props.skill.directory,
+        // Plugin skill 可能重名，后端需要完整 key 才能安全定位缓存来源。
+        props.skill.install_location === 'plugin' ? props.skill.key : props.skill.directory,
         props.skill.platform || 'claude',
         props.skill.install_location || 'user'
       )
@@ -284,6 +289,12 @@ watch(() => props.expanded, async (isExpanded) => {
   background: rgba(59, 130, 246, 0.15); /* fallback for old WebKit */
   background: color-mix(in srgb, #3b82f6 15%, transparent);
   color: #3b82f6;
+}
+
+.skill-badge.plugin {
+  background: rgba(20, 184, 166, 0.15); /* fallback for old WebKit */
+  background: color-mix(in srgb, #14b8a6 15%, transparent);
+  color: #14b8a6;
 }
 
 .skill-card-actions {

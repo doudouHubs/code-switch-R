@@ -3,6 +3,7 @@ package services
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -42,5 +43,105 @@ func TestToggleSkillInjectionCreatesCodexMetadataWhenMissing(t *testing.T) {
 	expected := "policy:\n  allow_implicit_invocation: false\n"
 	if string(data) != expected {
 		t.Fatalf("unexpected metadata content:\nwant:\n%s\ngot:\n%s", expected, string(data))
+	}
+}
+
+func TestListSkillsForPlatformIncludesCodexPluginSkills(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd failed: %v", err)
+	}
+
+	home := t.TempDir()
+	projectRoot := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	if err := os.Chdir(projectRoot); err != nil {
+		t.Fatalf("chdir temp project failed: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(cwd)
+	}()
+
+	writeTestSkill(t, filepath.Join(home, ".codex", "skills", "same-name"), "User Same Name")
+	writeTestSkill(t, filepath.Join(home, ".codex", "plugins", "cache", "market", "demo-plugin", "1.0.0", "skills", "plugin-direct"), "Direct Plugin")
+	writeTestSkill(t, filepath.Join(home, ".codex", "plugins", "cache", "market", "demo-plugin", "1.0.0", ".codex", "skills", "plugin-nested"), "Nested Plugin")
+	writeTestSkill(t, filepath.Join(home, ".codex", "plugins", "cache", "market", "demo-plugin", "1.0.0", "skills", "same-name"), "Plugin Same Name")
+
+	ss := NewSkillService()
+	skills, err := ss.ListSkillsForPlatform(skillPlatformCodex)
+	if err != nil {
+		t.Fatalf("list codex skills failed: %v", err)
+	}
+
+	byKey := map[string]Skill{}
+	for _, skill := range skills {
+		byKey[skill.Key] = skill
+	}
+
+	assertPluginSkill := func(key, name string) {
+		t.Helper()
+		skill, ok := byKey[key]
+		if !ok {
+			t.Fatalf("missing plugin skill key %s; got keys: %#v", key, byKey)
+		}
+		if skill.Name != name {
+			t.Fatalf("plugin skill %s name mismatch: want %q got %q", key, name, skill.Name)
+		}
+		if skill.InstallLocation != skillLocationPlugin {
+			t.Fatalf("plugin skill %s install location mismatch: %s", key, skill.InstallLocation)
+		}
+		if !skill.Readonly {
+			t.Fatalf("plugin skill %s should be readonly", key)
+		}
+		if skill.PluginSource != "market" || skill.PluginName != "demo-plugin" || skill.PluginVersion != "1.0.0" {
+			t.Fatalf("plugin source mismatch: %#v", skill)
+		}
+	}
+
+	assertPluginSkill("codex:plugin:market:demo-plugin:1.0.0:plugin-direct", "Direct Plugin")
+	assertPluginSkill("codex:plugin:market:demo-plugin:1.0.0:plugin-nested", "Nested Plugin")
+	assertPluginSkill("codex:plugin:market:demo-plugin:1.0.0:same-name", "Plugin Same Name")
+
+	userSkill, ok := byKey["codex:user:same-name"]
+	if !ok {
+		t.Fatalf("missing user skill with same directory")
+	}
+	if userSkill.InstallLocation != skillLocationUser || userSkill.Readonly {
+		t.Fatalf("user skill should remain writable user skill: %#v", userSkill)
+	}
+}
+
+func TestGetSkillContentReadsCodexPluginSkillByKey(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	skillPath := filepath.Join(home, ".codex", "plugins", "cache", "market", "demo-plugin", "1.0.0", "skills", "plugin-direct")
+	writeTestSkill(t, skillPath, "Direct Plugin")
+
+	ss := NewSkillService()
+	content, err := ss.GetSkillContent("codex:plugin:market:demo-plugin:1.0.0:plugin-direct", skillPlatformCodex, skillLocationPlugin)
+	if err != nil {
+		t.Fatalf("get plugin skill content failed: %v", err)
+	}
+	if content == "" || !strings.Contains(content, "Direct Plugin") {
+		t.Fatalf("unexpected plugin skill content: %q", content)
+	}
+
+	if _, err := ss.GetSkillContent("codex:plugin:market:demo-plugin:1.0.0:..", skillPlatformCodex, skillLocationPlugin); err == nil {
+		t.Fatalf("expected invalid plugin key to be rejected")
+	}
+}
+
+func writeTestSkill(t *testing.T, dir, name string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir skill dir failed: %v", err)
+	}
+	content := "---\nname: " + name + "\ndescription: test skill\n---\n# " + name + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
 	}
 }

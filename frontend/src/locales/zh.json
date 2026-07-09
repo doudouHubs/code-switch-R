@@ -987,6 +987,7 @@
       "groups": {
         "project": "项目级技能",
         "user": "用户级技能",
+        "plugin": "插件技能",
         "available": "可用技能"
       },
       "actions": {
