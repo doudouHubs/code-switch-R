@@ -3,6 +3,7 @@ package services
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,6 +54,7 @@ type SessionConversationItem struct {
 	Content    string `json:"content"`
 	Timestamp  int64  `json:"timestamp"`
 	ReplyFor   string `json:"reply_for"`
+	TurnID     string `json:"turn_id"`
 	SourceFile string `json:"source_file"`
 	SourceLine int    `json:"source_line"`
 }
@@ -419,6 +421,67 @@ func (s *ProjectManagerService) PruneSessionConversation(sessionID string, messa
 	return detail, err
 }
 
+func (s *ProjectManagerService) ForkSessionConversation(sessionID string, messageIDs []string) (SessionSummary, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return SessionSummary{}, errors.New("会话 ID 不能为空")
+	}
+	if len(messageIDs) == 0 {
+		return SessionSummary{}, errors.New("至少选择一条消息")
+	}
+
+	snapshot, snapshotCache, err := s.loadProjectManagerSnapshotWithCache()
+	if err != nil {
+		return SessionSummary{}, err
+	}
+
+	session, err := projectManagerFindSession(snapshot.Sessions, sessionID)
+	if err != nil {
+		return SessionSummary{}, err
+	}
+
+	sessionFile, err := s.findProjectManagerSessionFileByIDFast(sessionID, snapshotCache)
+	if err != nil {
+		return SessionSummary{}, err
+	}
+
+	currentItems, err := s.readProjectManagerConversationItems(sessionFile)
+	if err != nil {
+		return SessionSummary{}, err
+	}
+
+	lastTurnID, err := buildProjectManagerConversationForkTurnID(currentItems, messageIDs)
+	if err != nil {
+		return SessionSummary{}, err
+	}
+
+	forkedSessionID, err := projectManagerForkSessionWithAppServer(sessionID, lastTurnID)
+	if err != nil {
+		return SessionSummary{}, err
+	}
+
+	forkedSession := session
+	forkedSession.ID = forkedSessionID
+	forkedSession.SourceName = strings.TrimSpace(session.SourceName)
+	if strings.TrimSpace(forkedSession.SourceName) == "" {
+		forkedSession.SourceName = forkedSessionID
+	}
+	forkedSession.DisplayName = strings.TrimSpace(session.DisplayName)
+	if forkedSession.DisplayName == "" {
+		forkedSession.DisplayName = forkedSession.SourceName
+	}
+	forkedSession.UpdatedAt = time.Now().UnixMilli()
+
+	s.invalidateProjectManagerSnapshotCache()
+	s.invalidateProjectManagerConversationCache(forkedSessionID)
+
+	if err := projectManagerOpenForkedSessionTerminal(s, forkedSession); err != nil {
+		return forkedSession, fmt.Errorf("fork 已创建但打开终端失败: %w", err)
+	}
+
+	return forkedSession, nil
+}
+
 func (s *ProjectManagerService) loadProjectManagerSnapshotWithCache() (ProjectManagerSnapshot, projectManagerSnapshotCache, error) {
 	snapshot, err := s.GetSnapshot()
 	if err != nil {
@@ -437,7 +500,14 @@ func (s *ProjectManagerService) readProjectManagerConversationItems(file project
 	if file.IsRollout {
 		return readProjectManagerRolloutConversationItems(file.Path, file.SessionID)
 	}
-	return readProjectManagerSessionConversationItems(file.Path, file.SessionID)
+	items, err := readProjectManagerSessionConversationItems(file.Path, file.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.hydrateProjectManagerConversationTurnIDsFromRollouts(file.SessionID, items); err != nil {
+		log.Printf("[ProjectManager] 回填会话 turn_id 失败，fork 精确截断将不可用 session=%s err=%v", file.SessionID, err)
+	}
+	return items, nil
 }
 
 func (s *ProjectManagerService) invalidateProjectManagerConversationCache(sessionID string) {

@@ -326,6 +326,7 @@ func readProjectManagerRolloutConversationItems(path string, sessionID string) (
 				Timestamp:  record.Timestamp,
 				SourceFile: path,
 				SourceLine: record.LineIndex + 1,
+				TurnID:     strings.TrimSpace(turn.TurnID),
 			}
 			if record.PayloadType == "user_message" {
 				currentUserID = itemID
@@ -338,14 +339,82 @@ func readProjectManagerRolloutConversationItems(path string, sessionID string) (
 	return items, nil
 }
 
-func buildProjectManagerConversationPrunePlan(sessionID string, items []SessionConversationItem, messageIDs []string) (projectManagerConversationPrunePlan, error) {
-	validIDs := make(map[string]SessionConversationItem, len(items))
+func (s *ProjectManagerService) hydrateProjectManagerConversationTurnIDsFromRollouts(sessionID string, items []SessionConversationItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	rolloutFiles, err := s.findProjectManagerRolloutFilesByID(sessionID)
+	if err != nil {
+		return err
+	}
+
+	var failed []string
+	for _, rolloutFile := range rolloutFiles {
+		parsed, err := parseProjectManagerRolloutFile(rolloutFile.Path, sessionID)
+		if err != nil {
+			failed = append(failed, fmt.Sprintf("%s: %v", rolloutFile.Path, err))
+			continue
+		}
+
+		// 主会话文件没有稳定 turn_id，但 rollout 有 task_started.turn_id。
+		// 这里按用户消息顺序和规范化内容回填，目的只是让原生 thread/fork 能精确截断；
+		// 匹配不上就保持空值，后续 fork 入口 fail-fast，避免凭行号硬猜 turn。
+		if applyProjectManagerConversationTurnIDsFromRollout(items, parsed) > 0 {
+			return nil
+		}
+	}
+
+	if len(failed) > 0 {
+		return fmt.Errorf("解析 rollout 失败: %s", strings.Join(failed, "; "))
+	}
+	return nil
+}
+
+func applyProjectManagerConversationTurnIDsFromRollout(items []SessionConversationItem, rollout projectManagerRolloutFile) int {
+	if len(items) == 0 || len(rollout.Turns) == 0 {
+		return 0
+	}
+
+	itemIndexByID := make(map[string]int, len(items))
+	for index, item := range items {
+		itemIndexByID[item.ID] = index
+	}
+
+	turns, _ := buildProjectManagerConversationTurns(items)
+	applied := 0
+	rolloutTurnIndex := 0
+	for _, conversationTurn := range turns {
+		matchIndex := projectManagerMatchRolloutTurnIndex(rollout.Turns, conversationTurn.User.Content, rolloutTurnIndex)
+		if matchIndex < 0 {
+			continue
+		}
+		rolloutTurnIndex = matchIndex + 1
+
+		turnID := strings.TrimSpace(rollout.Turns[matchIndex].TurnID)
+		if turnID == "" {
+			continue
+		}
+
+		if itemIndex, ok := itemIndexByID[conversationTurn.User.ID]; ok {
+			items[itemIndex].TurnID = turnID
+			applied++
+		}
+		for _, agent := range conversationTurn.Agents {
+			if itemIndex, ok := itemIndexByID[agent.ID]; ok {
+				items[itemIndex].TurnID = turnID
+				applied++
+			}
+		}
+	}
+	return applied
+}
+
+func buildProjectManagerConversationTurns(items []SessionConversationItem) ([]projectManagerConversationTurn, map[string]int) {
 	turns := make([]projectManagerConversationTurn, 0, 16)
 	turnIndexByUserID := make(map[string]int, 16)
 
 	for _, item := range items {
-		validIDs[item.ID] = item
-
 		if item.Role == "user" {
 			turns = append(turns, projectManagerConversationTurn{
 				User:   item,
@@ -369,6 +438,48 @@ func buildProjectManagerConversationPrunePlan(sessionID string, items []SessionC
 			turns[len(turns)-1].Agents = append(turns[len(turns)-1].Agents, item)
 		}
 	}
+
+	return turns, turnIndexByUserID
+}
+
+func buildProjectManagerConversationForkTurnID(items []SessionConversationItem, messageIDs []string) (string, error) {
+	itemIndexByID := make(map[string]int, len(items))
+	for index, item := range items {
+		itemIndexByID[item.ID] = index
+	}
+
+	latestSelectedIndex := -1
+	for _, messageID := range messageIDs {
+		trimmed := strings.TrimSpace(messageID)
+		if trimmed == "" {
+			continue
+		}
+		index, ok := itemIndexByID[trimmed]
+		if !ok {
+			return "", fmt.Errorf("消息不存在或已变化: %s", trimmed)
+		}
+		if index > latestSelectedIndex {
+			latestSelectedIndex = index
+		}
+	}
+
+	if latestSelectedIndex < 0 {
+		return "", fmt.Errorf("没有可 fork 的消息")
+	}
+
+	turnID := strings.TrimSpace(items[latestSelectedIndex].TurnID)
+	if turnID == "" {
+		return "", fmt.Errorf("所选消息缺少 turn_id，无法使用 Codex 原生 fork")
+	}
+	return turnID, nil
+}
+
+func buildProjectManagerConversationPrunePlan(sessionID string, items []SessionConversationItem, messageIDs []string) (projectManagerConversationPrunePlan, error) {
+	validIDs := make(map[string]SessionConversationItem, len(items))
+	for _, item := range items {
+		validIDs[item.ID] = item
+	}
+	turns, turnIndexByUserID := buildProjectManagerConversationTurns(items)
 
 	targetIDs := make(map[string]struct{}, len(messageIDs))
 	targetUserIDs := make(map[string]struct{}, len(messageIDs))

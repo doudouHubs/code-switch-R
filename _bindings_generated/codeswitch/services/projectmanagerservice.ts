@@ -17,6 +17,12 @@ export function DeleteSession(sessionID: string): $CancellablePromise<void> {
     return $Call.ByID(2666625055, sessionID);
 }
 
+export function ForkSessionConversation(sessionID: string, messageIDs: string[]): $CancellablePromise<$models.SessionSummary> {
+    return $Call.ByName("codeswitch/services.ProjectManagerService.ForkSessionConversation", sessionID, messageIDs).then(($result: any) => {
+        return $$createType2($result);
+    });
+}
+
 export function GetSessionConversationDetail(sessionID: string): $CancellablePromise<$models.SessionConversationDetail> {
     return $Call.ByID(2599842864, sessionID).then(($result: any) => {
         return $$createType0($result);

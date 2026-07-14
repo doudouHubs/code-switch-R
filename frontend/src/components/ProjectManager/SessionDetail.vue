@@ -8,6 +8,7 @@ import BaseModal from '../common/BaseModal.vue'
 import './projectManager.css'
 import {
   fetchSessionConversationDetail,
+  forkSessionConversation,
   openSessionTerminal,
   pruneSessionConversation,
   type SessionConversationDetail,
@@ -22,6 +23,7 @@ const router = useRouter()
 
 const loading = ref(false)
 const pruning = ref(false)
+const forking = ref(false)
 const openingTerminal = ref(false)
 const selecting = ref(false)
 const userOnlyMode = ref(false)
@@ -60,10 +62,21 @@ const dateFormatter = computed(() =>
 )
 
 const items = computed(() => detail.value?.items ?? [])
+const itemByID = computed(() => new Map(items.value.map(item => [item.id, item])))
 const selectedSet = computed(() => new Set(selectedIDs.value))
 const expandedSet = computed(() => new Set(expandedIDs.value))
+const selectedItems = computed(() =>
+  selectedIDs.value
+    .map(itemID => itemByID.value.get(itemID))
+    .filter((item): item is SessionConversationItem => !!item),
+)
 const selectedCount = computed(() => selectedIDs.value.length)
 const hasSelection = computed(() => selectedCount.value > 0)
+const canForkSelection = computed(() =>
+  hasSelection.value &&
+  selectedItems.value.length === selectedIDs.value.length &&
+  selectedItems.value.every(item => !!item.turn_id),
+)
 const showSelectionToolbar = computed(() => selecting.value && !!detail.value)
 const selectionToggleLabel = computed(() =>
   selecting.value
@@ -245,6 +258,14 @@ const waitForNextLayout = () => new Promise<void>((resolve) => {
   window.requestAnimationFrame(() => resolve())
 })
 
+const hasActiveTextSelection = () => {
+  if (typeof window === 'undefined') {
+    return false
+  }
+  const selection = window.getSelection()
+  return !!selection && !selection.isCollapsed && selection.toString().trim().length > 0
+}
+
 const scrollConversationToLatest = async () => {
   const latestIndex = displayEntries.value.length - 1
   if (latestIndex < 0) {
@@ -331,6 +352,18 @@ const toggleExpanded = async (item: SessionConversationItem) => {
   await syncVirtualConversationLayout({ anchorItemID: item.id })
 }
 
+const handleBubbleClick = (entry: ConversationDisplayEntry) => {
+  if (selecting.value || userOnlyMode.value || entry.agentGroup || entry.role !== 'agent') {
+    return
+  }
+  // 鼠标拖拽选中文字后也会触发 click；这里必须让文本选择优先，
+  // 否则用户复制长回复时会顺手把气泡展开/收起，体验跟被门夹了一样。
+  if (hasActiveTextSelection()) {
+    return
+  }
+  void toggleExpanded(entry.item)
+}
+
 const handleBubbleKeydown = (item: SessionConversationItem, event: KeyboardEvent) => {
   if (userOnlyMode.value) {
     return
@@ -388,6 +421,9 @@ const handleCheckboxChange = (entry: ConversationDisplayEntry, event: Event) => 
 
 const handleMessageEntryClick = (entry: ConversationDisplayEntry) => {
   if (!selecting.value) {
+    return
+  }
+  if (hasActiveTextSelection()) {
     return
   }
   toggleSelectedEntry(entry, !isEntrySelected(entry))
@@ -492,6 +528,47 @@ const handleOpenTerminal = async () => {
   }
 }
 
+const forkConversationFromMessages = async (messageIDs: string[]) => {
+  if (!detail.value || forking.value) {
+    return
+  }
+  const normalizedIDs = Array.from(new Set(messageIDs.map(id => id.trim()).filter(Boolean)))
+  if (!normalizedIDs.length) {
+    return
+  }
+
+  forking.value = true
+  try {
+    await forkSessionConversation(detail.value.session.id, normalizedIDs)
+    closeSelectionMode()
+    showToast(t('components.projectManager.detail.forkSuccess'), 'success')
+  } catch (error) {
+    console.error('failed to fork session conversation', error)
+    showToast(extractErrorMessage(error), 'error')
+  } finally {
+    forking.value = false
+  }
+}
+
+const handleForkFromUser = (item: SessionConversationItem) => {
+  if (item.role !== 'user' || forking.value) {
+    return
+  }
+  if (!item.turn_id) {
+    showToast(t('components.projectManager.detail.forkUnavailable'), 'error')
+    return
+  }
+  void forkConversationFromMessages([item.id])
+}
+
+const forkSelectedConversation = () => {
+  if (!canForkSelection.value) {
+    showToast(t('components.projectManager.detail.forkUnavailable'), 'error')
+    return
+  }
+  void forkConversationFromMessages(selectedIDs.value)
+}
+
 const openDeleteConfirm = () => {
   if (!selectedIDs.value.length) {
     return
@@ -567,7 +644,7 @@ onMounted(() => {
         <button
           class="detail-header-text-button accent"
           type="button"
-          :disabled="openingTerminal || loading || !detail"
+          :disabled="openingTerminal || forking || loading || !detail"
           @click="handleOpenTerminal"
         >
           <span v-if="openingTerminal" class="detail-header-spinner" aria-hidden="true"></span>
@@ -577,7 +654,7 @@ onMounted(() => {
           class="detail-header-text-button"
           type="button"
           :class="{ active: userOnlyMode }"
-          :disabled="loading || !detail"
+          :disabled="loading || forking || !detail"
           @click="toggleUserOnlyMode"
         >
           {{ userOnlyModeLabel }}
@@ -586,7 +663,7 @@ onMounted(() => {
           class="detail-header-text-button"
           type="button"
           :class="{ active: selecting }"
-          :disabled="loading || !detail || pruning"
+          :disabled="loading || !detail || pruning || forking"
           @click="toggleSelectionMode"
         >
           {{ selectionToggleLabel }}
@@ -647,7 +724,7 @@ onMounted(() => {
                 ]"
                 :role="!selecting && !userOnlyMode && !entry.entry.agentGroup && entry.entry.role === 'agent' ? 'button' : undefined"
                 :tabindex="!selecting && !userOnlyMode && !entry.entry.agentGroup && entry.entry.role === 'agent' ? 0 : undefined"
-                @click="!selecting && !userOnlyMode && !entry.entry.agentGroup && toggleExpanded(entry.entry.item)"
+                @click="handleBubbleClick(entry.entry)"
                 @keydown="!selecting && !userOnlyMode && !entry.entry.agentGroup && handleBubbleKeydown(entry.entry.item, $event)"
               >
                 <span
@@ -672,6 +749,21 @@ onMounted(() => {
               <div :class="['message-meta', `is-${entry.entry.role}`]">
                 <span>{{ entry.entry.role === 'user' ? t('components.projectManager.detail.userLabel') : t('components.projectManager.detail.agentLabel') }}</span>
                 <span>{{ formatUpdatedAt(entry.entry.item.timestamp) }}</span>
+                <button
+                  v-if="entry.entry.role === 'user' && !selecting"
+                  class="message-meta-action fork"
+                  type="button"
+                  :disabled="forking || !entry.entry.item.turn_id"
+                  :title="entry.entry.item.turn_id ? t('components.projectManager.detail.forkFromHere') : t('components.projectManager.detail.forkUnavailable')"
+                  @click.stop="handleForkFromUser(entry.entry.item)"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M7 5.75v5.5a4 4 0 0 0 4 4h6" />
+                    <path d="M14.25 11.5 18 15.25 14.25 19" />
+                    <path d="M7 5.75a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" />
+                  </svg>
+                  <span>{{ t('components.projectManager.detail.forkFromHere') }}</span>
+                </button>
               </div>
             </div>
           </div>
@@ -718,9 +810,25 @@ onMounted(() => {
         </button>
 
         <button
+          class="selection-dock-action accent"
+          type="button"
+          :disabled="!canForkSelection || forking || pruning || loading"
+          @click="forkSelectedConversation"
+        >
+          <span class="selection-dock-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M7 5.75v5.5a4 4 0 0 0 4 4h6" />
+              <path d="M14.25 11.5 18 15.25 14.25 19" />
+              <path d="M7 5.75a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" />
+            </svg>
+          </span>
+          <span>{{ forking ? t('components.projectManager.detail.forking') : t('components.projectManager.detail.forkSelected') }}</span>
+        </button>
+
+        <button
           class="selection-dock-action danger"
           type="button"
-          :disabled="!hasSelection || pruning || loading"
+          :disabled="!hasSelection || pruning || forking || loading"
           @click="openDeleteConfirm"
         >
           <span class="selection-dock-icon" aria-hidden="true">
@@ -735,7 +843,7 @@ onMounted(() => {
           <span>{{ t('components.projectManager.detail.deleteAction') }}</span>
         </button>
 
-        <button class="selection-dock-close" type="button" :disabled="pruning" @click="closeSelectionMode">
+        <button class="selection-dock-close" type="button" :disabled="pruning || forking" @click="closeSelectionMode">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M7 7 17 17" />
             <path d="M17 7 7 17" />

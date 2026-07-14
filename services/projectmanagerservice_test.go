@@ -693,6 +693,73 @@ func TestProjectManagerGetSessionConversationDetail(t *testing.T) {
 	}
 }
 
+func TestProjectManagerGetSessionConversationDetailRolloutItemsIncludeTurnID(t *testing.T) {
+	home := setupProjectManagerTestHome(t)
+	service := NewProjectManagerService()
+
+	sessionID := "019ecab9-rollout-turn-case"
+	writeProjectManagerSessionIndex(t, home, sessionID, "Rollout Turn Session", "2026-06-16T10:01:14Z")
+	writeProjectManagerRolloutFixture(t, home, sessionID, "rollout-2026-06-16T10-00-00-"+sessionID+".jsonl", []string{
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:00Z","payload":{"type":"task_started","turn_id":"turn-rollout-1"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:01Z","payload":{"type":"user_message","message":"第一问"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:02Z","payload":{"type":"agent_message","message":"第一答"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:03Z","payload":{"type":"task_complete","turn_id":"turn-rollout-1"}}`,
+	})
+
+	detail, err := service.GetSessionConversationDetail(sessionID)
+	if err != nil {
+		t.Fatalf("GetSessionConversationDetail 失败: %v", err)
+	}
+	if len(detail.Items) != 2 {
+		t.Fatalf("详情消息数不对，want=2 got=%d", len(detail.Items))
+	}
+	if detail.Items[0].TurnID != "turn-rollout-1" || detail.Items[1].TurnID != "turn-rollout-1" {
+		t.Fatalf("rollout 消息未带 turn_id: %+v", detail.Items)
+	}
+}
+
+func TestProjectManagerGetSessionConversationDetailHydratesPrimaryTurnIDsFromRollout(t *testing.T) {
+	home := setupProjectManagerTestHome(t)
+	service := NewProjectManagerService()
+
+	sessionID := "019ecab9-primary-turn-case"
+	projectDir := filepath.Join(home, "workspace", "primary-turn")
+	primaryPath := writeProjectManagerConversationFixture(t, home, sessionID, projectDir, []string{
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:00Z","payload":{"type":"user_message","message":"第一问"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:10Z","payload":{"type":"agent_message","message":"第一答"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:02:00Z","payload":{"type":"user_message","message":"第二问"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:02:10Z","payload":{"type":"agent_message","message":"第二答"}}`,
+	})
+	writeProjectManagerRolloutFixture(t, home, sessionID, "rollout-2026-06-16T10-00-00-"+sessionID+".jsonl", []string{
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:00Z","payload":{"type":"task_started","turn_id":"turn-primary-1"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:01Z","payload":{"type":"user_message","message":"第一问"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:02Z","payload":{"type":"agent_message","message":"第一答"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:03Z","payload":{"type":"task_complete","turn_id":"turn-primary-1"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:02:00Z","payload":{"type":"task_started","turn_id":"turn-primary-2"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:02:01Z","payload":{"type":"user_message","message":"第二问"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:02:02Z","payload":{"type":"agent_message","message":"第二答"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:02:03Z","payload":{"type":"task_complete","turn_id":"turn-primary-2"}}`,
+	})
+	writeProjectManagerSessionIndex(t, home, sessionID, "Primary Turn Session", "2026-06-16T10:02:14Z")
+
+	detail, err := service.GetSessionConversationDetail(sessionID)
+	if err != nil {
+		t.Fatalf("GetSessionConversationDetail 失败: %v", err)
+	}
+	if len(detail.Items) != 4 {
+		t.Fatalf("详情消息数不对，want=4 got=%d", len(detail.Items))
+	}
+	if detail.Items[0].SourceFile != primaryPath {
+		t.Fatalf("详情仍应优先展示主会话源，got=%q", detail.Items[0].SourceFile)
+	}
+	if detail.Items[0].TurnID != "turn-primary-1" || detail.Items[1].TurnID != "turn-primary-1" {
+		t.Fatalf("第一轮 turn_id 回填失败: %+v", detail.Items[:2])
+	}
+	if detail.Items[2].TurnID != "turn-primary-2" || detail.Items[3].TurnID != "turn-primary-2" {
+		t.Fatalf("第二轮 turn_id 回填失败: %+v", detail.Items[2:])
+	}
+}
+
 func TestProjectManagerConversationSourceSkipsRollout(t *testing.T) {
 	home := setupProjectManagerTestHome(t)
 	service := NewProjectManagerService()
@@ -798,6 +865,111 @@ func TestProjectManagerGetSessionConversationDetailReusesDetailCacheUntilSignatu
 	}
 	if second.Items[0].Content != "第二次问题" || second.Items[1].Content != "第二次回答" {
 		t.Fatalf("更新后的详情内容不对，got=%+v", second.Items)
+	}
+}
+
+func TestProjectManagerForkSessionConversationUsesLatestSelectedTurn(t *testing.T) {
+	home := setupProjectManagerTestHome(t)
+	service := NewProjectManagerService()
+
+	originalFork := projectManagerForkSessionWithAppServer
+	originalOpen := projectManagerOpenForkedSessionTerminal
+	defer func() {
+		projectManagerForkSessionWithAppServer = originalFork
+		projectManagerOpenForkedSessionTerminal = originalOpen
+	}()
+
+	var forkSourceSessionID string
+	var forkLastTurnID string
+	projectManagerForkSessionWithAppServer = func(sessionID string, lastTurnID string) (string, error) {
+		forkSourceSessionID = sessionID
+		forkLastTurnID = lastTurnID
+		return "019ecab9-forked-session", nil
+	}
+	var openedSession SessionSummary
+	projectManagerOpenForkedSessionTerminal = func(_ *ProjectManagerService, session SessionSummary) error {
+		openedSession = session
+		return nil
+	}
+
+	sessionID := "019ecab9-fork-source-case"
+	projectDir := filepath.Join(home, "workspace", "fork-source")
+	writeProjectManagerConversationFixture(t, home, sessionID, projectDir, []string{
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:00Z","payload":{"type":"user_message","message":"第一问"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:10Z","payload":{"type":"agent_message","message":"第一答"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:02:00Z","payload":{"type":"user_message","message":"第二问"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:02:10Z","payload":{"type":"agent_message","message":"第二答"}}`,
+	})
+	writeProjectManagerRolloutFixture(t, home, sessionID, "rollout-2026-06-16T10-00-00-"+sessionID+".jsonl", []string{
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:00Z","payload":{"type":"task_started","turn_id":"turn-fork-1"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:01Z","payload":{"type":"user_message","message":"第一问"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:02Z","payload":{"type":"agent_message","message":"第一答"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:03Z","payload":{"type":"task_complete","turn_id":"turn-fork-1"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:02:00Z","payload":{"type":"task_started","turn_id":"turn-fork-2"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:02:01Z","payload":{"type":"user_message","message":"第二问"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:02:02Z","payload":{"type":"agent_message","message":"第二答"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:02:03Z","payload":{"type":"task_complete","turn_id":"turn-fork-2"}}`,
+	})
+	writeProjectManagerSessionIndex(t, home, sessionID, "Fork Source Session", "2026-06-16T10:02:14Z")
+
+	detail, err := service.GetSessionConversationDetail(sessionID)
+	if err != nil {
+		t.Fatalf("GetSessionConversationDetail 失败: %v", err)
+	}
+	forked, err := service.ForkSessionConversation(sessionID, []string{detail.Items[0].ID, detail.Items[3].ID})
+	if err != nil {
+		t.Fatalf("ForkSessionConversation 失败: %v", err)
+	}
+
+	if forkSourceSessionID != sessionID {
+		t.Fatalf("fork 源会话不对，want=%q got=%q", sessionID, forkSourceSessionID)
+	}
+	if forkLastTurnID != "turn-fork-2" {
+		t.Fatalf("多选 fork 应使用最晚选中轮次，got=%q", forkLastTurnID)
+	}
+	if forked.ID != "019ecab9-forked-session" || openedSession.ID != forked.ID {
+		t.Fatalf("fork 后应打开新会话，forked=%+v opened=%+v", forked, openedSession)
+	}
+	if openedSession.ProjectPath != projectDir {
+		t.Fatalf("fork 会话应继承项目路径，got=%q", openedSession.ProjectPath)
+	}
+}
+
+func TestProjectManagerForkSessionConversationFailsWithoutTurnID(t *testing.T) {
+	home := setupProjectManagerTestHome(t)
+	service := NewProjectManagerService()
+
+	originalFork := projectManagerForkSessionWithAppServer
+	defer func() {
+		projectManagerForkSessionWithAppServer = originalFork
+	}()
+	called := false
+	projectManagerForkSessionWithAppServer = func(sessionID string, lastTurnID string) (string, error) {
+		called = true
+		return "should-not-be-used", nil
+	}
+
+	sessionID := "019ecab9-fork-missing-turn"
+	projectDir := filepath.Join(home, "workspace", "fork-missing-turn")
+	writeProjectManagerConversationFixture(t, home, sessionID, projectDir, []string{
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:00Z","payload":{"type":"user_message","message":"没有 rollout 的问题"}}`,
+	})
+	writeProjectManagerSessionIndex(t, home, sessionID, "Missing Turn Session", "2026-06-16T10:01:14Z")
+
+	detail, err := service.GetSessionConversationDetail(sessionID)
+	if err != nil {
+		t.Fatalf("GetSessionConversationDetail 失败: %v", err)
+	}
+	if len(detail.Items) != 1 {
+		t.Fatalf("详情消息数不对，want=1 got=%d", len(detail.Items))
+	}
+
+	_, err = service.ForkSessionConversation(sessionID, []string{detail.Items[0].ID})
+	if err == nil || !strings.Contains(err.Error(), "turn_id") {
+		t.Fatalf("缺少 turn_id 应 fail-fast，got=%v", err)
+	}
+	if called {
+		t.Fatal("缺少 turn_id 时不应调用 Codex app-server fork")
 	}
 }
 

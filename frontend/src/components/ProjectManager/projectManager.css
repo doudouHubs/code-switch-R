@@ -1098,7 +1098,7 @@
 
 .project-manager-page .selection-dock-actions {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 8px;
   align-items: stretch;
 }
@@ -1154,8 +1154,16 @@
   color: #d14343;
 }
 
+.project-manager-page .selection-dock-action.accent {
+  color: #2563eb;
+}
+
 .dark .project-manager-page .selection-dock-action.danger {
   color: #ff8b8b;
+}
+
+.dark .project-manager-page .selection-dock-action.accent {
+  color: #7db5ff;
 }
 
 .project-manager-page .conversation-list {
@@ -1358,7 +1366,6 @@
 
 .project-manager-page .conversation-bubble.clickable {
   cursor: pointer;
-  user-select: none;
 }
 
 .project-manager-page .conversation-bubble.clickable:hover {
@@ -1377,6 +1384,7 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;
+  user-select: text;
 }
 
 .project-manager-page .conversation-content.clamped {
@@ -1435,6 +1443,51 @@
 
 .project-manager-page .message-meta span:first-child {
   font-weight: 700;
+}
+
+.project-manager-page .message-meta-action {
+  border: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.08);
+  color: #2563eb;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease, opacity 0.18s ease;
+}
+
+.project-manager-page .message-meta-action svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.project-manager-page .message-meta-action:hover {
+  background: rgba(37, 99, 235, 0.14);
+}
+
+.project-manager-page .message-meta-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.dark .project-manager-page .message-meta-action {
+  background: rgba(76, 128, 214, 0.18);
+  color: #7db5ff;
+}
+
+.dark .project-manager-page .message-meta-action:hover {
+  background: rgba(76, 128, 214, 0.26);
 }
 
 .project-manager-page .detail-delete-hint {

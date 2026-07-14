@@ -36,6 +36,7 @@ export interface SessionConversationItem {
   content: string;
   timestamp: number;
   reply_for: string;
+  turn_id: string;
   source_file: string;
   source_line: number;
 }
@@ -178,4 +179,16 @@ export const pruneSessionConversation = async (
     messageIDs,
   );
   return result as SessionConversationDetail;
+};
+
+export const forkSessionConversation = async (
+  sessionID: string,
+  messageIDs: string[],
+): Promise<SessionSummary> => {
+  const result = await Call.ByName(
+    `${PROJECT_MANAGER_SERVICE}.ForkSessionConversation`,
+    sessionID,
+    messageIDs,
+  );
+  return result as SessionSummary;
 };

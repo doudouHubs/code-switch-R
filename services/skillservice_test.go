@@ -135,6 +135,45 @@ func TestGetSkillContentReadsCodexPluginSkillByKey(t *testing.T) {
 	}
 }
 
+func TestToggleSkillInjectionSupportsCodexPluginSkill(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	skillPath := filepath.Join(home, ".codex", "plugins", "cache", "market", "demo-plugin", "1.0.0", "skills", "plugin-direct")
+	writeTestSkill(t, skillPath, "Direct Plugin")
+
+	ss := NewSkillService()
+	key := "codex:plugin:market:demo-plugin:1.0.0:plugin-direct"
+	if err := ss.ToggleSkillInjection(key, skillPlatformCodex, skillLocationPlugin, false); err != nil {
+		t.Fatalf("toggle plugin injection failed: %v", err)
+	}
+
+	metadataPath := filepath.Join(skillPath, "agents", "openai.yaml")
+	data, err := os.ReadFile(metadataPath)
+	if err != nil {
+		t.Fatalf("read plugin openai.yaml failed: %v", err)
+	}
+	expected := "policy:\n  allow_implicit_invocation: false\n"
+	if string(data) != expected {
+		t.Fatalf("unexpected plugin metadata content:\nwant:\n%s\ngot:\n%s", expected, string(data))
+	}
+
+	skills, err := ss.ListSkillsForPlatform(skillPlatformCodex)
+	if err != nil {
+		t.Fatalf("list codex skills failed: %v", err)
+	}
+	for _, skill := range skills {
+		if skill.Key == key {
+			if skill.InjectEnabled {
+				t.Fatalf("plugin skill inject flag should reflect openai.yaml override: %#v", skill)
+			}
+			return
+		}
+	}
+	t.Fatalf("missing plugin skill after toggling injection")
+}
+
 func writeTestSkill(t *testing.T, dir, name string) {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {

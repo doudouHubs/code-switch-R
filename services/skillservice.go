@@ -721,19 +721,29 @@ func (ss *SkillService) ToggleSkillInjection(directory, platform, location strin
 	if location == "" {
 		location = skillLocationUser
 	}
-	if location == skillLocationPlugin {
-		return errors.New("plugin 技能为只读缓存，不支持切换注入状态")
-	}
 
 	if platform != skillPlatformCodex {
 		return errors.New("当前仅 Codex 平台支持注入开关")
 	}
 
-	installPath, err := ss.getInstallPath(platform, location)
-	if err != nil {
-		return err
+	var skillPath string
+	if location == skillLocationPlugin {
+		// Plugin skill 可能同名，必须使用完整 key 定位缓存中的具体技能目录。
+		// 这里仅写 agents/openai.yaml 注入策略，不修改 SKILL.md，也不允许卸载缓存目录。
+		path, err := ss.getCodexPluginSkillPath(directory)
+		if err != nil {
+			return err
+		}
+		skillPath = path
+	} else {
+		installPath, err := ss.getInstallPath(platform, location)
+		if err != nil {
+			return err
+		}
+		skillPath = filepath.Join(installPath, directory)
 	}
-	metadataPath := filepath.Join(installPath, directory, "agents", "openai.yaml")
+
+	metadataPath := filepath.Join(skillPath, "agents", "openai.yaml")
 
 	data, err := os.ReadFile(metadataPath)
 	if err != nil {

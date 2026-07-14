@@ -556,7 +556,7 @@ const handleToggleInject = async (skill: SkillSummary, injectEnabled: boolean) =
   togglingInjectSkill.value = skill.key
   try {
     await toggleSkillInjection(
-      skill.directory,
+      skill.install_location === 'plugin' ? skill.key : skill.directory,
       skill.platform || activePlatform.value,
       skill.install_location || 'user',
       injectEnabled

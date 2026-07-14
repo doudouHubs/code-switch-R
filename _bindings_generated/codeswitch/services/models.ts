@@ -2600,6 +2600,7 @@ export class SessionConversationItem {
     "content": string;
     "timestamp": number;
     "reply_for": string;
+    "turn_id": string;
     "source_file": string;
     "source_line": number;
 
@@ -2622,6 +2623,9 @@ export class SessionConversationItem {
         }
         if (!("reply_for" in $$source)) {
             this["reply_for"] = "";
+        }
+        if (!("turn_id" in $$source)) {
+            this["turn_id"] = "";
         }
         if (!("source_file" in $$source)) {
             this["source_file"] = "";

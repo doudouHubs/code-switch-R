@@ -9,8 +9,8 @@
         <p class="skill-card-desc">
           {{ skill.description || t('components.skill.list.noDescription') }}
         </p>
-        <div v-if="!skill.readonly" class="skill-card-toggle-row">
-          <div class="toggle-chip">
+        <div v-if="!skill.readonly || showInjectToggle" class="skill-card-toggle-row">
+          <div v-if="!skill.readonly" class="toggle-chip">
             <span class="toggle-label">{{ t('components.skill.actions.enable') }}</span>
             <button
               type="button"
@@ -27,7 +27,7 @@
             <button
               type="button"
               :class="['toggle-switch', { enabled: skill.inject_enabled }]"
-              :disabled="togglingInject || !skill.enabled"
+              :disabled="togglingInject || (!skill.readonly && !skill.enabled)"
               :title="t('components.skill.actions.inject')"
               @click="$emit('toggle-inject', skill, !skill.inject_enabled)"
             >
@@ -129,7 +129,7 @@ defineEmits<{
 }>()
 
 const { t } = useI18n()
-const showInjectToggle = computed(() => props.skill.platform === 'codex' && !props.skill.readonly)
+const showInjectToggle = computed(() => props.skill.platform === 'codex')
 
 const content = ref('')
 const loadingContent = ref(false)
