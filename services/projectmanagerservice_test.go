@@ -280,6 +280,9 @@ func TestProjectManagerCodexProviderBindingSurvivesRenameAndEnrichesSnapshot(t *
 	if err := service.SetProjectCodexProviderRouting(projectDir, 22, false); err != nil {
 		t.Fatalf("SetProjectCodexProviderRouting 失败: %v", err)
 	}
+	if err := service.SaveProjectRunCommand(projectDir, "npm run dev"); err != nil {
+		t.Fatalf("SaveProjectRunCommand 失败: %v", err)
+	}
 	if err := service.RenameProject(projectDir, "Provider Bound Alias"); err != nil {
 		t.Fatalf("RenameProject 失败: %v", err)
 	}
@@ -299,6 +302,9 @@ func TestProjectManagerCodexProviderBindingSurvivesRenameAndEnrichesSnapshot(t *
 	if !meta.CodexProviderAutoFallbackDisabled {
 		t.Fatalf("项目 provider auto=false 未保留")
 	}
+	if meta.RunCommand != "npm run dev" {
+		t.Fatalf("项目运行指令未保留，want=%q got=%q", "npm run dev", meta.RunCommand)
+	}
 
 	snapshot, err := service.RefreshProjectIndex()
 	if err != nil {
@@ -317,6 +323,9 @@ func TestProjectManagerCodexProviderBindingSurvivesRenameAndEnrichesSnapshot(t *
 	if project.CodexProviderAuto {
 		t.Fatalf("快照 provider auto 不对，want=false got=true")
 	}
+	if project.RunCommand != "npm run dev" {
+		t.Fatalf("快照运行指令不对，want=%q got=%q", "npm run dev", project.RunCommand)
+	}
 
 	if err := service.ClearProjectCodexProvider(projectDir); err != nil {
 		t.Fatalf("ClearProjectCodexProvider 失败: %v", err)
@@ -330,6 +339,52 @@ func TestProjectManagerCodexProviderBindingSurvivesRenameAndEnrichesSnapshot(t *
 	}
 	if got := store.Projects[normalizedProject].CodexProviderAutoFallbackDisabled; got {
 		t.Fatalf("清除 provider 后不应保留 auto=false")
+	}
+	if got := store.Projects[normalizedProject].RunCommand; got != "npm run dev" {
+		t.Fatalf("清除 provider 不应影响运行指令，got=%q", got)
+	}
+}
+
+func TestProjectManagerRunCommandCanBeClearedWithoutDroppingProjectMeta(t *testing.T) {
+	home := setupProjectManagerTestHome(t)
+	service := NewProjectManagerService()
+
+	projectDir := filepath.Join(home, "workspace", "run-command-clear")
+	writeProviderFixture(t, "codex", []Provider{
+		{ID: 22, Name: "Project Fast", APIURL: "https://project.example.com", APIKey: "sk-project", Enabled: true},
+	})
+
+	if err := service.RenameProject(projectDir, "Run Command Alias"); err != nil {
+		t.Fatalf("RenameProject 失败: %v", err)
+	}
+	if err := service.SetProjectCodexProviderRouting(projectDir, 22, false); err != nil {
+		t.Fatalf("SetProjectCodexProviderRouting 失败: %v", err)
+	}
+	if err := service.SaveProjectRunCommand(projectDir, "pnpm dev"); err != nil {
+		t.Fatalf("SaveProjectRunCommand 失败: %v", err)
+	}
+	if err := service.SaveProjectRunCommand(projectDir, "   "); err != nil {
+		t.Fatalf("清空运行指令失败: %v", err)
+	}
+
+	store, err := service.store.load()
+	if err != nil {
+		t.Fatalf("读取 project manager store 失败: %v", err)
+	}
+
+	normalizedProject := normalizeProjectManagerProjectPath(projectDir)
+	meta, ok := store.Projects[normalizedProject]
+	if !ok {
+		t.Fatalf("清空运行指令不应删除仍包含别名/provider 的项目 meta")
+	}
+	if meta.DisplayName != "Run Command Alias" {
+		t.Fatalf("项目别名不应被清空，got=%q", meta.DisplayName)
+	}
+	if meta.CodexProviderID != 22 || !meta.CodexProviderAutoFallbackDisabled {
+		t.Fatalf("项目 provider 配置不应被清空，got=%+v", meta)
+	}
+	if meta.RunCommand != "" {
+		t.Fatalf("运行指令应被清空，got=%q", meta.RunCommand)
 	}
 }
 
@@ -1356,6 +1411,20 @@ func TestOpenProjectTerminalRejectsEmptyProjectPath(t *testing.T) {
 	err := service.OpenProjectTerminal("   ")
 	if err == nil || !strings.Contains(err.Error(), "项目路径不能为空") {
 		t.Fatalf("期望空路径报错，got=%v", err)
+	}
+}
+
+func TestRunProjectCommandRejectsMissingRunCommand(t *testing.T) {
+	home := setupProjectManagerTestHome(t)
+	service := NewProjectManagerService()
+	projectDir := filepath.Join(home, "workspace", "missing-run-command")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("创建项目目录失败: %v", err)
+	}
+
+	err := service.RunProjectCommand(projectDir)
+	if err == nil || !strings.Contains(err.Error(), "项目运行指令未配置") {
+		t.Fatalf("期望未配置运行指令报错，got=%v", err)
 	}
 }
 

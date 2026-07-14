@@ -18,6 +18,7 @@ type projectManagerStore struct {
 
 type projectManagerProjectMeta struct {
 	DisplayName                       string `json:"display_name,omitempty"`
+	RunCommand                        string `json:"run_command,omitempty"`
 	CodexProviderID                   int64  `json:"codex_provider_id,omitempty"`
 	CodexProviderAutoFallbackDisabled bool   `json:"codex_provider_auto_fallback_disabled,omitempty"`
 }
@@ -66,8 +67,8 @@ func (s *projectManagerStoreService) saveProjectDisplayName(projectPath string, 
 
 	trimmed := strings.TrimSpace(displayName)
 	meta := store.Projects[key]
-	// 项目元数据由别名和 Codex provider 绑定共同组成。
-	// 修改别名时必须保留同一项目的 provider 绑定，否则一次重命名就会误删路由事实源。
+	// 项目元数据由别名、运行指令和 Codex provider 绑定共同组成。
+	// 修改别名时必须保留同一项目的其它配置，否则一次重命名就会误删项目级事实源。
 	meta.DisplayName = trimmed
 	if trimmed == "" {
 		if projectManagerProjectMetaIsEmpty(meta) {
@@ -75,6 +76,33 @@ func (s *projectManagerStoreService) saveProjectDisplayName(projectPath string, 
 		} else {
 			store.Projects[key] = meta
 		}
+	} else {
+		store.Projects[key] = meta
+	}
+
+	return s.saveLocked(store)
+}
+
+func (s *projectManagerStoreService) saveProjectRunCommand(projectPath string, command string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	store, err := s.loadLocked()
+	if err != nil {
+		return err
+	}
+
+	key := normalizeProjectManagerProjectPath(projectPath)
+	if key == "" {
+		return errors.New("项目路径不能为空")
+	}
+
+	meta := store.Projects[key]
+	// 运行指令是项目级配置，和别名/provider 共用同一条 meta 记录。
+	// 这里只更新 run_command，避免用户编辑指令时把已有别名或路由策略“顺手清空”。
+	meta.RunCommand = strings.TrimSpace(command)
+	if projectManagerProjectMetaIsEmpty(meta) {
+		delete(store.Projects, key)
 	} else {
 		store.Projects[key] = meta
 	}
@@ -230,6 +258,7 @@ func projectManagerSessionIsHidden(store projectManagerStore, sessionID string) 
 
 func projectManagerProjectMetaIsEmpty(meta projectManagerProjectMeta) bool {
 	return strings.TrimSpace(meta.DisplayName) == "" &&
+		strings.TrimSpace(meta.RunCommand) == "" &&
 		meta.CodexProviderID <= 0 &&
 		!meta.CodexProviderAutoFallbackDisabled
 }

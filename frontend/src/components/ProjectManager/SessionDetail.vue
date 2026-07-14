@@ -6,6 +6,7 @@ import { useVirtualizer, type VirtualItem } from '@tanstack/vue-virtual'
 import BaseButton from '../common/BaseButton.vue'
 import BaseModal from '../common/BaseModal.vue'
 import './projectManager.css'
+import { SetText as setClipboardText } from '../../wails-runtime-compat/clipboard'
 import {
   fetchSessionConversationDetail,
   forkSessionConversation,
@@ -27,10 +28,14 @@ const forking = ref(false)
 const openingTerminal = ref(false)
 const selecting = ref(false)
 const userOnlyMode = ref(false)
+const searchOpen = ref(false)
+const searchQuery = ref('')
+const searchActiveIndex = ref(-1)
 const detail = ref<SessionConversationDetail | null>(null)
 const expandedIDs = ref<string[]>([])
 const selectedIDs = ref<string[]>([])
 const conversationViewport = ref<HTMLElement | null>(null)
+const searchInputRef = ref<HTMLInputElement | null>(null)
 
 const deleteState = reactive({
   open: false,
@@ -45,6 +50,15 @@ type ConversationDisplayEntry = {
   item: SessionConversationItem
   items: SessionConversationItem[]
   agentGroup: boolean
+}
+
+type ConversationSearchMatch = {
+  item: SessionConversationItem
+}
+
+type ConversationHighlightSegment = {
+  text: string
+  match: boolean
 }
 
 const sessionID = computed(() => {
@@ -65,6 +79,7 @@ const items = computed(() => detail.value?.items ?? [])
 const itemByID = computed(() => new Map(items.value.map(item => [item.id, item])))
 const selectedSet = computed(() => new Set(selectedIDs.value))
 const expandedSet = computed(() => new Set(expandedIDs.value))
+const normalizedSearchQuery = computed(() => searchQuery.value.trim())
 const selectedItems = computed(() =>
   selectedIDs.value
     .map(itemID => itemByID.value.get(itemID))
@@ -91,11 +106,81 @@ const userOnlyModeLabel = computed(() =>
     ? t('components.projectManager.detail.showFullConversation')
     : t('components.projectManager.detail.showUserOnly'),
 )
+const searchMatches = computed<ConversationSearchMatch[]>(() => {
+  const needle = normalizedSearchQuery.value.toLocaleLowerCase()
+  if (!needle) {
+    return []
+  }
+
+  return items.value
+    .filter(item => item.content.toLocaleLowerCase().includes(needle))
+    .map(item => ({ item }))
+})
+const searchMatchedIDs = computed(() =>
+  new Set(searchMatches.value.map(match => match.item.id)),
+)
+const activeSearchMatch = computed(() => {
+  if (searchActiveIndex.value < 0) {
+    return null
+  }
+  return searchMatches.value[searchActiveIndex.value] ?? null
+})
+const hasSearchQuery = computed(() => normalizedSearchQuery.value.length > 0)
+const hasSearchMatches = computed(() => searchMatches.value.length > 0)
+const searchSummaryLabel = computed(() => {
+  if (!hasSearchQuery.value) {
+    return t('components.projectManager.detail.searchIdle')
+  }
+  if (!hasSearchMatches.value) {
+    return t('components.projectManager.detail.searchNoResults')
+  }
+  return t('components.projectManager.detail.searchResultStatus', {
+    current: searchActiveIndex.value + 1,
+    total: searchMatches.value.length,
+  })
+})
 const getConversationContent = (item: SessionConversationItem) => {
   if (userOnlyMode.value && item.role === 'agent') {
     return t('components.projectManager.detail.agentCollapsed')
   }
   return item.content
+}
+
+const buildConversationHighlightSegments = (content: string): ConversationHighlightSegment[] => {
+  const needle = normalizedSearchQuery.value
+  if (!needle) {
+    return [{ text: content, match: false }]
+  }
+
+  const source = content.toLocaleLowerCase()
+  const target = needle.toLocaleLowerCase()
+  const segments: ConversationHighlightSegment[] = []
+  let cursor = 0
+  let matchIndex = source.indexOf(target, cursor)
+
+  while (matchIndex >= 0) {
+    if (matchIndex > cursor) {
+      segments.push({ text: content.slice(cursor, matchIndex), match: false })
+    }
+    segments.push({ text: content.slice(matchIndex, matchIndex + needle.length), match: true })
+    cursor = matchIndex + needle.length
+    matchIndex = source.indexOf(target, cursor)
+  }
+
+  if (cursor < content.length) {
+    segments.push({ text: content.slice(cursor), match: false })
+  }
+  return segments.length > 0 ? segments : [{ text: content, match: false }]
+}
+
+const getConversationContentSegments = (entry: ConversationDisplayEntry) => {
+  const content = entry.agentGroup
+    ? t('components.projectManager.detail.agentCollapsedCount', { count: entry.items.length })
+    : getConversationContent(entry.item)
+  if (entry.agentGroup) {
+    return [{ text: content, match: false }]
+  }
+  return buildConversationHighlightSegments(content)
 }
 
 const displayEntries = computed<ConversationDisplayEntry[]>(() => {
@@ -352,6 +437,43 @@ const toggleExpanded = async (item: SessionConversationItem) => {
   await syncVirtualConversationLayout({ anchorItemID: item.id })
 }
 
+const findSearchDisplayIndex = (item: SessionConversationItem) =>
+  displayEntries.value.findIndex(entry => entry.items.some(candidate => candidate.id === item.id))
+
+const scrollToSearchMatch = async (matchIndex: number) => {
+  const match = searchMatches.value[matchIndex]
+  if (!match) {
+    return
+  }
+
+  if (userOnlyMode.value) {
+    // 搜索命中的 Agent 内容如果还处在“仅看用户”折叠态，用户会被带到一条看不见关键词的行。
+    // 命中后自动回到完整对话，是为了保证“搜到哪里就看到哪里”，别让搜索结果跟躲猫猫似的。
+    userOnlyMode.value = false
+  }
+
+  if (match.item.role === 'agent' && shouldShowExpand(match.item)) {
+    const next = new Set(expandedIDs.value)
+    next.add(match.item.id)
+    expandedIDs.value = Array.from(next)
+  }
+
+  await nextTick()
+  await waitForNextLayout()
+  virtualizer.value.measure()
+  await waitForNextLayout()
+
+  const displayIndex = findSearchDisplayIndex(match.item)
+  if (displayIndex < 0) {
+    return
+  }
+
+  virtualizer.value.scrollToIndex(displayIndex, { align: 'center' })
+  await waitForNextLayout()
+  const rowElement = messageRowElements.get(displayEntries.value[displayIndex]?.id ?? '')
+  rowElement?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+}
+
 const handleBubbleClick = (entry: ConversationDisplayEntry) => {
   if (selecting.value || userOnlyMode.value || entry.agentGroup || entry.role !== 'agent') {
     return
@@ -499,6 +621,27 @@ const loadDetail = async () => {
   }
 }
 
+const openSearchPanel = async () => {
+  searchOpen.value = true
+  await nextTick()
+  searchInputRef.value?.focus()
+  searchInputRef.value?.select()
+}
+
+const closeSearchPanel = () => {
+  searchOpen.value = false
+  searchQuery.value = ''
+  searchActiveIndex.value = -1
+}
+
+const toggleSearchPanel = () => {
+  if (searchOpen.value) {
+    closeSearchPanel()
+    return
+  }
+  void openSearchPanel()
+}
+
 const toggleUserOnlyMode = async () => {
   userOnlyMode.value = !userOnlyMode.value
   if (userOnlyMode.value) {
@@ -526,6 +669,38 @@ const handleOpenTerminal = async () => {
   } finally {
     openingTerminal.value = false
   }
+}
+
+const goToSearchMatch = (direction: number) => {
+  if (!searchMatches.value.length) {
+    return
+  }
+
+  const total = searchMatches.value.length
+  const current = searchActiveIndex.value >= 0 ? searchActiveIndex.value : 0
+  const nextIndex = (current + direction + total) % total
+  searchActiveIndex.value = nextIndex
+  void scrollToSearchMatch(nextIndex)
+}
+
+const handleSearchInputKeydown = (event: KeyboardEvent) => {
+  if (event.key === 'Escape') {
+    closeSearchPanel()
+    return
+  }
+  if (event.key !== 'Enter') {
+    return
+  }
+  event.preventDefault()
+  goToSearchMatch(event.shiftKey ? -1 : 1)
+}
+
+const isSearchMatchedEntry = (entry: ConversationDisplayEntry) =>
+  entry.items.some(item => searchMatchedIDs.value.has(item.id))
+
+const isSearchActiveEntry = (entry: ConversationDisplayEntry) => {
+  const activeID = activeSearchMatch.value?.item.id
+  return !!activeID && entry.items.some(item => item.id === activeID)
 }
 
 const forkConversationFromMessages = async (messageIDs: string[]) => {
@@ -559,6 +734,22 @@ const handleForkFromUser = (item: SessionConversationItem) => {
     return
   }
   void forkConversationFromMessages([item.id])
+}
+
+const copyConversationItem = async (item: SessionConversationItem) => {
+  const text = item.content
+  if (!text) {
+    showToast(t('components.projectManager.detail.copyUnavailable'), 'warning')
+    return
+  }
+
+  try {
+    await setClipboardText(text)
+    showToast(t('components.projectManager.detail.copySuccess'), 'success')
+  } catch (error) {
+    console.error('failed to copy conversation item', error)
+    showToast(extractErrorMessage(error), 'error')
+  }
 }
 
 const forkSelectedConversation = () => {
@@ -615,6 +806,19 @@ watch(selecting, () => {
   void syncVirtualConversationLayout()
 })
 
+watch(searchMatches, (matches) => {
+  if (!hasSearchQuery.value) {
+    searchActiveIndex.value = -1
+    return
+  }
+  if (!matches.length) {
+    searchActiveIndex.value = -1
+    return
+  }
+  searchActiveIndex.value = 0
+  void scrollToSearchMatch(0)
+})
+
 onMounted(() => {
   void loadDetail()
 })
@@ -641,6 +845,78 @@ onMounted(() => {
       </div>
 
       <div class="detail-app-header-actions">
+        <div class="detail-search-shell">
+          <button
+            class="detail-header-text-button"
+            type="button"
+            :class="{ active: searchOpen || hasSearchQuery }"
+            :disabled="loading || !detail"
+            @click="toggleSearchPanel"
+          >
+            {{ t('components.projectManager.detail.searchButton') }}
+          </button>
+
+          <div
+            v-if="searchOpen"
+            class="detail-search-popover"
+            @click.stop
+            @keydown.stop
+          >
+            <div class="detail-search-input-row">
+              <input
+                ref="searchInputRef"
+                v-model="searchQuery"
+                class="detail-search-input"
+                type="search"
+                :placeholder="t('components.projectManager.detail.searchPlaceholder')"
+                @keydown="handleSearchInputKeydown"
+              />
+              <button
+                class="detail-search-close"
+                type="button"
+                :title="t('components.projectManager.detail.closeSearch')"
+                :aria-label="t('components.projectManager.detail.closeSearch')"
+                @click="closeSearchPanel"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M7 7 17 17" />
+                  <path d="M17 7 7 17" />
+                </svg>
+              </button>
+            </div>
+
+            <div class="detail-search-footer">
+              <span :class="['detail-search-status', { empty: hasSearchQuery && !hasSearchMatches }]">
+                {{ searchSummaryLabel }}
+              </span>
+              <div class="detail-search-nav">
+                <button
+                  type="button"
+                  :disabled="!hasSearchMatches"
+                  :title="t('components.projectManager.detail.previousSearchResult')"
+                  :aria-label="t('components.projectManager.detail.previousSearchResult')"
+                  @click="goToSearchMatch(-1)"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M6 15l6-6 6 6" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  :disabled="!hasSearchMatches"
+                  :title="t('components.projectManager.detail.nextSearchResult')"
+                  :aria-label="t('components.projectManager.detail.nextSearchResult')"
+                  @click="goToSearchMatch(1)"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M6 9l6 6 6-6" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <button
           class="detail-header-text-button accent"
           type="button"
@@ -695,7 +971,16 @@ onMounted(() => {
           :style="{ transform: `translateY(${entry.row.start}px)` }"
         >
           <div
-            :class="['message-entry', `is-${entry.entry.role}`, { selected: isEntrySelected(entry.entry), 'is-selecting': selecting }]"
+            :class="[
+              'message-entry',
+              `is-${entry.entry.role}`,
+              {
+                selected: isEntrySelected(entry.entry),
+                'is-selecting': selecting,
+                'search-hit': isSearchMatchedEntry(entry.entry),
+                'search-active': isSearchActiveEntry(entry.entry),
+              },
+            ]"
             :role="selecting ? 'checkbox' : undefined"
             :aria-checked="selecting ? isEntrySelected(entry.entry) : undefined"
             :tabindex="selecting ? 0 : undefined"
@@ -736,7 +1021,13 @@ onMounted(() => {
                     },
                   ]"
                 >
-                  {{ entry.entry.agentGroup ? t('components.projectManager.detail.agentCollapsedCount', { count: entry.entry.items.length }) : getConversationContent(entry.entry.item) }}
+                  <template
+                    v-for="(segment, segmentIndex) in getConversationContentSegments(entry.entry)"
+                    :key="`${entry.entry.id}-${segmentIndex}`"
+                  >
+                    <mark v-if="segment.match" class="conversation-search-mark">{{ segment.text }}</mark>
+                    <span v-else>{{ segment.text }}</span>
+                  </template>
                 </span>
                 <span
                   v-if="!entry.entry.agentGroup && shouldShowExpand(entry.entry.item)"
@@ -746,15 +1037,17 @@ onMounted(() => {
                 </span>
               </div>
 
-              <div :class="['message-meta', `is-${entry.entry.role}`]">
-                <span>{{ entry.entry.role === 'user' ? t('components.projectManager.detail.userLabel') : t('components.projectManager.detail.agentLabel') }}</span>
-                <span>{{ formatUpdatedAt(entry.entry.item.timestamp) }}</span>
+              <div
+                v-if="!selecting && !entry.entry.agentGroup"
+                :class="['message-actions-row', `is-${entry.entry.role}`]"
+              >
                 <button
-                  v-if="entry.entry.role === 'user' && !selecting"
-                  class="message-meta-action fork"
+                  v-if="entry.entry.role === 'user'"
+                  class="message-meta-action"
                   type="button"
                   :disabled="forking || !entry.entry.item.turn_id"
-                  :title="entry.entry.item.turn_id ? t('components.projectManager.detail.forkFromHere') : t('components.projectManager.detail.forkUnavailable')"
+                  :title="entry.entry.item.turn_id ? t('components.projectManager.detail.forkConversationTitle') : t('components.projectManager.detail.forkUnavailable')"
+                  :aria-label="entry.entry.item.turn_id ? t('components.projectManager.detail.forkConversationTitle') : t('components.projectManager.detail.forkUnavailable')"
                   @click.stop="handleForkFromUser(entry.entry.item)"
                 >
                   <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -762,8 +1055,24 @@ onMounted(() => {
                     <path d="M14.25 11.5 18 15.25 14.25 19" />
                     <path d="M7 5.75a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" />
                   </svg>
-                  <span>{{ t('components.projectManager.detail.forkFromHere') }}</span>
                 </button>
+                <button
+                  class="message-meta-action"
+                  type="button"
+                  :title="t('components.projectManager.detail.copyConversationTitle')"
+                  :aria-label="t('components.projectManager.detail.copyConversationTitle')"
+                  @click.stop="copyConversationItem(entry.entry.item)"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <rect x="8" y="8" width="10" height="10" rx="2" />
+                    <path d="M6 14H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v1" />
+                  </svg>
+                </button>
+              </div>
+
+              <div :class="['message-meta', `is-${entry.entry.role}`]">
+                <span class="message-meta-role">{{ entry.entry.role === 'user' ? t('components.projectManager.detail.userLabel') : t('components.projectManager.detail.agentLabel') }}</span>
+                <span>{{ formatUpdatedAt(entry.entry.item.timestamp) }}</span>
               </div>
             </div>
           </div>

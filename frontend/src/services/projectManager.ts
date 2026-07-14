@@ -7,6 +7,7 @@ export interface ProjectSummary {
   path: string;
   source_name: string;
   display_name: string;
+  run_command?: string;
   updated_at: number;
   session_count: number;
   codex_provider_id?: number;
@@ -146,6 +147,26 @@ export const openProjectTerminal = async (
 ): Promise<void> => {
   await Call.ByName(
     `${PROJECT_MANAGER_SERVICE}.OpenProjectTerminal`,
+    projectPath,
+  );
+};
+
+export const saveProjectRunCommand = async (
+  projectPath: string,
+  command: string,
+): Promise<void> => {
+  await Call.ByName(
+    `${PROJECT_MANAGER_SERVICE}.SaveProjectRunCommand`,
+    projectPath,
+    command,
+  );
+};
+
+export const runProjectCommand = async (
+  projectPath: string,
+): Promise<void> => {
+  await Call.ByName(
+    `${PROJECT_MANAGER_SERVICE}.RunProjectCommand`,
     projectPath,
   );
 };

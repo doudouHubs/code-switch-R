@@ -19,6 +19,7 @@ type ProjectSummary struct {
 	Path              string `json:"path"`
 	SourceName        string `json:"source_name"`
 	DisplayName       string `json:"display_name"`
+	RunCommand        string `json:"run_command,omitempty"`
 	UpdatedAt         int64  `json:"updated_at"`
 	SessionCount      int    `json:"session_count"`
 	CodexProviderID   int64  `json:"codex_provider_id,omitempty"`
@@ -315,6 +316,47 @@ func (s *ProjectManagerService) OpenProjectTerminal(projectPath string) error {
 		return errors.New("项目路径不能为空")
 	}
 	return s.openProjectManagerProjectTerminal(projectPath)
+}
+
+func (s *ProjectManagerService) SaveProjectRunCommand(projectPath string, command string) error {
+	projectPath = normalizeProjectManagerProjectPath(projectPath)
+	if projectPath == "" {
+		return errors.New("项目路径不能为空")
+	}
+	if err := s.store.saveProjectRunCommand(projectPath, command); err != nil {
+		return err
+	}
+	s.invalidateProjectManagerSnapshotCache()
+	return nil
+}
+
+func (s *ProjectManagerService) RunProjectCommand(projectPath string) error {
+	projectPath = normalizeProjectManagerProjectPath(projectPath)
+	if projectPath == "" {
+		return errors.New("项目路径不能为空")
+	}
+
+	projectInfo, err := os.Stat(projectPath)
+	if err != nil || !projectInfo.IsDir() {
+		return errors.New("项目路径不存在或不是目录")
+	}
+
+	store, err := s.store.load()
+	if err != nil {
+		return err
+	}
+	command := ""
+	if meta, ok := store.Projects[projectPath]; ok {
+		command = strings.TrimSpace(meta.RunCommand)
+	}
+	if command == "" {
+		return errors.New("项目运行指令未配置")
+	}
+
+	if err := s.runProjectManagerProjectCommand(projectPath, command); err != nil {
+		return fmt.Errorf("启动项目运行指令失败: %w", err)
+	}
+	return nil
 }
 
 func (s *ProjectManagerService) RunProjectAICommit(projectPath string) error {

@@ -27,9 +27,11 @@ import {
   openProjectTerminal,
   openSessionTerminal,
   runProjectAICommit,
+  runProjectCommand,
   refreshProjectManagerSnapshot,
   renameProject,
   renameSession,
+  saveProjectRunCommand,
   setProjectCodexProvider,
   type ProjectSummary,
   type ProjectManagerSnapshot,
@@ -55,6 +57,7 @@ const providerLoading = ref(false);
 const openingSessionIds = ref<string[]>([]);
 const openingProjectTerminalId = ref("");
 const committingProjectId = ref("");
+const runningProjectCommandId = ref("");
 const deletingProjectIds = ref<string[]>([]);
 const deletingSessionIds = ref<string[]>([]);
 const snapshotProjects = ref<ProjectSummary[]>([]);
@@ -74,6 +77,15 @@ const providerModalState = reactive({
   projectName: "",
   selectedProviderId: 0,
   autoFallback: true,
+});
+const runCommandSaving = ref(false);
+const runCommandModalState = reactive({
+  open: false,
+  projectId: "",
+  projectPath: "",
+  projectName: "",
+  command: "",
+  originalCommand: "",
 });
 const deleteState = reactive({
   open: false,
@@ -276,6 +288,26 @@ const closeProviderModal = () => {
   providerModalState.open = false;
 };
 
+const openRunCommandModal = (project: ProjectSummary) => {
+  if (!project?.path || runCommandSaving.value) {
+    return;
+  }
+  const command = project.run_command ?? "";
+  runCommandModalState.projectId = project.id;
+  runCommandModalState.projectPath = project.path;
+  runCommandModalState.projectName = project.display_name;
+  runCommandModalState.command = command;
+  runCommandModalState.originalCommand = command;
+  runCommandModalState.open = true;
+};
+
+const closeRunCommandModal = () => {
+  if (runCommandSaving.value) {
+    return;
+  }
+  runCommandModalState.open = false;
+};
+
 const openDeleteModal = (
   type: "project" | "session",
   payload: ProjectSummary | SessionSummary,
@@ -375,6 +407,47 @@ const saveProjectCodexProvider = async () => {
     showToast(extractErrorMessage(error), "error");
   } finally {
     providerSaving.value = false;
+  }
+};
+
+const saveProjectRunCommandSetting = async () => {
+  const projectPath = runCommandModalState.projectPath;
+  const command = runCommandModalState.command.trim();
+  const hadCommand = !!runCommandModalState.originalCommand.trim();
+  if (!projectPath) {
+    showToast(t("components.projectManager.errors.projectNotFound"), "error");
+    return;
+  }
+  if (!command && !hadCommand) {
+    showToast(t("components.projectManager.runCommand.emptyCommand"), "warning");
+    return;
+  }
+
+  runCommandSaving.value = true;
+  try {
+    await saveProjectRunCommand(projectPath, command);
+    snapshotProjects.value = snapshotProjects.value.map((project) => {
+      if (project.path !== projectPath) {
+        return project;
+      }
+      return {
+        ...project,
+        run_command: command || undefined,
+      };
+    });
+    runCommandModalState.open = false;
+    showToast(
+      command
+        ? t("components.projectManager.runCommand.saved")
+        : t("components.projectManager.runCommand.cleared"),
+      "success",
+    );
+    await loadSnapshot(true);
+  } catch (error) {
+    console.error("failed to save project run command", error);
+    showToast(extractErrorMessage(error), "error");
+  } finally {
+    runCommandSaving.value = false;
   }
 };
 
@@ -546,6 +619,28 @@ const handleOpenProjectTerminal = async (project: ProjectSummary) => {
   }
 };
 
+const handleRunProjectCommand = async (project: ProjectSummary) => {
+  if (!project?.path || runningProjectCommandId.value === project.id) {
+    return;
+  }
+
+  if (!project.run_command?.trim()) {
+    openRunCommandModal(project);
+    return;
+  }
+
+  runningProjectCommandId.value = project.id;
+  try {
+    await runProjectCommand(project.path);
+    showToast(t("components.projectManager.runCommand.started"), "success");
+  } catch (error) {
+    console.error("failed to run project command", error);
+    showToast(extractErrorMessage(error), "error");
+  } finally {
+    runningProjectCommandId.value = "";
+  }
+};
+
 const handleRunProjectAICommit = async (project: ProjectSummary) => {
   if (!project?.path || committingProjectId.value === project.id) {
     return;
@@ -610,6 +705,8 @@ const isProjectDeleting = (projectID: string) =>
   deletingProjectIds.value.includes(projectID);
 const isProjectCommitting = (projectID: string) =>
   committingProjectId.value === projectID;
+const isProjectRunning = (projectID: string) =>
+  runningProjectCommandId.value === projectID;
 const isSessionDeleting = (sessionID: string) =>
   deletingSessionIds.value.includes(sessionID);
 
@@ -670,10 +767,13 @@ onBeforeUnmount(() => {
       :format-updated-at="formatUpdatedAt"
       :is-project-deleting="isProjectDeleting"
       :is-project-committing="isProjectCommitting"
+      :is-project-running="isProjectRunning"
       @enter="enterProject"
       @delete="openDeleteModal('project', $event)"
       @open-folder="handleOpenProjectFolder"
       @set-codex-provider="openProviderModal"
+      @run-command="handleRunProjectCommand"
+      @edit-run-command="openRunCommandModal"
       @commit="handleRunProjectAICommit"
     />
 
@@ -783,6 +883,50 @@ onBeforeUnmount(() => {
             @click="saveProjectCodexProvider"
           >
             {{ t("components.projectManager.provider.save") }}
+          </BaseButton>
+        </footer>
+      </div>
+    </BaseModal>
+
+    <BaseModal
+      :open="runCommandModalState.open"
+      :title="t('components.projectManager.runCommand.title')"
+      @close="closeRunCommandModal"
+    >
+      <div class="project-run-command-modal-body">
+        <p class="rename-hint">
+          {{
+            t("components.projectManager.runCommand.hint", {
+              name: runCommandModalState.projectName,
+            })
+          }}
+        </p>
+
+        <label class="project-run-command-field">
+          <span>{{ t("components.projectManager.runCommand.commandLabel") }}</span>
+          <textarea
+            v-model="runCommandModalState.command"
+            :placeholder="t('components.projectManager.runCommand.placeholder')"
+            rows="7"
+            @keydown.stop
+          ></textarea>
+        </label>
+
+        <p class="project-run-command-footnote">
+          {{ t("components.projectManager.runCommand.footnote") }}
+        </p>
+
+        <footer class="form-actions rename-actions">
+          <BaseButton variant="outline" type="button" @click="closeRunCommandModal">
+            {{ t("components.projectManager.rename.cancel") }}
+          </BaseButton>
+          <BaseButton
+            type="button"
+            :disabled="runCommandSaving"
+            :loading="runCommandSaving"
+            @click="saveProjectRunCommandSetting"
+          >
+            {{ t("components.projectManager.runCommand.save") }}
           </BaseButton>
         </footer>
       </div>

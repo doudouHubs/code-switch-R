@@ -54,6 +54,7 @@ type projectManagerProjectState struct {
 	Path              string
 	SourceName        string
 	DisplayName       string
+	RunCommand        string
 	UpdatedAt         time.Time
 	Sessions          []*projectManagerSessionState
 	CodexProviderID   int64
@@ -382,8 +383,12 @@ func (s *ProjectManagerService) groupProjectManagerProjects(
 				sourceName = "Unknown Project"
 			}
 			displayName := sourceName
-			if meta, ok := store.Projects[projectPath]; ok && strings.TrimSpace(meta.DisplayName) != "" {
-				displayName = strings.TrimSpace(meta.DisplayName)
+			var projectMeta projectManagerProjectMeta
+			if meta, ok := store.Projects[projectPath]; ok {
+				projectMeta = meta
+				if strings.TrimSpace(meta.DisplayName) != "" {
+					displayName = strings.TrimSpace(meta.DisplayName)
+				}
 			}
 			codexProviderID, codexProviderName := resolveProjectManagerCodexProvider(store, projectPath)
 			codexProviderAuto := resolveProjectManagerCodexProviderAutoFallback(store, projectPath)
@@ -391,6 +396,7 @@ func (s *ProjectManagerService) groupProjectManagerProjects(
 				Path:              projectPath,
 				SourceName:        sourceName,
 				DisplayName:       displayName,
+				RunCommand:        strings.TrimSpace(projectMeta.RunCommand),
 				CodexProviderID:   codexProviderID,
 				CodexProviderName: codexProviderName,
 				CodexProviderAuto: codexProviderAuto,
@@ -857,6 +863,7 @@ func buildProjectManagerProjectSummaries(projects map[string]*projectManagerProj
 			Path:              project.Path,
 			SourceName:        project.SourceName,
 			DisplayName:       project.DisplayName,
+			RunCommand:        project.RunCommand,
 			UpdatedAt:         project.UpdatedAt.UnixMilli(),
 			SessionCount:      len(project.Sessions),
 			CodexProviderID:   project.CodexProviderID,

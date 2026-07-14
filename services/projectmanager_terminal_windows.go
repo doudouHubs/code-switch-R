@@ -224,6 +224,30 @@ func (s *ProjectManagerService) runProjectManagerAICommit(projectPath string) er
 	return nil
 }
 
+func (s *ProjectManagerService) runProjectManagerProjectCommand(projectPath string, command string) error {
+	projectPath = normalizeProjectManagerProjectPath(projectPath)
+	if projectPath == "" {
+		return errors.New("项目路径不能为空")
+	}
+
+	projectInfo, err := os.Stat(projectPath)
+	if err != nil || !projectInfo.IsDir() {
+		return errors.New("项目路径不存在或不是目录")
+	}
+
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return errors.New("项目运行指令未配置")
+	}
+
+	if err := startProjectManagerProjectCommandTerminal(projectPath, command); err != nil {
+		return err
+	}
+
+	log.Printf("[ProjectManager] 已启动项目运行指令 project=%s", projectPath)
+	return nil
+}
+
 func (s *ProjectManagerService) openProjectManagerProjectTerminal(projectPath string) error {
 	projectPath = normalizeProjectManagerProjectPath(projectPath)
 	if projectPath == "" {
@@ -339,6 +363,20 @@ func buildProjectManagerProjectTerminalWTArgs(projectPath string, windowID strin
 		"new-tab",
 		"-d", projectPath,
 		"--",
+		wrapperPath,
+	}
+}
+
+func buildProjectManagerProjectCommandWTArgs(projectPath string, windowID string, tabTitle string, wrapperPath string) []string {
+	return []string{
+		"-w", resolveProjectManagerWTWindowName(windowID),
+		"new-tab",
+		"-d", projectPath,
+		"--title", tabTitle,
+		"--",
+		"cmd.exe",
+		"/d",
+		"/c",
 		wrapperPath,
 	}
 }
@@ -482,6 +520,58 @@ func startProjectManagerProjectFallbackTerminal(projectPath string) error {
 
 	// 这里是用户主动点“打开终端”要拿到一个全新的可交互 codex 终端，
 	// 所以 fallback 也必须像系统“在终端中打开”那样直接起可见 shell，不能偷藏后台进程。
+	cmd := exec.Command(innerArgs[0], innerArgs[1:]...)
+	cmd.Dir = projectPath
+	return cmd.Start()
+}
+
+func startProjectManagerProjectCommandTerminal(projectPath string, command string) error {
+	projectWindowID := projectManagerProjectWindowID(projectPath)
+	tabTitle := projectManagerProjectRunTabTitle(projectPath)
+	terminalCommand := buildProjectManagerProjectCommandPowerShellCommand(projectPath, command)
+
+	wtPath := findProjectManagerWTExecutable()
+	if wtPath != "" {
+		_, wrapperPath, err := createProjectManagerTerminalLaunchFiles(
+			"project-run-"+projectWindowID,
+			terminalCommand,
+		)
+		if err != nil {
+			return fmt.Errorf("创建项目运行脚本失败: %w", err)
+		}
+
+		args := buildProjectManagerProjectCommandWTArgs(projectPath, projectWindowID, tabTitle, wrapperPath)
+		if err := startProjectManagerWTCommand(projectPath, wtPath, args); err == nil {
+			log.Printf("[ProjectManager] 已通过 WT 启动项目运行指令 project=%s window=%s title=%q", projectPath, projectWindowID, tabTitle)
+			return nil
+		} else {
+			log.Printf("[ProjectManager] 启动项目运行 WT 失败，准备回退 shell project=%s window=%s err=%v", projectPath, projectWindowID, err)
+		}
+	}
+
+	if err := startProjectManagerProjectCommandFallbackTerminal(projectPath, terminalCommand); err != nil {
+		return fmt.Errorf("启动项目运行终端失败: %w", err)
+	}
+	log.Printf("[ProjectManager] WT 不可用，已回退到 shell 项目运行指令 project=%s", projectPath)
+	return nil
+}
+
+func startProjectManagerProjectCommandFallbackTerminal(projectPath string, terminalCommand string) error {
+	shellExecutable, err := projectManagerRequiredPwshExecutable()
+	if err != nil {
+		return err
+	}
+	scriptPath, err := createProjectManagerTerminalScript(
+		"project-run-"+projectManagerProjectWindowID(projectPath),
+		terminalCommand,
+	)
+	if err != nil {
+		return err
+	}
+	innerArgs := buildProjectManagerPowerShellFileArgs(shellExecutable, scriptPath)
+
+	// 用户运行的是前台任务，fallback 也必须打开可见 pwsh。
+	// 如果这里复用 hidden 启动器，用户看到的就会是“按钮点了但没窗口”，这锅不能再背了。
 	cmd := exec.Command(innerArgs[0], innerArgs[1:]...)
 	cmd.Dir = projectPath
 	return cmd.Start()
@@ -678,6 +768,28 @@ func buildProjectManagerProjectTerminalPowerShellCommand(projectPath string) str
 	// 这里故意只做两件事：切到项目目录，然后进入新的 codex 交互终端。
 	// 头部按钮的职责是“新开一个项目终端”，不是恢复历史会话，所以绝不能混入 resume。
 	return fmt.Sprintf("%s; Set-Location -LiteralPath '%s'; %s", buildProjectManagerCodexResolverPowerShell(), escapedProjectPath, buildProjectManagerCodexCommand())
+}
+
+func buildProjectManagerProjectCommandPowerShellCommand(projectPath string, command string) string {
+	escapedProjectPath := escapeProjectManagerPowerShellSingleQuoted(projectPath)
+	trimmedCommand := strings.TrimSpace(command)
+	normalizedCommand := strings.ReplaceAll(strings.ReplaceAll(trimmedCommand, "\r\n", "\n"), "\r", "\n")
+	normalizedCommand = strings.ReplaceAll(normalizedCommand, "\n", "\r\n")
+
+	// 用户指令按脚本正文原样落地，不能再包进 -EncodedCommand 或 -Command。
+	// 这样多行命令、引号、管道符都由 pwsh 脚本语义处理，避免 WT/Win32 命令行二次拆词。
+	return strings.Join([]string{
+		fmt.Sprintf("Set-Location -LiteralPath '%s'", escapedProjectPath),
+		normalizedCommand,
+	}, "\r\n")
+}
+
+func projectManagerProjectRunTabTitle(projectPath string) string {
+	name := strings.TrimSpace(filepath.Base(projectPath))
+	if name == "" || name == "." {
+		name = "Project"
+	}
+	return fmt.Sprintf("[PM]Run - %s", name)
 }
 
 func createProjectManagerTerminalLaunchFiles(prefix string, command string) (string, string, error) {

@@ -96,6 +96,30 @@ func TestBuildProjectManagerProjectTerminalWTArgs(t *testing.T) {
 	}
 }
 
+func TestBuildProjectManagerProjectCommandWTArgsUsesCmdBoundary(t *testing.T) {
+	projectPath := `F:\GitlabProjects\code-switch-R`
+	windowID := projectManagerProjectWindowID(projectPath)
+	tabTitle := "[PM]Run - code-switch-R"
+	wrapperPath := `C:\Users\X1\.code-switch\project-manager-terminal-wrappers\project-run.cmd`
+
+	got := buildProjectManagerProjectCommandWTArgs(projectPath, windowID, tabTitle, wrapperPath)
+	want := []string{
+		"-w", windowID,
+		"new-tab",
+		"-d", projectPath,
+		"--title", tabTitle,
+		"--",
+		"cmd.exe",
+		"/d",
+		"/c",
+		wrapperPath,
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("项目运行指令 WT 参数不对，want=%v got=%v", want, got)
+	}
+}
+
 func TestBuildProjectManagerPowerShellLaunchCommand(t *testing.T) {
 	sessionID := "session'o1"
 	runtimePath := `C:\Users\X1\.code-switch\project-manager-runtime\session-o1.json`
@@ -214,6 +238,26 @@ func TestBuildProjectManagerTerminalScriptContent(t *testing.T) {
 	}
 	if !strings.Contains(got, "\r\n") {
 		t.Fatalf("Windows 终端脚本应使用 CRLF，got=%q", got)
+	}
+}
+
+func TestBuildProjectManagerProjectCommandPowerShellCommand(t *testing.T) {
+	projectPath := `F:\GitlabProjects\code-switch-R`
+	userCommand := "npm run dev\npnpm test -- --watch"
+
+	got := buildProjectManagerProjectCommandPowerShellCommand(projectPath, userCommand)
+	expectedParts := []string{
+		"Set-Location -LiteralPath 'F:\\GitlabProjects\\code-switch-R'",
+		"npm run dev",
+		"pnpm test -- --watch",
+	}
+	for _, part := range expectedParts {
+		if !strings.Contains(got, part) {
+			t.Fatalf("项目运行脚本缺少片段 %q，got=%q", part, got)
+		}
+	}
+	if !strings.Contains(got, "\r\n") {
+		t.Fatalf("项目运行脚本应使用 CRLF 分隔主步骤，got=%q", got)
 	}
 }
 

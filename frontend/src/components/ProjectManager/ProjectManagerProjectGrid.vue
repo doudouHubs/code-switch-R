@@ -15,6 +15,7 @@ defineProps<{
   formatUpdatedAt: (timestamp: number) => string
   isProjectDeleting: (projectId: string) => boolean
   isProjectCommitting: (projectId: string) => boolean
+  isProjectRunning: (projectId: string) => boolean
 }>()
 
 const emit = defineEmits<{
@@ -22,6 +23,8 @@ const emit = defineEmits<{
   delete: [project: ProjectSummary]
   'open-folder': [project: ProjectSummary]
   'set-codex-provider': [project: ProjectSummary]
+  'run-command': [project: ProjectSummary]
+  'edit-run-command': [project: ProjectSummary]
   commit: [project: ProjectSummary]
 }>()
 
@@ -32,6 +35,10 @@ const resolveProjectActions = (project: ProjectSummary): ProjectManagerCardMenuA
     key: `set-codex-provider:${project.id}`,
     label: t('components.projectManager.card.setCodexProvider'),
     accent: true,
+  },
+  {
+    key: `edit-run-command:${project.id}`,
+    label: t('components.projectManager.card.editRunCommand'),
   },
   {
     key: `delete:${project.id}`,
@@ -47,6 +54,10 @@ const handleProjectAction = (project: ProjectSummary, actionKey: string) => {
   }
   if (actionKey.startsWith('set-codex-provider:')) {
     emit('set-codex-provider', project)
+    return
+  }
+  if (actionKey.startsWith('edit-run-command:')) {
+    emit('edit-run-command', project)
     return
   }
   if (actionKey.startsWith('delete:')) {
@@ -65,13 +76,32 @@ const handleProjectAction = (project: ProjectSummary, actionKey: string) => {
     >
       <div class="card-topline">
         <h3 class="card-title">{{ project.display_name }}</h3>
-        <ProjectManagerCardMenu
-          :label="t('components.projectManager.card.moreActions')"
-          :actions="resolveProjectActions(project)"
-          :loading="isProjectDeleting(project.id)"
-          :disabled="isProjectDeleting(project.id)"
-          @select="handleProjectAction(project, $event)"
-        />
+        <div class="card-topline-actions">
+          <button
+            :class="['card-run-trigger', { 'is-loading': isProjectRunning(project.id) }]"
+            type="button"
+            :title="t('components.projectManager.card.runProjectCommand')"
+            :aria-label="t('components.projectManager.card.runProjectCommand')"
+            :disabled="isProjectDeleting(project.id) || isProjectRunning(project.id)"
+            @click.stop="emit('run-command', project)"
+          >
+            <span
+              v-if="isProjectRunning(project.id)"
+              class="card-menu-spinner"
+              aria-hidden="true"
+            ></span>
+            <svg v-else viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M8 5.5 18.5 12 8 18.5V5.5Z" />
+            </svg>
+          </button>
+          <ProjectManagerCardMenu
+            :label="t('components.projectManager.card.moreActions')"
+            :actions="resolveProjectActions(project)"
+            :loading="isProjectDeleting(project.id)"
+            :disabled="isProjectDeleting(project.id)"
+            @select="handleProjectAction(project, $event)"
+          />
+        </div>
       </div>
       <div class="card-copy">
         <p class="card-path">{{ project.path }}</p>
