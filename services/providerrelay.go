@@ -24,6 +24,7 @@ import (
 
 // warnedServiceTiers 去重容器:首次见到未知 service_tier 时告警,之后静默。
 var warnedServiceTiers sync.Map
+var requestLogQueueUnavailableWarning sync.Once
 
 // warnUnknownTier 在首次遇到未知 service_tier 值时打印一次警告。
 // 同值的后续请求静默,不同未知 tier 分别告警一次。
@@ -980,7 +981,10 @@ func (prs *ProviderRelayService) forwardRequest(
 
 		// 【修复】判空保护：避免队列未初始化时 panic
 		if GlobalDBQueueLogs == nil {
-			fmt.Printf("⚠️  写入 request_log 失败: 队列未初始化\n")
+			// 队列异常是进程级状态，不应在每个请求结束时重复刷屏。
+			requestLogQueueUnavailableWarning.Do(func() {
+				fmt.Printf("⚠️  写入 request_log 失败: 队列未初始化\n")
+			})
 			return
 		}
 

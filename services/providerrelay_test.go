@@ -5,10 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -667,6 +670,119 @@ func TestCodexProjectPreferredProviderFallsBackWhenBlacklisted(t *testing.T) {
 	}
 	if got := gjson.Get(w.Body.String(), "provider").String(); got != "global" {
 		t.Fatalf("响应 provider 不对，want=global got=%q", got)
+	}
+}
+
+func TestCodexProjectPreferredProviderConcurrentRequestsStayIsolated(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	home := setupRenameTestEnv(t)
+
+	// 并发路由测试只验证 provider 隔离，不能把 100 条日志写进开发机数据库，
+	// 否则 SQLite 批量队列会把存储锁竞争混进路由耗时，测试结果也会污染真实 request_log。
+	originalLogQueue := GlobalDBQueueLogs
+	GlobalDBQueueLogs = nil
+	defer func() {
+		GlobalDBQueueLogs = originalLogQueue
+	}()
+
+	projectA := filepath.Join(home, "workspace", "concurrent-a")
+	projectB := filepath.Join(home, "workspace", "concurrent-b")
+	for _, projectDir := range []string{projectA, projectB} {
+		if err := os.MkdirAll(projectDir, 0o755); err != nil {
+			t.Fatalf("创建项目目录失败: %v", err)
+		}
+	}
+
+	var globalHits atomic.Int64
+	var projectAHits atomic.Int64
+	var projectBHits atomic.Int64
+	newProviderServer := func(name string, hits *atomic.Int64) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hits.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprintf(w, `{"provider":%q}`, name)
+		}))
+	}
+
+	globalServer := newProviderServer("global", &globalHits)
+	defer globalServer.Close()
+	projectAServer := newProviderServer("project-a", &projectAHits)
+	defer projectAServer.Close()
+	projectBServer := newProviderServer("project-b", &projectBHits)
+	defer projectBServer.Close()
+
+	providerService := NewProviderService()
+	if err := providerService.SaveProviders("codex", []Provider{
+		{ID: 1, Name: "Global", APIURL: globalServer.URL, APIKey: "sk-global", Enabled: true, Level: 1},
+		{ID: 2, Name: "Project A", APIURL: projectAServer.URL, APIKey: "sk-a", Enabled: false, Level: 10},
+		{ID: 3, Name: "Project B", APIURL: projectBServer.URL, APIKey: "sk-b", Enabled: false, Level: 10},
+	}); err != nil {
+		t.Fatalf("保存 provider 配置失败: %v", err)
+	}
+
+	projectManager := NewProjectManagerService()
+	if err := projectManager.SetProjectCodexProviderRouting(projectA, 2, true); err != nil {
+		t.Fatalf("绑定 Project A provider 失败: %v", err)
+	}
+	if err := projectManager.SetProjectCodexProviderRouting(projectB, 3, true); err != nil {
+		t.Fatalf("绑定 Project B provider 失败: %v", err)
+	}
+
+	router := gin.New()
+	relay := newTestRelayService(providerService)
+	// 请求捕获是独立的磁盘审计能力，本用例关闭它以避免把逐请求文件写入计入路由吞吐。
+	relay.requestCapture = nil
+	relay.registerRoutes(router)
+
+	type requestCase struct {
+		projectPath string
+		provider    string
+	}
+	requestCases := []requestCase{
+		{projectPath: projectA, provider: "project-a"},
+		{projectPath: projectB, provider: "project-b"},
+	}
+
+	const requestsPerProject = 50
+	var waitGroup sync.WaitGroup
+	errCh := make(chan error, len(requestCases)*requestsPerProject)
+	for _, testCase := range requestCases {
+		for requestIndex := 0; requestIndex < requestsPerProject; requestIndex++ {
+			waitGroup.Add(1)
+			go func(current requestCase) {
+				defer waitGroup.Done()
+				body := []byte(`{"model":"gpt-5-codex","stream":false}`)
+				req := httptest.NewRequest(http.MethodPost, "/responses", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("X-Project-Root-Path", current.projectPath)
+				w := httptest.NewRecorder()
+
+				router.ServeHTTP(w, req)
+				if w.Code != http.StatusOK {
+					errCh <- fmt.Errorf("project=%s status=%d body=%s", current.projectPath, w.Code, w.Body.String())
+					return
+				}
+				if got := gjson.Get(w.Body.String(), "provider").String(); got != current.provider {
+					errCh <- fmt.Errorf("project=%s want=%s got=%s", current.projectPath, current.provider, got)
+				}
+			}(testCase)
+		}
+	}
+	waitGroup.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Error(err)
+	}
+
+	if got := globalHits.Load(); got != 0 {
+		t.Fatalf("项目首选并发成功时不应误落默认池，global hits=%d", got)
+	}
+	if got := projectAHits.Load(); got != requestsPerProject {
+		t.Fatalf("Project A 请求发生串绑或丢失，want=%d got=%d", requestsPerProject, got)
+	}
+	if got := projectBHits.Load(); got != requestsPerProject {
+		t.Fatalf("Project B 请求发生串绑或丢失，want=%d got=%d", requestsPerProject, got)
 	}
 }
 

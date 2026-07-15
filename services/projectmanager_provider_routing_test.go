@@ -114,3 +114,28 @@ func TestProjectManagerCodexProviderLookupIgnoresWindowsPathCase(t *testing.T) {
 		t.Fatalf("Windows 路径大小写变化后绑定应保持命中，want=42 got=%d", got)
 	}
 }
+
+func BenchmarkProjectManagerCodexProviderRoutingForRequest(b *testing.B) {
+	home := b.TempDir()
+	b.Setenv("HOME", home)
+	b.Setenv("USERPROFILE", home)
+
+	projectDir := filepath.Join(home, "workspace", "routing-benchmark")
+	storeService := newProjectManagerStoreService()
+	if err := storeService.saveProjectCodexProviderRouting(projectDir, 42, true); err != nil {
+		b.Fatalf("保存项目 provider fixture 失败: %v", err)
+	}
+	headers := map[string]string{"X-Project-Root-Path": projectDir}
+	body := []byte(`{"model":"gpt-5-codex"}`)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(parallel *testing.PB) {
+		for parallel.Next() {
+			routing := projectManagerCodexProviderRoutingForRequest(headers, body)
+			if routing.ProviderID != 42 || !routing.AutoFallback {
+				b.Fatalf("项目路由结果错误: %#v", routing)
+			}
+		}
+	})
+}
