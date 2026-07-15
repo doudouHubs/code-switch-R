@@ -504,20 +504,22 @@
 .project-manager-page .card-topline-actions {
   display: inline-flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
+  justify-content: flex-start;
+  /* 两个 20px 操作按钮加 15px 固定间距，避免 flex 可用空间再次把图标撑开。 */
+  gap: 15px;
   margin-left: auto;
-  flex: 0 0 auto;
+  width: 55px;
+  flex: 0 0 55px;
 }
 
 .project-manager-page .card-run-trigger {
   border: none;
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   padding: 0;
-  border-radius: 999px;
-  background: rgba(34, 197, 94, 0.1);
-  color: #16a34a;
+  border-radius: 0;
+  background: transparent;
+  color: var(--mac-text);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -526,8 +528,9 @@
 }
 
 .project-manager-page .card-run-trigger:hover {
-  background: rgba(34, 197, 94, 0.16);
-  transform: translateY(-1px) scale(1.04);
+  background: transparent;
+  color: #2563eb;
+  transform: translateY(-1px);
 }
 
 .project-manager-page .card-run-trigger:disabled,
@@ -538,23 +541,22 @@
 }
 
 .project-manager-page .card-run-trigger svg {
-  width: 15px;
-  height: 15px;
+  width: 18px;
+  height: 18px;
 }
 
 .project-manager-page .card-run-trigger path {
   fill: currentColor;
 }
 
-.dark .project-manager-page .card-run-trigger {
-  background: rgba(74, 222, 128, 0.16);
-  color: #86efac;
-}
-
 .project-manager-page .card-action-menu {
   position: relative;
   z-index: 3;
-  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  width: 20px;
+  height: 20px;
+  margin-left: 0;
   margin-right: 0;
   flex: 0 0 auto;
 }
