@@ -525,14 +525,14 @@
       },
       "provider": {
         "title": "设置 Codex 供应商",
-        "hint": "为“{name}”选择一个 Codex 首选供应商。项目首选不需要在首页启用；不可用、不支持模型或被拉黑时，会自动回落到全局路由。",
+        "hint": "为“{name}”选择一个 Codex 首选供应商。项目首选不需要在首页启用；是否回落到全局路由由 auto 开关决定。",
         "loading": "正在加载 Codex 供应商...",
         "empty": "暂无 Codex 供应商配置。你仍可保存为默认路由。",
         "defaultOption": "默认路由",
         "defaultHint": "按全局 Level、轮询与黑名单策略选择供应商",
         "disabledBadge": "未启用",
         "autoLabel": "auto",
-        "autoHint": "开启：首选供应商失败时回落默认路由；关闭：只使用首选供应商，失败不降级。",
+        "autoHint": "开启：首选供应商失败时回落默认路由；关闭：只重试首选供应商，直到本次请求超时或取消。",
         "save": "保存",
         "saved": "Codex 供应商已更新"
       },

@@ -9,6 +9,10 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 // @ts-ignore: Unused imports
 import * as $models from "./models.js";
 
+export function ClearProjectCodexProvider(projectPath: string): $CancellablePromise<void> {
+    return $Call.ByID(1724402302, projectPath);
+}
+
 export function DeleteProject(projectPath: string): $CancellablePromise<void> {
     return $Call.ByID(1017476374, projectPath);
 }
@@ -18,20 +22,20 @@ export function DeleteSession(sessionID: string): $CancellablePromise<void> {
 }
 
 export function ForkSessionConversation(sessionID: string, messageIDs: string[]): $CancellablePromise<$models.SessionSummary> {
-    return $Call.ByName("codeswitch/services.ProjectManagerService.ForkSessionConversation", sessionID, messageIDs).then(($result: any) => {
-        return $$createType2($result);
+    return $Call.ByID(2531626241, sessionID, messageIDs).then(($result: any) => {
+        return $$createType0($result);
     });
 }
 
 export function GetSessionConversationDetail(sessionID: string): $CancellablePromise<$models.SessionConversationDetail> {
     return $Call.ByID(2599842864, sessionID).then(($result: any) => {
-        return $$createType0($result);
+        return $$createType1($result);
     });
 }
 
 export function GetSnapshot(): $CancellablePromise<$models.ProjectManagerSnapshot> {
     return $Call.ByID(1402859362).then(($result: any) => {
-        return $$createType1($result);
+        return $$createType2($result);
     });
 }
 
@@ -71,13 +75,13 @@ export function OpenSessionTerminalWithSession(session: $models.SessionSummary):
 
 export function PruneSessionConversation(sessionID: string, messageIDs: string[]): $CancellablePromise<$models.SessionConversationDetail> {
     return $Call.ByID(1933876465, sessionID, messageIDs).then(($result: any) => {
-        return $$createType0($result);
+        return $$createType1($result);
     });
 }
 
 export function RefreshProjectIndex(): $CancellablePromise<$models.ProjectManagerSnapshot> {
     return $Call.ByID(4024905526).then(($result: any) => {
-        return $$createType1($result);
+        return $$createType2($result);
     });
 }
 
@@ -93,10 +97,26 @@ export function RunProjectAICommit(projectPath: string): $CancellablePromise<voi
     return $Call.ByID(1250976875, projectPath);
 }
 
+export function RunProjectCommand(projectPath: string): $CancellablePromise<void> {
+    return $Call.ByID(757489369, projectPath);
+}
+
+export function SaveProjectRunCommand(projectPath: string, command: string): $CancellablePromise<void> {
+    return $Call.ByID(488284630, projectPath, command);
+}
+
+export function SetProjectCodexProvider(projectPath: string, providerID: number): $CancellablePromise<void> {
+    return $Call.ByID(1805942307, projectPath, providerID);
+}
+
+export function SetProjectCodexProviderRouting(projectPath: string, providerID: number, autoFallback: boolean): $CancellablePromise<void> {
+    return $Call.ByID(971476843, projectPath, providerID, autoFallback);
+}
+
 // Private type creation functions
-const $$createType0 = $models.SessionConversationDetail.createFrom;
-const $$createType1 = $models.ProjectManagerSnapshot.createFrom;
-const $$createType2 = $models.SessionSummary.createFrom;
-const $$createType3 = $Create.Array($$createType2);
+const $$createType0 = $models.SessionSummary.createFrom;
+const $$createType1 = $models.SessionConversationDetail.createFrom;
+const $$createType2 = $models.ProjectManagerSnapshot.createFrom;
+const $$createType3 = $Create.Array($$createType0);
 const $$createType4 = $models.ProjectSummary.createFrom;
 const $$createType5 = $Create.Array($$createType4);

@@ -970,7 +970,9 @@ func projectManagerWriteTerminalScriptDebug(scriptPath string, command string) {
 	projectManagerAppendTerminalDebug(strings.Join([]string{
 		fmt.Sprintf("time=%s stage=script", time.Now().Format(time.RFC3339Nano)),
 		fmt.Sprintf("script=%s", scriptPath),
-		fmt.Sprintf("command=%s", command),
+		// 项目运行指令可能包含 token 或临时环境变量。debug 日志只记录规模，
+		// 不能把脚本原文明文复制到另一个长期文件里扩大敏感信息暴露面。
+		fmt.Sprintf("commandBytes=%d", len([]byte(command))),
 		"",
 	}, "\n"))
 }

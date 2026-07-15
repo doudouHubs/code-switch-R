@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
+	"golang.org/x/mod/semver"
 	"gopkg.in/yaml.v3"
 )
 
@@ -406,32 +407,53 @@ func (ss *SkillService) scanCodexPluginSkillsFromCache(cacheRoot string, codexEn
 			if err != nil {
 				continue
 			}
-			for _, versionEntry := range versionEntries {
-				if !versionEntry.IsDir() {
-					continue
-				}
-				version := versionEntry.Name()
-				versionPath := filepath.Join(pluginPath, version)
+			versionEntry, ok := selectCodexPluginVersionEntry(versionEntries)
+			if !ok {
+				continue
+			}
+			version := versionEntry.Name()
+			versionPath := filepath.Join(pluginPath, version)
 
-				// Codex plugin 支持两种技能布局：插件根目录 skills，以及插件内嵌的 .codex/skills。
-				// 两者都属于插件缓存产物，按只读用户技能展示，避免误走用户安装目录的写操作。
-				for _, skillsRoot := range []string{
-					filepath.Join(versionPath, "skills"),
-					filepath.Join(versionPath, ".codex", "skills"),
-				} {
-					skills = append(skills, ss.scanCodexPluginSkillsRoot(
-						skillsRoot,
-						sourceName,
-						pluginName,
-						version,
-						codexEnabledByPath,
-					)...)
-				}
+			// cache 会同时保留旧版本，并可能额外创建 latest junction。它不是“全部已安装版本”的事实源；
+			// 每个 plugin 只展示最高版本，避免同一技能在 UI 中重复出现并让开关写到过期缓存。
+			for _, skillsRoot := range []string{
+				filepath.Join(versionPath, "skills"),
+				filepath.Join(versionPath, ".codex", "skills"),
+			} {
+				skills = append(skills, ss.scanCodexPluginSkillsRoot(
+					skillsRoot,
+					sourceName,
+					pluginName,
+					version,
+					codexEnabledByPath,
+				)...)
 			}
 		}
 	}
 
 	return skills
+}
+
+func selectCodexPluginVersionEntry(entries []os.DirEntry) (os.DirEntry, bool) {
+	var selected os.DirEntry
+	for _, entry := range entries {
+		if !entry.IsDir() || strings.EqualFold(entry.Name(), "latest") {
+			continue
+		}
+		if selected == nil || compareCodexPluginVersions(entry.Name(), selected.Name()) > 0 {
+			selected = entry
+		}
+	}
+	return selected, selected != nil
+}
+
+func compareCodexPluginVersions(left string, right string) int {
+	leftSemver := "v" + strings.TrimPrefix(strings.TrimSpace(left), "v")
+	rightSemver := "v" + strings.TrimPrefix(strings.TrimSpace(right), "v")
+	if semver.IsValid(leftSemver) && semver.IsValid(rightSemver) {
+		return semver.Compare(leftSemver, rightSemver)
+	}
+	return strings.Compare(strings.ToLower(left), strings.ToLower(right))
 }
 
 func (ss *SkillService) scanCodexPluginSkillsRoot(

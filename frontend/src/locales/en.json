@@ -524,14 +524,14 @@
       },
       "provider": {
         "title": "Set Codex Provider",
-        "hint": "Choose a preferred Codex provider for \"{name}\". Project preference does not require the provider to be enabled on the home page; if it is unavailable, model-incompatible, or blacklisted, routing falls back to the global chain.",
+        "hint": "Choose a preferred Codex provider for \"{name}\". Project preference does not require the provider to be enabled on the home page; the auto switch controls whether routing can fall back to the global chain.",
         "loading": "Loading Codex providers...",
         "empty": "No Codex providers configured yet. You can still save the default route.",
         "defaultOption": "Default route",
         "defaultHint": "Use the global Level, round-robin, and blacklist routing policy",
         "disabledBadge": "Disabled",
         "autoLabel": "auto",
-        "autoHint": "On: fall back to default routing when the preferred provider fails. Off: only use the preferred provider and do not degrade.",
+        "autoHint": "On: fall back to default routing when the preferred provider fails. Off: retry only the preferred provider until the request times out or is cancelled.",
         "save": "Save",
         "saved": "Codex provider updated"
       },

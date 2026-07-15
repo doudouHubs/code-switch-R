@@ -113,6 +113,36 @@ func TestListSkillsForPlatformIncludesCodexPluginSkills(t *testing.T) {
 	}
 }
 
+func TestListSkillsForPlatformUsesLatestCodexPluginCacheVersion(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	oldSkillPath := filepath.Join(home, ".codex", "plugins", "cache", "market", "demo-plugin", "1.9.0", "skills", "versioned")
+	newSkillPath := filepath.Join(home, ".codex", "plugins", "cache", "market", "demo-plugin", "1.10.0", "skills", "versioned")
+	writeTestSkill(t, oldSkillPath, "Old Plugin Skill")
+	writeTestSkill(t, newSkillPath, "New Plugin Skill")
+
+	ss := NewSkillService()
+	skills, err := ss.ListSkillsForPlatform(skillPlatformCodex)
+	if err != nil {
+		t.Fatalf("list Codex skills failed: %v", err)
+	}
+
+	pluginSkills := make([]Skill, 0, 1)
+	for _, skill := range skills {
+		if skill.PluginName == "demo-plugin" && skill.Directory == "versioned" {
+			pluginSkills = append(pluginSkills, skill)
+		}
+	}
+	if len(pluginSkills) != 1 {
+		t.Fatalf("同一 plugin 的缓存旧版本不应重复展示，got=%#v", pluginSkills)
+	}
+	if pluginSkills[0].PluginVersion != "1.10.0" || pluginSkills[0].Name != "New Plugin Skill" {
+		t.Fatalf("应展示最高 plugin 版本，got=%#v", pluginSkills[0])
+	}
+}
+
 func TestGetSkillContentReadsCodexPluginSkillByKey(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

@@ -1989,8 +1989,12 @@ export class ProjectSummary {
     "path": string;
     "source_name": string;
     "display_name": string;
+    "run_command"?: string;
     "updated_at": number;
     "session_count": number;
+    "codex_provider_id"?: number;
+    "codex_provider_name"?: string;
+    "codex_provider_auto": boolean;
 
     /** Creates a new ProjectSummary instance. */
     constructor($$source: Partial<ProjectSummary> = {}) {
@@ -2011,6 +2015,9 @@ export class ProjectSummary {
         }
         if (!("session_count" in $$source)) {
             this["session_count"] = 0;
+        }
+        if (!("codex_provider_auto" in $$source)) {
+            this["codex_provider_auto"] = false;
         }
 
         Object.assign(this, $$source);
@@ -2746,11 +2753,23 @@ export class Skill {
     "install_location"?: string;
 
     /**
+     * 是否只读
+     */
+    "readonly"?: boolean;
+
+    /**
      * 仓库字段
      */
     "repo_owner"?: string;
     "repo_name"?: string;
     "repo_branch"?: string;
+
+    /**
+     * Codex plugin 缓存来源字段
+     */
+    "plugin_source"?: string;
+    "plugin_name"?: string;
+    "plugin_version"?: string;
 
     /** Creates a new Skill instance. */
     constructor($$source: Partial<Skill> = {}) {
