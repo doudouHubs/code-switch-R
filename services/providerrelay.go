@@ -63,6 +63,8 @@ type ProviderRelayService struct {
 // errClientAbort 表示客户端中断连接，不应计入 provider 失败次数
 var errClientAbort = errors.New("client aborted, skip failure count")
 
+const projectPreferredProviderRetryDelay = 500 * time.Millisecond
+
 func NewProviderRelayService(providerService *ProviderService, geminiService *GeminiService, blacklistService *BlacklistService, notificationService *NotificationService, appSettings *AppSettingsService, addr string) *ProviderRelayService {
 	if addr == "" {
 		addr = "127.0.0.1:18100" // 【安全修复】仅监听本地回环地址，防止 API Key 暴露到局域网
@@ -421,11 +423,15 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 				continue
 			}
 
-			// 黑名单检查：跳过已拉黑的 provider
+			// 黑名单检查：自动路由必须跳过已拉黑 provider；硬锁模式由用户明确要求只使用首选，
+			// 因此不能因为拉黑状态偷偷切换或直接耗尽候选，而是交给后面的可取消重试循环。
 			if isBlacklisted, until := prs.blacklistService.IsBlacklisted(kind, provider.Name); isBlacklisted {
-				fmt.Printf("⛔ Provider %s 已拉黑，过期时间: %v\n", provider.Name, until.Format("15:04:05"))
-				skippedCount++
-				continue
+				if !isProjectPreferredProvider || preferredAutoFallback {
+					fmt.Printf("⛔ Provider %s 已拉黑，过期时间: %v\n", provider.Name, until.Format("15:04:05"))
+					skippedCount++
+					continue
+				}
+				fmt.Printf("[ProjectProviderRouting] 首选 Provider %s 已拉黑，但 auto=false，继续硬锁重试\n", provider.Name)
 			}
 
 			active = append(active, provider)
@@ -480,6 +486,23 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 			Headers:  clientHeaders,
 			Body:     append([]byte(nil), bodyBytes...),
 		})
+
+		if preferredProviderID > 0 && !preferredAutoFallback {
+			// auto=false 的终止条件是客户端请求超时/取消，不是“候选列表耗尽”。
+			// 候选已经被 restrictToProjectPreferredProvider 收敛为一个，这里仍复用统一 forwardRequest。
+			prs.retryProjectPreferredProviderUntilRequestEnds(
+				c,
+				kind,
+				active[0],
+				endpoint,
+				query,
+				clientHeaders,
+				bodyBytes,
+				isStream,
+				requestedModel,
+			)
+			return
+		}
 
 		// 获取拉黑功能开关状态
 		blacklistEnabled := prs.blacklistService.ShouldUseFixedMode()
@@ -775,6 +798,88 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 	}
 }
 
+func (prs *ProviderRelayService) retryProjectPreferredProviderUntilRequestEnds(
+	c *gin.Context,
+	kind string,
+	provider Provider,
+	endpoint string,
+	query map[string]string,
+	clientHeaders map[string]string,
+	bodyBytes []byte,
+	isStream bool,
+	requestedModel string,
+) {
+	effectiveModel := provider.GetEffectiveModel(requestedModel)
+	currentBodyBytes := bodyBytes
+	if effectiveModel != requestedModel && requestedModel != "" {
+		modifiedBody, err := ReplaceModelInRequestBody(bodyBytes, effectiveModel)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("替换项目首选 Provider 模型失败: %v", err)})
+			return
+		}
+		currentBodyBytes = modifiedBody
+	}
+
+	effectiveEndpoint := provider.GetEffectiveEndpoint(endpoint)
+	totalAttempts := 0
+	for {
+		if c.Request.Context().Err() != nil {
+			return
+		}
+
+		totalAttempts++
+		fmt.Printf("[ProjectProviderRouting] [auto=false] Provider: %s | 尝试 %d | Model: %s\n",
+			provider.Name, totalAttempts, effectiveModel)
+		ok, err := prs.forwardRequest(
+			c,
+			kind,
+			provider,
+			effectiveEndpoint,
+			query,
+			clientHeaders,
+			currentBodyBytes,
+			isStream,
+			effectiveModel,
+		)
+		if ok {
+			if recordErr := prs.blacklistService.RecordSuccess(kind, provider.Name); recordErr != nil {
+				fmt.Printf("[WARN] 清零失败计数失败: %v\n", recordErr)
+			}
+			prs.setLastUsedProvider(kind, provider.Name)
+			return
+		}
+
+		if errors.Is(err, ErrClientRequestRejected) {
+			errorMsg := err.Error()
+			c.JSON(http.StatusBadRequest, gin.H{
+				"type":    "error",
+				"error":   map[string]string{"type": "invalid_request_error", "message": errorMsg},
+				"message": errorMsg,
+			})
+			return
+		}
+		if errors.Is(err, errClientAbort) || c.Request.Context().Err() != nil {
+			return
+		}
+
+		if recordErr := prs.blacklistService.RecordFailure(kind, provider.Name); recordErr != nil {
+			fmt.Printf("[ERROR] 记录失败到黑名单失败: %v\n", recordErr)
+		}
+		fmt.Printf("[ProjectProviderRouting] [auto=false] Provider %s 失败，将在 %s 后重试: %v\n",
+			provider.Name, projectPreferredProviderRetryDelay, err)
+
+		timer := time.NewTimer(projectPreferredProviderRetryDelay)
+		select {
+		case <-c.Request.Context().Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return
+		case <-timer.C:
+		}
+	}
+}
+
 func (prs *ProviderRelayService) forwardRequest(
 	c *gin.Context,
 	kind string,
@@ -916,7 +1021,8 @@ func (prs *ProviderRelayService) forwardRequest(
 		SetHeaders(headers).
 		SetQueryParams(query).
 		SetRetry(1, 500*time.Millisecond).
-		SetTimeout(32 * time.Hour) // 32小时超时，适配超大型项目分析
+		SetTimeout(32 * time.Hour).
+		WithContext(c.Request.Context()) // 客户端断开或超时后必须立即取消上游请求，避免 relay 残留长任务。
 
 	reqBody := bytes.NewReader(bodyBytes)
 	req = req.SetBody(reqBody)
@@ -929,6 +1035,9 @@ func (prs *ProviderRelayService) forwardRequest(
 	}
 
 	if err != nil {
+		if c.Request.Context().Err() != nil {
+			return false, fmt.Errorf("%w: %v", errClientAbort, c.Request.Context().Err())
+		}
 		// resp 存在但 err != nil：可能是客户端中断，不计入失败
 		if resp != nil && requestLog.HttpCode == 0 {
 			fmt.Printf("[INFO] Provider %s 响应存在但状态码为0，判定为客户端中断\n", provider.Name)

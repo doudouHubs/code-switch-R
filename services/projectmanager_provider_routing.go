@@ -30,11 +30,7 @@ func resolveProjectManagerCodexProvider(store projectManagerStore, projectPath s
 }
 
 func resolveProjectManagerCodexProviderAutoFallback(store projectManagerStore, projectPath string) bool {
-	key := normalizeProjectManagerProjectPath(projectPath)
-	if key == "" {
-		return true
-	}
-	meta, ok := store.Projects[key]
+	meta, ok := projectManagerProjectMetaFromStore(store, projectPath)
 	if !ok || meta.CodexProviderID <= 0 {
 		return true
 	}
@@ -42,11 +38,7 @@ func resolveProjectManagerCodexProviderAutoFallback(store projectManagerStore, p
 }
 
 func projectManagerCodexProviderIDFromStore(store projectManagerStore, projectPath string) int64 {
-	key := normalizeProjectManagerProjectPath(projectPath)
-	if key == "" {
-		return 0
-	}
-	meta, ok := store.Projects[key]
+	meta, ok := projectManagerProjectMetaFromStore(store, projectPath)
 	if !ok {
 		return 0
 	}
@@ -83,12 +75,25 @@ func projectManagerCodexProviderRoutingForRequest(headers map[string]string, bod
 	}
 }
 
-func detectProjectManagerCodexProjectPath(headers map[string]string, body []byte) string {
-	projectID, sessionID := DetectCaptureScope(headers, body)
-	if projectID == unknownProjectCaptureID {
-		if fallbackProjectID := detectCaptureProjectIDFromCodexSessionFiles(sessionID); fallbackProjectID != "" {
-			projectID = fallbackProjectID
+func detectProjectManagerCodexProjectPath(headers map[string]string, _ []byte) string {
+	normalizedHeaders := normalizeCaptureHeaders(headers)
+	metadata := parseCodexTurnMetadata(normalizedHeaders["x-codex-turn-metadata"])
+
+	// 路由身份只能来自 Codex 显式上下文。普通请求正文可能包含用户讨论的 cwd/project 文本，
+	// 若复用日志采集的宽松扫描器，会把正文内容误当成真实项目并路由到错误 provider。
+	projectID := detectFromNormalizedHeaders(projectHeaderKeys, normalizedHeaders)
+	if projectID == "" {
+		projectID = detectProjectFromCodexMetadata(metadata)
+	}
+	if projectID == "" {
+		sessionID := detectFromNormalizedHeaders(sessionHeaderKeys, normalizedHeaders)
+		if sessionID == "" {
+			sessionID = strings.TrimSpace(metadata.SessionID)
 		}
+		if sessionID == "" {
+			sessionID = strings.TrimSpace(metadata.ThreadID)
+		}
+		projectID = detectCaptureProjectIDFromCodexSessionFiles(sessionID)
 	}
 	return normalizeProjectManagerProjectPath(projectID)
 }

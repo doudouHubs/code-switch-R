@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -60,7 +61,7 @@ func (s *projectManagerStoreService) saveProjectDisplayName(projectPath string, 
 		return err
 	}
 
-	key := normalizeProjectManagerProjectPath(projectPath)
+	key := projectManagerProjectKeyFromStore(store, projectPath)
 	if key == "" {
 		return errors.New("项目路径不能为空")
 	}
@@ -92,7 +93,7 @@ func (s *projectManagerStoreService) saveProjectRunCommand(projectPath string, c
 		return err
 	}
 
-	key := normalizeProjectManagerProjectPath(projectPath)
+	key := projectManagerProjectKeyFromStore(store, projectPath)
 	if key == "" {
 		return errors.New("项目路径不能为空")
 	}
@@ -119,7 +120,7 @@ func (s *projectManagerStoreService) saveProjectCodexProviderID(projectPath stri
 		return err
 	}
 
-	key := normalizeProjectManagerProjectPath(projectPath)
+	key := projectManagerProjectKeyFromStore(store, projectPath)
 	if key == "" {
 		return errors.New("项目路径不能为空")
 	}
@@ -150,7 +151,7 @@ func (s *projectManagerStoreService) saveProjectCodexProviderRouting(projectPath
 		return err
 	}
 
-	key := normalizeProjectManagerProjectPath(projectPath)
+	key := projectManagerProjectKeyFromStore(store, projectPath)
 	if key == "" {
 		return errors.New("项目路径不能为空")
 	}
@@ -181,7 +182,7 @@ func (s *projectManagerStoreService) deleteProject(projectPath string) error {
 		return err
 	}
 
-	key := normalizeProjectManagerProjectPath(projectPath)
+	key := projectManagerProjectKeyFromStore(store, projectPath)
 	if key == "" {
 		return errors.New("项目路径不能为空")
 	}
@@ -313,6 +314,47 @@ func normalizeProjectManagerProjectPath(projectPath string) string {
 		cleaned = filepath.Clean(abs)
 	}
 	return cleaned
+}
+
+func projectManagerProjectPathsEqual(left string, right string) bool {
+	left = normalizeProjectManagerProjectPath(left)
+	right = normalizeProjectManagerProjectPath(right)
+	if left == "" || right == "" {
+		return left == right
+	}
+	// Windows 路径不区分大小写，项目元数据键也必须遵循同一语义；
+	// 保留原始大小写用于 UI 展示，只在比较和查找时折叠大小写。
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(left, right)
+	}
+	return left == right
+}
+
+func projectManagerProjectKeyFromStore(store projectManagerStore, projectPath string) string {
+	normalized := normalizeProjectManagerProjectPath(projectPath)
+	if normalized == "" {
+		return ""
+	}
+	if _, ok := store.Projects[normalized]; ok {
+		return normalized
+	}
+	if runtime.GOOS == "windows" {
+		for key := range store.Projects {
+			if projectManagerProjectPathsEqual(key, normalized) {
+				return key
+			}
+		}
+	}
+	return normalized
+}
+
+func projectManagerProjectMetaFromStore(store projectManagerStore, projectPath string) (projectManagerProjectMeta, bool) {
+	key := projectManagerProjectKeyFromStore(store, projectPath)
+	if key == "" {
+		return projectManagerProjectMeta{}, false
+	}
+	meta, ok := store.Projects[key]
+	return meta, ok
 }
 
 func listProjectManagerStoreKeys[T any](items map[string]T) []string {

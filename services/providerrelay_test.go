@@ -2,7 +2,9 @@ package services
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -442,15 +444,18 @@ func TestCodexProjectPreferredProviderDoesNotFallbackWhenAutoDisabled(t *testing
 	req := httptest.NewRequest(http.MethodPost, "/responses", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Project-Root-Path", projectDir)
+	ctx, cancel := context.WithTimeout(req.Context(), 1200*time.Millisecond)
+	defer cancel()
+	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
 
 	router.ServeHTTP(w, req)
 
-	if w.Code != http.StatusBadGateway {
-		t.Fatalf("关闭 auto 后应返回首选 provider 失败，got=%d body=%s", w.Code, w.Body.String())
+	if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		t.Fatalf("关闭 auto 后应持续重试到请求超时，ctx err=%v", ctx.Err())
 	}
-	if hits["project"] != 1 {
-		t.Fatalf("关闭 auto 后应只调用项目首选 provider 一次，hits=%v", hits)
+	if hits["project"] < 2 {
+		t.Fatalf("关闭 auto 后应持续调用项目首选 provider，hits=%v", hits)
 	}
 	if hits["global"] != 0 {
 		t.Fatalf("关闭 auto 后不应回落全局 provider，hits=%v", hits)

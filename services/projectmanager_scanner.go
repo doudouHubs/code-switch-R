@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -376,7 +377,12 @@ func (s *ProjectManagerService) groupProjectManagerProjects(
 			projectPath = unknownProjectCaptureID
 		}
 
-		project := projects[projectPath]
+		// 同一个 Windows 路径可能被 Codex 用不同盘符/目录大小写记录，分组时必须视为同一项目。
+		projectKey := projectPath
+		if runtime.GOOS == "windows" {
+			projectKey = strings.ToLower(projectPath)
+		}
+		project := projects[projectKey]
 		if project == nil {
 			sourceName := filepath.Base(projectPath)
 			if projectPath == unknownProjectCaptureID {
@@ -384,7 +390,7 @@ func (s *ProjectManagerService) groupProjectManagerProjects(
 			}
 			displayName := sourceName
 			var projectMeta projectManagerProjectMeta
-			if meta, ok := store.Projects[projectPath]; ok {
+			if meta, ok := projectManagerProjectMetaFromStore(store, projectPath); ok {
 				projectMeta = meta
 				if strings.TrimSpace(meta.DisplayName) != "" {
 					displayName = strings.TrimSpace(meta.DisplayName)
@@ -401,7 +407,7 @@ func (s *ProjectManagerService) groupProjectManagerProjects(
 				CodexProviderName: codexProviderName,
 				CodexProviderAuto: codexProviderAuto,
 			}
-			projects[projectPath] = project
+			projects[projectKey] = project
 		}
 
 		project.Sessions = append(project.Sessions, session)

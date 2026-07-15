@@ -118,7 +118,7 @@ func (s *ProjectManagerService) ListProjectSessions(projectPath string) ([]Sessi
 	projectPath = normalizeProjectManagerProjectPath(projectPath)
 	result := make([]SessionSummary, 0, 32)
 	for _, session := range snapshot.Sessions {
-		if normalizeProjectManagerProjectPath(session.ProjectPath) == projectPath {
+		if projectManagerProjectPathsEqual(session.ProjectPath, projectPath) {
 			result = append(result, session)
 		}
 	}
@@ -214,7 +214,7 @@ func (s *ProjectManagerService) DeleteProject(projectPath string) error {
 
 	targetSessions := make([]SessionSummary, 0, 8)
 	for _, session := range snapshot.Sessions {
-		if normalizeProjectManagerProjectPath(session.ProjectPath) != projectPath {
+		if !projectManagerProjectPathsEqual(session.ProjectPath, projectPath) {
 			continue
 		}
 		targetSessions = append(targetSessions, session)
@@ -346,7 +346,7 @@ func (s *ProjectManagerService) RunProjectCommand(projectPath string) error {
 		return err
 	}
 	command := ""
-	if meta, ok := store.Projects[projectPath]; ok {
+	if meta, ok := projectManagerProjectMetaFromStore(store, projectPath); ok {
 		command = strings.TrimSpace(meta.RunCommand)
 	}
 	if command == "" {
