@@ -525,6 +525,66 @@ func TestCodexProjectPreferredProviderFallsBackWhenModelUnsupported(t *testing.T
 	}
 }
 
+func TestCodexProjectPreferredProviderFallsBackAfterUpstreamFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	home := setupRenameTestEnv(t)
+
+	projectDir := filepath.Join(home, "workspace", "upstream-fallback")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("创建项目目录失败: %v", err)
+	}
+
+	hits := map[string]int{}
+	globalServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits["global"]++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"provider":"global"}`))
+	}))
+	defer globalServer.Close()
+	projectServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits["project"]++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":"project unavailable"}`))
+	}))
+	defer projectServer.Close()
+
+	providerService := NewProviderService()
+	if err := providerService.SaveProviders("codex", []Provider{
+		{ID: 1, Name: "Global", APIURL: globalServer.URL, APIKey: "sk-global", Enabled: true, Level: 1},
+		{ID: 2, Name: "Project", APIURL: projectServer.URL, APIKey: "sk-project", Enabled: false, Level: 10},
+	}); err != nil {
+		t.Fatalf("保存 provider 配置失败: %v", err)
+	}
+
+	projectManager := NewProjectManagerService()
+	if err := projectManager.SetProjectCodexProviderRouting(projectDir, 2, true); err != nil {
+		t.Fatalf("SetProjectCodexProviderRouting 失败: %v", err)
+	}
+
+	router := gin.New()
+	newTestRelayService(providerService).registerRoutes(router)
+
+	body := []byte(`{"model":"gpt-5-codex","stream":false}`)
+	req := httptest.NewRequest(http.MethodPost, "/responses", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Project-Root-Path", projectDir)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("首选 5xx 后应由默认路由成功接管，got=%d body=%s", w.Code, w.Body.String())
+	}
+	if hits["project"] != 1 || hits["global"] != 1 {
+		t.Fatalf("应先尝试项目首选再回落全局 provider，hits=%v", hits)
+	}
+	if got := gjson.Get(w.Body.String(), "provider").String(); got != "global" {
+		t.Fatalf("响应 provider 不对，want=global got=%q", got)
+	}
+}
+
 func TestCodexProjectPreferredProviderFallsBackWhenBlacklisted(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	home := setupRenameTestEnv(t)
