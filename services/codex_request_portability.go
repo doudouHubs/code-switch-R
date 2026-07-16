@@ -24,6 +24,18 @@ func (prs *ProviderRelayService) forwardRequest(
 	isStream bool,
 	model string,
 ) (bool, error) {
+	attemptBody := bodyBytes
+	if codexPortableModeEnabled(c, kind) {
+		portableBody, changed, portableErr := makeCodexRequestProviderPortable(bodyBytes)
+		if portableErr != nil {
+			return false, fmt.Errorf("Codex 可移植模式转换请求失败: %w", portableErr)
+		}
+		if changed {
+			attemptBody = portableBody
+			fmt.Printf("[CodexPortability] Provider %s 使用无供应商状态的回落请求\n", provider.Name)
+		}
+	}
+
 	ok, err := prs.forwardRequestOnce(
 		c,
 		kind,
@@ -31,7 +43,7 @@ func (prs *ProviderRelayService) forwardRequest(
 		endpoint,
 		query,
 		clientHeaders,
-		bodyBytes,
+		attemptBody,
 		isStream,
 		model,
 	)
@@ -64,11 +76,19 @@ func (prs *ProviderRelayService) forwardRequest(
 	)
 }
 
+func codexPortableModeEnabled(c *gin.Context, kind string) bool {
+	if c == nil || !strings.EqualFold(strings.TrimSpace(kind), "codex") {
+		return false
+	}
+	enabled, exists := c.Get(codexPortabilityRetryContextKey)
+	return exists && enabled == true
+}
+
 func shouldRetryCodexRequestWithoutProviderState(c *gin.Context, kind string, err error) bool {
 	if c == nil || !strings.EqualFold(strings.TrimSpace(kind), "codex") || err == nil {
 		return false
 	}
-	if retried, exists := c.Get(codexPortabilityRetryContextKey); exists && retried == true {
+	if codexPortableModeEnabled(c, kind) {
 		return false
 	}
 

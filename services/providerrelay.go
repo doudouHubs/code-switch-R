@@ -450,6 +450,14 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 			}
 			return
 		}
+		configureCodexReliableStreamFallback(
+			c,
+			kind,
+			isStream,
+			preferredProviderID,
+			preferredAutoFallback,
+			active,
+		)
 
 		fmt.Printf("[INFO] 找到 %d 个可用的 provider（已过滤 %d 个）：", len(active), skippedCount)
 		for _, p := range active {
@@ -1100,6 +1108,9 @@ func (prs *ProviderRelayService) forwardRequestOnce(
 	}
 
 	if status >= http.StatusOK && status < http.StatusMultipleChoices {
+		if codexReliableStreamFallbackEnabled(c, kind, isStream) {
+			return forwardBufferedCodexStream(c, provider, resp, sseConverter, requestLog)
+		}
 		var copyErr error
 		if sseConverter != nil && isStream {
 			// 使用协议转换 Hook
