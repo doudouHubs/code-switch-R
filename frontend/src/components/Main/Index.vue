@@ -1016,7 +1016,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, onMounted, onUnmounted, watch } from 'vue'
+import {
+  computed,
+  reactive,
+  ref,
+  onActivated,
+  onDeactivated,
+  onMounted,
+  onUnmounted,
+  watch,
+} from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Listbox, ListboxButton, ListboxOptions, ListboxOption } from '@headlessui/vue'
 import { Browser, Call, Events } from '@wailsio/runtime'
@@ -1839,6 +1848,11 @@ const loadProviderStats = async (tab: ProviderTab) => {
     return
   }
 
+  // 页面激活、窗口聚焦和定时轮询可能同时触发，复用进行中的查询可避免重复扫描日志表。
+  if (providerStatsLoading[tab]) {
+    return
+  }
+
   providerStatsLoading[tab] = true
   try {
     // Gemini 统计数据目前通过相同的日志接口，直接查询
@@ -2120,6 +2134,10 @@ const formatOfficialSite = (site: string) => {
 const startProviderStatsTimer = () => {
   stopProviderStatsTimer()
   providerStatsTimer = window.setInterval(() => {
+    // WebView 在后台会节流定时器；隐藏时跳过无效查询，恢复可见后由事件立即补刷新。
+    if (document.visibilityState !== 'visible') {
+      return
+    }
     providerTabIds.forEach((tab) => {
       void loadProviderStats(tab)
     })
@@ -2218,8 +2236,41 @@ const scrollToCard = (el: HTMLElement | null) => {
 // 事件取消订阅函数
 let unsubscribeSwitched: (() => void) | undefined
 let unsubscribeBlacklisted: (() => void) | undefined
+let providerStatsViewActive = false
+
+const refreshVisibleProviderStats = () => {
+  if (!providerStatsViewActive || document.visibilityState !== 'visible') {
+    return
+  }
+  void loadProviderStats(activeTab.value)
+}
+
+const handleWindowFocus = () => {
+  void loadBlacklistStatus(activeTab.value)
+  // 最小化或切到其他窗口期间定时器可能暂停，重新聚焦时必须立即追平首页统计。
+  refreshVisibleProviderStats()
+}
+
+const handleVisibilityChange = () => {
+  refreshVisibleProviderStats()
+}
+
+onActivated(() => {
+  providerStatsViewActive = true
+  startProviderStatsTimer()
+  // 首页由 keep-alive 恢复时不会再次 mounted，需要在 activated 阶段主动刷新。
+  refreshVisibleProviderStats()
+})
+
+onDeactivated(() => {
+  providerStatsViewActive = false
+  stopProviderStatsTimer()
+})
 
 onMounted(async () => {
+  window.addEventListener('focus', handleWindowFocus)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+
   void initHeatmap()
   await loadProvidersFromDisk()
   await Promise.all(providerTabIds.map(refreshProxyState))
@@ -2229,7 +2280,6 @@ onMounted(async () => {
   await loadAppVersion()
   await refreshImportStatus()
   await checkFirstRun()  // 检查是否首次使用
-  startProviderStatsTimer()
 
   // 加载初始黑名单状态
   await Promise.all(providerTabIds.map((tab) => loadBlacklistStatus(tab)))
@@ -2251,12 +2301,6 @@ onMounted(async () => {
     })
   }, 1000)
 
-  // 窗口焦点事件：从最小化恢复时立即刷新黑名单状态
-  const handleWindowFocus = () => {
-    void loadBlacklistStatus(activeTab.value)
-  }
-  window.addEventListener('focus', handleWindowFocus)
-
   // 定期轮询黑名单状态（每 10 秒）
   const blacklistPollingTimer = window.setInterval(() => {
     void loadBlacklistStatus(activeTab.value)
@@ -2264,7 +2308,6 @@ onMounted(async () => {
 
   // 存储定时器 ID 以便清理
   ;(window as any).__blacklistPollingTimer = blacklistPollingTimer
-  ;(window as any).__handleWindowFocus = handleWindowFocus
 
   window.addEventListener('app-settings-updated', handleAppSettingsUpdated)
 
@@ -2284,8 +2327,11 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  providerStatsViewActive = false
   cleanupHeatmap()
   stopProviderStatsTimer()
+  window.removeEventListener('focus', handleWindowFocus)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
   window.removeEventListener('app-settings-updated', handleAppSettingsUpdated)
 
   // 清理黑名单相关定时器和事件监听
@@ -2294,9 +2340,6 @@ onUnmounted(() => {
   }
   if ((window as any).__blacklistPollingTimer) {
     window.clearInterval((window as any).__blacklistPollingTimer)
-  }
-  if ((window as any).__handleWindowFocus) {
-    window.removeEventListener('focus', (window as any).__handleWindowFocus)
   }
   if ((window as any).__handleProvidersUpdated) {
     window.removeEventListener('providers-updated', (window as any).__handleProvidersUpdated)

@@ -394,6 +394,11 @@
   gap: 12px;
 }
 
+.project-manager-page .project-card .card-topline {
+  /* 项目卡片右上角固定放置运行和更多操作，标题必须为两个按钮预留完整宽度。 */
+  padding-right: 67px;
+}
+
 .project-manager-page .card-copy {
   display: flex;
   flex: 1;
@@ -502,21 +507,28 @@
 }
 
 .project-manager-page .card-topline-actions {
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-start;
-  /* 两个 20px 操作按钮加 15px 固定间距，避免 flex 可用空间再次把图标撑开。 */
-  gap: 15px;
-  margin-left: auto;
+  position: absolute;
+  top: 22px;
+  right: 42px;
+  display: block;
+  /* 两个按钮各自使用固定坐标，彻底隔离全局按钮最小内容宽度对兄弟节点的挤压。 */
+  margin-left: 0;
   width: 55px;
+  height: 20px;
   flex: 0 0 55px;
 }
 
 .project-manager-page .card-run-trigger {
+  position: absolute;
+  top: 0;
+  left: 0;
   border: none;
-  width: 20px;
-  height: 20px;
-  padding: 0;
+  width: 20px !important;
+  min-width: 20px !important;
+  height: 20px !important;
+  padding: 0 !important;
+  gap: 0 !important;
+  flex: 0 0 20px;
   border-radius: 0;
   background: transparent;
   color: var(--mac-text);
@@ -550,22 +562,26 @@
 }
 
 .project-manager-page .card-action-menu {
-  position: relative;
+  position: absolute;
+  top: 0;
+  right: 0;
   z-index: 3;
   display: inline-flex;
   align-items: center;
   width: 20px;
   height: 20px;
-  margin-left: 0;
-  margin-right: 0;
+  margin: 0 !important;
   flex: 0 0 auto;
 }
 
 .project-manager-page .card-menu-trigger {
   border: none;
-  width: 20px;
-  height: 20px;
-  padding: 0;
+  width: 20px !important;
+  min-width: 20px !important;
+  height: 20px !important;
+  padding: 0 !important;
+  gap: 0 !important;
+  flex: 0 0 20px;
   border-radius: 0;
   background: transparent;
   color: var(--mac-text-secondary);
@@ -591,6 +607,7 @@
 .project-manager-page .card-menu-trigger svg {
   width: 18px;
   height: 18px;
+  margin: 0 !important;
 }
 
 .project-manager-page .card-menu-trigger.is-loading {
@@ -613,7 +630,8 @@
 .project-manager-page .card-menu-popover {
   position: absolute;
   top: calc(100% + 10px);
-  right: 0;
+  /* Headless UI 菜单项当前以触发器左边缘为定位基准，补偿一个按钮宽度后右边缘与三点按钮对齐。 */
+  right: -20px;
   min-width: 148px;
   padding: 8px;
   border-radius: 18px;

@@ -881,7 +881,7 @@ func (prs *ProviderRelayService) retryProjectPreferredProviderUntilRequestEnds(
 	}
 }
 
-func (prs *ProviderRelayService) forwardRequest(
+func (prs *ProviderRelayService) forwardRequestOnce(
 	c *gin.Context,
 	kind string,
 	provider Provider,
@@ -1050,8 +1050,10 @@ func (prs *ProviderRelayService) forwardRequest(
 		// 尝试从响应体提取供应商原始错误信息
 		if resp != nil {
 			if upstreamBody := extractUpstreamError(resp); upstreamBody != "" {
-				return false, fmt.Errorf("upstream status %d: %s", resp.StatusCode(), upstreamBody)
+				return false, newProviderRelayUpstreamError(resp.StatusCode(), upstreamBody)
 			}
+			// 空错误体也必须保留状态码；兼容恢复与调度决策不能依赖供应商是否返回详情。
+			return false, newProviderRelayUpstreamError(resp.StatusCode(), "")
 		}
 		return false, err
 	}
@@ -1076,9 +1078,9 @@ func (prs *ProviderRelayService) forwardRequest(
 			}
 		}
 		if errMsg != "" {
-			return false, fmt.Errorf("upstream status %d: %s", status, errMsg)
+			return false, newProviderRelayUpstreamError(status, errMsg)
 		}
-		return false, fmt.Errorf("upstream status %d", status)
+		return false, newProviderRelayUpstreamError(status, "")
 	}
 
 	// 状态码为 0 且无错误：当作成功处理
@@ -1114,9 +1116,9 @@ func (prs *ProviderRelayService) forwardRequest(
 
 	// 尝试从响应体提取供应商原始错误信息
 	if upstreamBody := extractUpstreamError(resp); upstreamBody != "" {
-		return false, fmt.Errorf("upstream status %d: %s", status, upstreamBody)
+		return false, newProviderRelayUpstreamError(status, upstreamBody)
 	}
-	return false, fmt.Errorf("upstream status %d", status)
+	return false, newProviderRelayUpstreamError(status, "")
 }
 
 // extractUpstreamError 从供应商响应中提取原始错误信息（最多 512 字节）
