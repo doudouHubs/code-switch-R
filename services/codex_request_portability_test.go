@@ -85,6 +85,9 @@ func TestCodexOldSessionRetriesWithoutProviderBoundState(t *testing.T) {
 	if !bytes.Contains(requests[1], []byte(`"call_id":"call_keep"`)) {
 		t.Fatalf("兼容重试误删了工具调用关联 ID: %s", requests[1])
 	}
+	if bytes.Contains(requests[1], []byte(`"namespace"`)) {
+		t.Fatalf("兼容重试仍携带旧供应商的 custom tool namespace: %s", requests[1])
+	}
 }
 
 func TestCodexOldSessionFallsBackToDefaultWithPortableState(t *testing.T) {
@@ -171,7 +174,9 @@ func TestMakeCodexRequestProviderPortableRemovesOnlyProviderState(t *testing.T) 
 			{"type":"reasoning","id":"rs_foreign","encrypted_content":"ciphertext"},
 			{"type":"message","id":"msg_foreign","role":"user","content":[{"type":"input_text","text":"continue"}]},
 			{"type":"function_call","id":"fc_foreign","call_id":"call_keep","name":"shell","arguments":"{}"},
-			{"type":"function_call_output","id":"fco_foreign","call_id":"call_keep","output":"ok"}
+			{"type":"function_call_output","id":"fco_foreign","call_id":"call_keep","output":"ok"},
+			{"type":"custom_tool_call","call_id":"custom_keep","name":"exec","namespace":"functions","status":"completed","input":"{}"},
+			{"type":"custom_tool_call_output","call_id":"custom_keep","output":"ok"}
 		]
 	}`)
 
@@ -187,6 +192,9 @@ func TestMakeCodexRequestProviderPortableRemovesOnlyProviderState(t *testing.T) 
 	}
 	if !bytes.Contains(got, []byte(`"call_id":"call_keep"`)) || !bytes.Contains(got, []byte(`"text":"continue"`)) {
 		t.Fatalf("转换误删了用户内容或工具调用关联: %s", got)
+	}
+	if !bytes.Contains(got, []byte(`"call_id":"custom_keep"`)) || bytes.Contains(got, []byte(`"namespace"`)) {
+		t.Fatalf("转换必须保留 custom tool 配对并移除供应商 namespace: %s", got)
 	}
 }
 
@@ -229,7 +237,9 @@ func codexOldSessionTestBody() []byte {
 			{"type":"reasoning","id":"rs_foreign","encrypted_content":"ciphertext","summary":[]},
 			{"type":"message","id":"msg_foreign","role":"user","content":[{"type":"input_text","text":"continue"}]},
 			{"type":"function_call","id":"fc_foreign","call_id":"call_keep","name":"shell","arguments":"{}"},
-			{"type":"function_call_output","id":"fco_foreign","call_id":"call_keep","output":"ok"}
+			{"type":"function_call_output","id":"fco_foreign","call_id":"call_keep","output":"ok"},
+			{"type":"custom_tool_call","call_id":"custom_keep","name":"exec","namespace":"functions","status":"completed","input":"{}"},
+			{"type":"custom_tool_call_output","call_id":"custom_keep","output":"ok"}
 		]
 	}`)
 }
@@ -257,6 +267,11 @@ func codexTestRequestHasProviderBoundState(body []byte) bool {
 		}
 		if item["type"] == "reasoning" || item["type"] == "item_reference" {
 			return true
+		}
+		if item["type"] == "custom_tool_call" {
+			if _, ok := item["namespace"]; ok {
+				return true
+			}
 		}
 	}
 	return false

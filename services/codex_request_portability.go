@@ -154,22 +154,33 @@ func makeCodexInputProviderPortable(rawInput json.RawMessage) (json.RawMessage, 
 
 		var itemType string
 		_ = json.Unmarshal(item["type"], &itemType)
+		itemChanged := false
 		switch strings.ToLower(strings.TrimSpace(itemType)) {
 		case "reasoning", "item_reference":
 			// reasoning 的 encrypted_content 和 item_reference 都只能由生成它们的供应商解释。
 			changed = true
 			continue
+		case "custom_tool_call":
+			if _, exists := item["namespace"]; exists {
+				// namespace 是部分供应商附加的工具路由扩展，不属于跨供应商可重放契约；
+				// call_id/name/input 必须保留，才能继续配对已有的 custom_tool_call_output。
+				delete(item, "namespace")
+				itemChanged = true
+			}
 		}
 
 		if _, exists := item["id"]; exists {
 			// 顶层 item id 是供应商分配的 response item 标识；call_id 是工具调用配对键，必须保留。
 			delete(item, "id")
-			changed = true
+			itemChanged = true
+		}
+		if itemChanged {
 			portableItem, err := json.Marshal(item)
 			if err != nil {
 				return nil, false, fmt.Errorf("编码 Codex input item 失败: %w", err)
 			}
 			portableItems = append(portableItems, portableItem)
+			changed = true
 			continue
 		}
 
