@@ -2,6 +2,7 @@ package services
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/tidwall/gjson"
 )
+
+var errProjectManagerSessionFileNotFound = errors.New("未找到会话源文件")
 
 type projectManagerConversationFile struct {
 	SessionID string
@@ -126,7 +129,7 @@ func (s *ProjectManagerService) findProjectManagerSessionFileByID(sessionID stri
 		}, nil
 	}
 
-	return projectManagerConversationFile{}, fmt.Errorf("未找到会话源文件: %s", sessionID)
+	return projectManagerConversationFile{}, fmt.Errorf("%w: %s", errProjectManagerSessionFileNotFound, sessionID)
 }
 
 func (s *ProjectManagerService) findProjectManagerSessionFileByIDFast(
@@ -242,7 +245,9 @@ func readProjectManagerSessionConversationItems(path string, sessionID string) (
 
 	scanner := bufio.NewScanner(file)
 	buf := make([]byte, 0, 4*1024)
-	scanner.Buffer(buf, 1024*1024)
+	// 会话中可能夹着大块工具输出；详情和全文搜索共享这条解析链，
+	// 必须与快照扫描保持同一上限，否则一个超长非消息行就会让整次项目搜索失败。
+	scanner.Buffer(buf, 16*1024*1024)
 
 	items := make([]SessionConversationItem, 0, 64)
 	currentUserID := ""

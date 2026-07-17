@@ -491,6 +491,8 @@
         "projectMode": "项目模式",
         "sessionMode": "会话模式",
         "searchPlaceholder": "搜索项目名、路径、会话标题或概要",
+        "conversationSearchPlaceholder": "搜索会话标题、摘要或对话内容",
+        "searchingConversations": "正在搜索项目内会话详情",
         "refresh": "更新",
         "refreshing": "同步中...",
         "backToProjects": "返回项目列表",
@@ -505,7 +507,9 @@
       "states": {
         "loading": "正在扫描 Codex 项目和会话...",
         "emptyProjects": "当前没有可展示的项目记录，先让 Codex 在本机干点活再说。",
-        "emptySessions": "这里暂时没有会话记录。"
+        "emptySessions": "这里暂时没有会话记录。",
+        "noSessionSearchResults": "未找到匹配的会话或用户对话内容。",
+        "sessionSearchFailed": "搜索会话详情失败，请修改关键词后重试。"
       },
       "card": {
         "sessionCount": "{count} 个会话",

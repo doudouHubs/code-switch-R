@@ -490,6 +490,8 @@
         "projectMode": "Project Mode",
         "sessionMode": "Session Mode",
         "searchPlaceholder": "Search project names, paths, session titles, or summaries",
+        "conversationSearchPlaceholder": "Search session titles, summaries, or conversations",
+        "searchingConversations": "Searching project session conversations",
         "refresh": "Refresh",
         "refreshing": "Syncing...",
         "backToProjects": "Back to project list",
@@ -504,7 +506,9 @@
       "states": {
         "loading": "Scanning Codex projects and sessions...",
         "emptyProjects": "No projects to show yet. Let Codex touch a local workspace first.",
-        "emptySessions": "No sessions are available here yet."
+        "emptySessions": "No sessions are available here yet.",
+        "noSessionSearchResults": "No matching sessions or user messages were found.",
+        "sessionSearchFailed": "Could not search session conversations. Change the query and try again."
       },
       "card": {
         "sessionCount": "{count} sessions",

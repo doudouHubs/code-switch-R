@@ -48,6 +48,11 @@ export interface SessionConversationDetail {
   items: SessionConversationItem[];
 }
 
+export interface ProjectSessionSearchResult {
+  session_id: string;
+  matched_content: string;
+}
+
 export interface ProjectManagerSnapshot {
   projects: ProjectSummary[];
   sessions: SessionSummary[];
@@ -67,6 +72,18 @@ export const refreshProjectManagerSnapshot =
     );
     return result as ProjectManagerSnapshot;
   };
+
+export const searchProjectSessionConversations = async (
+  projectPath: string,
+  query: string,
+): Promise<ProjectSessionSearchResult[]> => {
+  const result = await Call.ByName(
+    `${PROJECT_MANAGER_SERVICE}.SearchProjectSessionConversations`,
+    projectPath,
+    query,
+  );
+  return result as ProjectSessionSearchResult[];
+};
 
 export const renameProject = async (
   projectPath: string,

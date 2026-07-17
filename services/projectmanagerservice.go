@@ -67,20 +67,23 @@ type SessionConversationDetail struct {
 }
 
 type ProjectManagerService struct {
-	store              *projectManagerStoreService
-	snapshotCache      *projectManagerSnapshotCacheService
-	detailCache        *projectManagerConversationCacheService
-	snapshotBuildMu    sync.Mutex
-	warmRefreshMu      sync.Mutex
-	warmRefreshRunning bool
-	lastWarmRefreshAt  time.Time
+	store                   *projectManagerStoreService
+	snapshotCache           *projectManagerSnapshotCacheService
+	detailCache             *projectManagerConversationCacheService
+	conversationSearchCache *projectManagerConversationSearchCacheService
+	snapshotBuildMu         sync.Mutex
+	conversationSearchMu    sync.Mutex
+	warmRefreshMu           sync.Mutex
+	warmRefreshRunning      bool
+	lastWarmRefreshAt       time.Time
 }
 
 func NewProjectManagerService() *ProjectManagerService {
 	return &ProjectManagerService{
-		store:         newProjectManagerStoreService(),
-		snapshotCache: newProjectManagerSnapshotCacheService(),
-		detailCache:   newProjectManagerConversationCacheService(),
+		store:                   newProjectManagerStoreService(),
+		snapshotCache:           newProjectManagerSnapshotCacheService(),
+		detailCache:             newProjectManagerConversationCacheService(),
+		conversationSearchCache: newProjectManagerConversationSearchCacheService(),
 	}
 }
 
@@ -249,7 +252,7 @@ func (s *ProjectManagerService) DeleteSession(sessionID string) error {
 
 	sessionFile, err := s.findProjectManagerSessionFileByID(sessionID)
 	hasSessionFile := err == nil
-	if err != nil && !strings.Contains(err.Error(), "未找到会话源文件") {
+	if err != nil && !errors.Is(err, errProjectManagerSessionFileNotFound) {
 		return err
 	}
 
@@ -554,10 +557,12 @@ func (s *ProjectManagerService) readProjectManagerConversationItems(file project
 }
 
 func (s *ProjectManagerService) invalidateProjectManagerConversationCache(sessionID string) {
-	if s.detailCache == nil {
-		return
+	if s.detailCache != nil {
+		s.detailCache.delete(sessionID)
 	}
-	s.detailCache.delete(sessionID)
+	if s.conversationSearchCache != nil {
+		s.conversationSearchCache.delete(sessionID)
+	}
 }
 
 func (s *ProjectManagerService) removeCodexSessionIndexEntry(sessionID string) error {

@@ -9,6 +9,8 @@ const props = defineProps<{
   activeMode: ProjectManagerViewMode
   modelValue: string
   refreshing: boolean
+  searching: boolean
+  conversationSearch: boolean
 }>()
 
 const emit = defineEmits<{
@@ -24,6 +26,14 @@ const keywordModel = computed({
   get: () => props.modelValue,
   set: (value: string) => emit('update:modelValue', value),
 })
+
+const searchPlaceholder = computed(() =>
+  t(
+    props.conversationSearch
+      ? 'components.projectManager.toolbar.conversationSearchPlaceholder'
+      : 'components.projectManager.toolbar.searchPlaceholder',
+  ),
+)
 </script>
 
 <template>
@@ -49,14 +59,20 @@ const keywordModel = computed({
 
     <div class="toolbar-actions">
       <div class="search-shell">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
+        <span
+          v-if="searching"
+          class="toolbar-search-spinner"
+          role="status"
+          :aria-label="t('components.projectManager.toolbar.searchingConversations')"
+        ></span>
+        <svg v-else viewBox="0 0 24 24" aria-hidden="true">
           <circle cx="11" cy="11" r="7"></circle>
           <path d="M20 20l-3.6-3.6"></path>
         </svg>
         <BaseInput
           v-model="keywordModel"
           class="search-input"
-          :placeholder="t('components.projectManager.toolbar.searchPlaceholder')"
+          :placeholder="searchPlaceholder"
         />
         <button
           v-if="modelValue"

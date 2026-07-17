@@ -31,10 +31,12 @@ import {
   refreshProjectManagerSnapshot,
   renameProject,
   renameSession,
+  searchProjectSessionConversations,
   saveProjectRunCommand,
   setProjectCodexProvider,
   type ProjectSummary,
   type ProjectManagerSnapshot,
+  type ProjectSessionSearchResult,
   type SessionSummary,
 } from "../../services/projectManager";
 import { LoadProviders } from "../../../bindings/codeswitch/services/providerservice";
@@ -64,6 +66,10 @@ const snapshotProjects = ref<ProjectSummary[]>([]);
 const snapshotSessions = ref<SessionSummary[]>([]);
 const selectedProjectId = ref("");
 const searchKeyword = ref("");
+const projectSessionSearchLoading = ref(false);
+const projectSessionSearchResults = ref<ProjectSessionSearchResult[]>([]);
+const projectSessionSearchResolvedKey = ref("");
+const projectSessionSearchErrorKey = ref("");
 const activeMode = ref<ProjectManagerViewMode>("project");
 const renameModalOpen = ref(false);
 const renameTargetType = ref<ProjectManagerRenameTarget>("project");
@@ -97,8 +103,11 @@ const deleteState = reactive({
 
 const projectManagerOpenTimeoutMs = 5000;
 const projectManagerWarmRefreshDelayMs = 800;
+const projectSessionSearchDelayMs = 300;
 const openingSessionTimers = new Map<string, ReturnType<typeof setTimeout>>();
 let projectManagerWarmRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+let projectSessionSearchTimer: ReturnType<typeof setTimeout> | null = null;
+let projectSessionSearchRequestVersion = 0;
 
 const dateFormatter = computed(
   () =>
@@ -121,6 +130,39 @@ const selectedProject = computed(
     ) ?? null,
 );
 
+const isProjectSessionSearchScope = computed(
+  () => activeMode.value === "project" && !!selectedProjectId.value,
+);
+
+const projectSessionSearchKey = computed(() => {
+  if (!isProjectSessionSearchScope.value || !normalizedKeyword.value) {
+    return "";
+  }
+  return `${selectedProjectId.value}\n${normalizedKeyword.value}`;
+});
+
+const projectSessionSearchResultByID = computed(
+  () =>
+    new Map(
+      projectSessionSearchResults.value.map((result) => [
+        result.session_id,
+        result,
+      ]),
+    ),
+);
+
+const projectSessionSearchResolved = computed(
+  () =>
+    !!projectSessionSearchKey.value &&
+    projectSessionSearchResolvedKey.value === projectSessionSearchKey.value,
+);
+
+const projectSessionSearchFailed = computed(
+  () =>
+    !!projectSessionSearchKey.value &&
+    projectSessionSearchErrorKey.value === projectSessionSearchKey.value,
+);
+
 const matchesKeyword = (fields: Array<string | undefined>, keyword: string) => {
   if (!keyword) {
     return true;
@@ -141,22 +183,15 @@ const projectCards = computed(() => {
 const currentProjectSessions = computed(() => {
   const projectId = selectedProjectId.value;
   const keyword = normalizedKeyword.value;
-  return snapshotSessions.value.filter((session) => {
-    if (projectId && session.project_id !== projectId) {
-      return false;
-    }
-    return matchesKeyword(
-      [
-        session.display_name,
-        session.source_name,
-        session.project_name,
-        session.project_path,
-        session.latest_user_message,
-        session.summary,
-      ],
-      keyword,
-    );
-  });
+  const projectSessions = snapshotSessions.value.filter(
+    (session) => !projectId || session.project_id === projectId,
+  );
+  if (!keyword || !projectSessionSearchResolved.value) {
+    return projectSessions;
+  }
+
+  const matchedSessions = projectSessionSearchResultByID.value;
+  return projectSessions.filter((session) => matchedSessions.has(session.id));
 });
 
 const flatSessionCards = computed(() => {
@@ -193,7 +228,17 @@ const emptyStateMessage = computed(() => {
   if (showProjectGrid.value && projectCards.value.length === 0) {
     return t("components.projectManager.states.emptyProjects");
   }
+  if (projectSessionSearchFailed.value) {
+    return t("components.projectManager.states.sessionSearchFailed");
+  }
   if (!showProjectGrid.value && visibleSessions.value.length === 0) {
+    if (
+      isProjectSessionSearchScope.value &&
+      normalizedKeyword.value &&
+      projectSessionSearchResolved.value
+    ) {
+      return t("components.projectManager.states.noSessionSearchResults");
+    }
     return t("components.projectManager.states.emptySessions");
   }
   return "";
@@ -205,6 +250,73 @@ watch(activeMode, (mode) => {
     selectedProjectId.value = "";
   }
 });
+
+const clearProjectSessionSearchTimer = () => {
+  if (!projectSessionSearchTimer) {
+    return;
+  }
+  clearTimeout(projectSessionSearchTimer);
+  projectSessionSearchTimer = null;
+};
+
+const executeProjectSessionSearch = async (
+  projectPath: string,
+  query: string,
+  searchKey: string,
+  requestVersion: number,
+) => {
+  try {
+    const results = await searchProjectSessionConversations(projectPath, query);
+    if (requestVersion !== projectSessionSearchRequestVersion) {
+      return;
+    }
+    projectSessionSearchResults.value = results;
+    projectSessionSearchResolvedKey.value = searchKey;
+    projectSessionSearchErrorKey.value = "";
+  } catch (error) {
+    if (requestVersion !== projectSessionSearchRequestVersion) {
+      return;
+    }
+    console.error("failed to search project session conversations", error);
+    projectSessionSearchResults.value = [];
+    projectSessionSearchResolvedKey.value = searchKey;
+    projectSessionSearchErrorKey.value = searchKey;
+    showToast(extractErrorMessage(error), "error");
+  } finally {
+    if (requestVersion === projectSessionSearchRequestVersion) {
+      projectSessionSearchLoading.value = false;
+    }
+  }
+};
+
+const scheduleProjectSessionSearch = () => {
+  clearProjectSessionSearchTimer();
+  const requestVersion = ++projectSessionSearchRequestVersion;
+  const searchKey = projectSessionSearchKey.value;
+  projectSessionSearchErrorKey.value = "";
+
+  if (!searchKey) {
+    projectSessionSearchLoading.value = false;
+    projectSessionSearchResults.value = [];
+    projectSessionSearchResolvedKey.value = "";
+    return;
+  }
+
+  const projectPath = selectedProjectId.value;
+  const query = searchKeyword.value.trim();
+  projectSessionSearchLoading.value = true;
+  projectSessionSearchTimer = setTimeout(() => {
+    projectSessionSearchTimer = null;
+    void executeProjectSessionSearch(
+      projectPath,
+      query,
+      searchKey,
+      requestVersion,
+    );
+  }, projectSessionSearchDelayMs);
+};
+
+watch(projectSessionSearchKey, scheduleProjectSessionSearch);
 
 const loadSnapshot = async (isRefresh = false) => {
   if (isRefresh) {
@@ -465,6 +577,12 @@ const applySnapshot = (snapshot: ProjectManagerSnapshot) => {
   ) {
     selectedProjectId.value = "";
   }
+
+  // 当前项目刷新后源文件和会话集合都可能变化；有效查询必须重跑，
+  // 否则卡片会继续消费刷新前的会话 ID 和正文片段。
+  if (projectSessionSearchKey.value) {
+    scheduleProjectSessionSearch();
+  }
 };
 
 const scheduleSilentWarmRefresh = () => {
@@ -712,10 +830,21 @@ const isProjectRunning = (projectID: string) =>
 const isSessionDeleting = (sessionID: string) =>
   deletingSessionIds.value.includes(sessionID);
 
-const resolveSessionSummary = (session: SessionSummary) =>
-  session.latest_user_message ||
-  session.summary ||
-  t("components.projectManager.common.emptySummary");
+const resolveSessionSummary = (session: SessionSummary) => {
+  if (projectSessionSearchResolved.value) {
+    const matchedContent = projectSessionSearchResultByID.value
+      .get(session.id)
+      ?.matched_content.trim();
+    if (matchedContent) {
+      return matchedContent;
+    }
+  }
+  return (
+    session.latest_user_message ||
+    session.summary ||
+    t("components.projectManager.common.emptySummary")
+  );
+};
 
 onMounted(() => {
   loadSnapshot();
@@ -723,6 +852,8 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  clearProjectSessionSearchTimer();
+  projectSessionSearchRequestVersion += 1;
   openingSessionTimers.forEach((timeoutId) => {
     clearTimeout(timeoutId);
   });
@@ -740,6 +871,8 @@ onBeforeUnmount(() => {
       v-model="searchKeyword"
       :active-mode="activeMode"
       :refreshing="refreshing"
+      :searching="projectSessionSearchLoading"
+      :conversation-search="isProjectSessionSearchScope"
       @change-mode="activeMode = $event"
       @clear="searchKeyword = ''"
       @refresh="loadSnapshot(true)"
