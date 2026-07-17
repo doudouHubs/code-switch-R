@@ -768,6 +768,7 @@ onBeforeUnmount(() => {
     <ProjectManagerProjectGrid
       v-else-if="showProjectGrid"
       :projects="projectCards"
+      :search-keyword="searchKeyword"
       :format-updated-at="formatUpdatedAt"
       :is-project-deleting="isProjectDeleting"
       :is-project-committing="isProjectCommitting"
@@ -784,6 +785,7 @@ onBeforeUnmount(() => {
     <ProjectManagerSessionGrid
       v-else
       :sessions="visibleSessions"
+      :search-keyword="searchKeyword"
       :format-updated-at="formatUpdatedAt"
       :resolve-summary="resolveSessionSummary"
       :show-project-name-tag="activeMode === 'session'"

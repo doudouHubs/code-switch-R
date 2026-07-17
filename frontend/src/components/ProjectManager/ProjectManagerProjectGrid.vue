@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import ProjectManagerCardMenu from './ProjectManagerCardMenu.vue'
+import ProjectManagerHighlightedText from './ProjectManagerHighlightedText.vue'
 import type { ProjectSummary } from '../../services/projectManager'
 
 type ProjectManagerCardMenuAction = {
@@ -12,6 +13,7 @@ type ProjectManagerCardMenuAction = {
 
 defineProps<{
   projects: ProjectSummary[]
+  searchKeyword: string
   formatUpdatedAt: (timestamp: number) => string
   isProjectDeleting: (projectId: string) => boolean
   isProjectCommitting: (projectId: string) => boolean
@@ -75,7 +77,12 @@ const handleProjectAction = (project: ProjectSummary, actionKey: string) => {
       @click="!isProjectDeleting(project.id) && emit('enter', project)"
     >
       <div class="card-topline">
-        <h3 class="card-title">{{ project.display_name }}</h3>
+        <h3 class="card-title">
+          <ProjectManagerHighlightedText
+            :text="project.display_name"
+            :keyword="searchKeyword"
+          />
+        </h3>
         <div class="card-topline-actions">
           <button
             :class="['card-run-trigger', { 'is-loading': isProjectRunning(project.id) }]"
@@ -104,7 +111,12 @@ const handleProjectAction = (project: ProjectSummary, actionKey: string) => {
         </div>
       </div>
       <div class="card-copy">
-        <p class="card-path">{{ project.path }}</p>
+        <p class="card-path">
+          <ProjectManagerHighlightedText
+            :text="project.path"
+            :keyword="searchKeyword"
+          />
+        </p>
         <p class="card-provider">
           <span>{{ t('components.projectManager.card.codexProvider') }}</span>
           <strong>

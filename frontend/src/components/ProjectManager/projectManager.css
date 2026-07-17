@@ -438,6 +438,20 @@
   word-break: break-word;
 }
 
+.project-manager-page .card-highlighted-text {
+  display: inline;
+}
+
+.project-manager-page .card-search-mark {
+  color: #dc2626;
+  background: rgba(220, 38, 38, 0.12);
+}
+
+.dark .project-manager-page .card-search-mark {
+  color: #ff8a8a;
+  background: rgba(248, 113, 113, 0.18);
+}
+
 .project-manager-page .card-provider {
   display: inline-flex;
   align-items: center;

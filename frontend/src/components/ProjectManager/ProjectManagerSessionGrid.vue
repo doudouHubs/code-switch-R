@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import ProjectManagerCardMenu from './ProjectManagerCardMenu.vue'
+import ProjectManagerHighlightedText from './ProjectManagerHighlightedText.vue'
 import type { SessionSummary } from '../../services/projectManager'
 
 type ProjectManagerCardMenuAction = {
@@ -12,6 +13,7 @@ type ProjectManagerCardMenuAction = {
 
 const props = defineProps<{
   sessions: SessionSummary[]
+  searchKeyword: string
   formatUpdatedAt: (timestamp: number) => string
   resolveSummary: (session: SessionSummary) => string
   showProjectNameTag: boolean
@@ -75,7 +77,12 @@ const emitOpenDetail = (session: SessionSummary) => {
       @click="emitOpenDetail(session)"
     >
       <div class="card-topline">
-        <h3 class="card-title">{{ session.display_name }}</h3>
+        <h3 class="card-title">
+          <ProjectManagerHighlightedText
+            :text="session.display_name"
+            :keyword="searchKeyword"
+          />
+        </h3>
         <ProjectManagerCardMenu
           :label="t('components.projectManager.card.moreActions')"
           :actions="resolveSessionActions(session)"
@@ -85,9 +92,24 @@ const emitOpenDetail = (session: SessionSummary) => {
         />
       </div>
       <div class="card-copy">
-        <p v-if="showProjectNameTag" class="card-eyebrow">{{ session.project_name }}</p>
-        <p class="card-summary">{{ resolveSummary(session) }}</p>
-        <p class="card-path small">{{ showProjectNameTag ? session.project_path : (session.cwd || session.project_path) }}</p>
+        <p v-if="showProjectNameTag" class="card-eyebrow">
+          <ProjectManagerHighlightedText
+            :text="session.project_name"
+            :keyword="searchKeyword"
+          />
+        </p>
+        <p class="card-summary">
+          <ProjectManagerHighlightedText
+            :text="resolveSummary(session)"
+            :keyword="searchKeyword"
+          />
+        </p>
+        <p class="card-path small">
+          <ProjectManagerHighlightedText
+            :text="showProjectNameTag ? session.project_path : (session.cwd || session.project_path)"
+            :keyword="searchKeyword"
+          />
+        </p>
       </div>
       <div class="card-footer">
         <span class="card-time">{{ formatUpdatedAt(session.updated_at) }}</span>
