@@ -12,7 +12,7 @@ import (
 
 const (
 	projectManagerSnapshotCacheFile    = "project-manager-snapshot-cache.json"
-	projectManagerSnapshotCacheVersion = 3
+	projectManagerSnapshotCacheVersion = 4
 	projectManagerWarmRefreshMinGap    = 12 * time.Second
 )
 
@@ -386,20 +386,22 @@ func listProjectManagerTrackedFileKeys(items map[string]projectManagerTrackedFil
 }
 
 func scanProjectManagerCodexSessionFile(path string) (projectManagerSessionFileEntry, error) {
-	sessionID, cwd, projectPath, projectSource, summary, updatedAt, err := scanProjectManagerCodexSessionFileDetails(path)
+	sessionID, cwd, projectPath, projectSource, summary, latestUserMessage, latestUserMessageAt, updatedAt, err := scanProjectManagerCodexSessionFileDetails(path)
 	if err != nil {
 		return projectManagerSessionFileEntry{}, err
 	}
 
 	return projectManagerSessionFileEntry{
-		SessionID:     sessionID,
-		Path:          normalizeProjectManagerTrackedPath(path),
-		Cwd:           cwd,
-		ProjectPath:   projectPath,
-		ProjectSource: projectSource,
-		Summary:       summary,
-		UpdatedAt:     updatedAt,
-		IsRollout:     projectManagerIsRolloutSessionPath(path),
+		SessionID:           sessionID,
+		Path:                normalizeProjectManagerTrackedPath(path),
+		Cwd:                 cwd,
+		ProjectPath:         projectPath,
+		ProjectSource:       projectSource,
+		Summary:             summary,
+		LatestUserMessage:   latestUserMessage,
+		LatestUserMessageAt: latestUserMessageAt,
+		UpdatedAt:           updatedAt,
+		IsRollout:           projectManagerIsRolloutSessionPath(path),
 	}, nil
 }
 
@@ -491,6 +493,12 @@ func (s *ProjectManagerService) enrichProjectManagerSessionsFromCaptureEntries(
 				meta.Summary = summary
 				return true
 			})
+		}
+		if latestUserMessage := strings.TrimSpace(entry.Summary); latestUserMessage != "" && (state.LatestUserMessage == "" || entry.CapturedAt.After(state.LatestUserMessageAt)) {
+			// capture 是没有 Codex JSONL 时的历史兜底来源；只有更新的捕获记录
+			// 才能覆盖已有预览，避免旧 capture 把真实会话末条消息顶掉。
+			state.LatestUserMessage = latestUserMessage
+			state.LatestUserMessageAt = entry.CapturedAt
 		}
 
 		if normalized := normalizeProjectManagerProjectPath(entry.ProjectPath); normalized != "" {

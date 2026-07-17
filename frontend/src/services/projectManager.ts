@@ -23,6 +23,7 @@ export interface SessionSummary {
   source_name: string;
   display_name: string;
   summary: string;
+  latest_user_message: string;
   updated_at: number;
   window_id: string;
   cwd: string;

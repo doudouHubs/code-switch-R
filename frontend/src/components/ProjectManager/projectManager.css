@@ -562,16 +562,28 @@
 }
 
 .project-manager-page .card-action-menu {
-  position: absolute;
-  top: 0;
-  right: 0;
+  position: relative;
   z-index: 3;
   display: inline-flex;
   align-items: center;
   width: 20px;
   height: 20px;
-  margin: 0 !important;
+  margin-left: 0;
+  margin-right: 0;
   flex: 0 0 auto;
+}
+
+.project-manager-page .session-card .card-action-menu {
+  /* 会话卡只有一个操作按钮，补齐与项目卡操作层相同的 42px 右侧边距。 */
+  margin-right: 20px;
+}
+
+.project-manager-page .card-topline-actions .card-action-menu {
+  /* 只有项目卡片使用独立的双按钮定位层；会话卡片必须留在标题行 flex 中。 */
+  position: absolute;
+  top: 0;
+  right: 0;
+  margin: 0 !important;
 }
 
 .project-manager-page .card-menu-trigger {
@@ -630,8 +642,7 @@
 .project-manager-page .card-menu-popover {
   position: absolute;
   top: calc(100% + 10px);
-  /* Headless UI 菜单项当前以触发器左边缘为定位基准，补偿一个按钮宽度后右边缘与三点按钮对齐。 */
-  right: -20px;
+  right: 0;
   min-width: 148px;
   padding: 8px;
   border-radius: 18px;
@@ -641,6 +652,11 @@
   display: grid;
   gap: 4px;
   backdrop-filter: blur(18px);
+}
+
+.project-manager-page .card-topline-actions .card-menu-popover {
+  /* 项目卡操作层距离卡片右侧 42px，向右补偿一个按钮宽度后与 22px 内容边距对齐。 */
+  right: -20px;
 }
 
 .dark .project-manager-page .card-menu-popover {

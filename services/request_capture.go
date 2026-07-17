@@ -293,7 +293,7 @@ func detectCaptureProjectIDFromCodexSessionFiles(sessionID string) string {
 			return nil
 		}
 
-		fileSessionID, _, projectPath, _, _, updatedAt, err := scanProjectManagerCodexSessionFileDetails(path)
+		fileSessionID, _, projectPath, _, _, _, _, updatedAt, err := scanProjectManagerCodexSessionFileDetails(path)
 		if err != nil || strings.TrimSpace(fileSessionID) != sessionID {
 			return nil
 		}

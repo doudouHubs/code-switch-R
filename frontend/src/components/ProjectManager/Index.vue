@@ -151,6 +151,7 @@ const currentProjectSessions = computed(() => {
         session.source_name,
         session.project_name,
         session.project_path,
+        session.latest_user_message,
         session.summary,
       ],
       keyword,
@@ -167,6 +168,7 @@ const flatSessionCards = computed(() => {
         session.source_name,
         session.project_name,
         session.project_path,
+        session.latest_user_message,
         session.summary,
       ],
       keyword,
@@ -711,7 +713,9 @@ const isSessionDeleting = (sessionID: string) =>
   deletingSessionIds.value.includes(sessionID);
 
 const resolveSessionSummary = (session: SessionSummary) =>
-  session.summary || t("components.projectManager.common.emptySummary");
+  session.latest_user_message ||
+  session.summary ||
+  t("components.projectManager.common.emptySummary");
 
 onMounted(() => {
   loadSnapshot();

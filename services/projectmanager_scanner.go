@@ -27,28 +27,32 @@ type projectManagerSessionIndexEntry struct {
 }
 
 type projectManagerSessionState struct {
-	SessionID       string
-	SourceName      string
-	DisplayName     string
-	ProjectPath     string
-	ProjectSource   string
-	Summary         string
-	UpdatedAt       time.Time
-	WindowID        string
-	Cwd             string
-	LastCapturePath string
+	SessionID           string
+	SourceName          string
+	DisplayName         string
+	ProjectPath         string
+	ProjectSource       string
+	Summary             string
+	LatestUserMessage   string
+	LatestUserMessageAt time.Time
+	UpdatedAt           time.Time
+	WindowID            string
+	Cwd                 string
+	LastCapturePath     string
 }
 
 type projectManagerSessionFileEntry struct {
-	SessionID     string
-	Path          string
-	ThreadName    string
-	Cwd           string
-	ProjectPath   string
-	ProjectSource string
-	Summary       string
-	UpdatedAt     time.Time
-	IsRollout     bool
+	SessionID           string
+	Path                string
+	ThreadName          string
+	Cwd                 string
+	ProjectPath         string
+	ProjectSource       string
+	Summary             string
+	LatestUserMessage   string
+	LatestUserMessageAt time.Time
+	UpdatedAt           time.Time
+	IsRollout           bool
 }
 
 type projectManagerProjectState struct {
@@ -157,6 +161,8 @@ func (s *ProjectManagerService) enrichProjectManagerSessionsFromCodexSessions(
 		projectPath := strings.TrimSpace(fileEntry.ProjectPath)
 		projectSource := strings.TrimSpace(fileEntry.ProjectSource)
 		summary := strings.TrimSpace(fileEntry.Summary)
+		latestUserMessage := strings.TrimSpace(fileEntry.LatestUserMessage)
+		latestUserMessageAt := fileEntry.LatestUserMessageAt
 		updatedAt := fileEntry.UpdatedAt
 		if state.Cwd == "" && cwd != "" {
 			state.Cwd = cwd
@@ -179,6 +185,17 @@ func (s *ProjectManagerService) enrichProjectManagerSessionsFromCodexSessions(
 				meta.Summary = summary
 				return true
 			})
+		}
+		if latestUserMessage != "" {
+			// 同一会话可能同时存在主文件和 rollout，必须按消息时间聚合，
+			// 不能让目录遍历顺序决定卡片最终展示哪一条用户消息。
+			if latestUserMessageAt.IsZero() {
+				latestUserMessageAt = updatedAt
+			}
+			if state.LatestUserMessage == "" || latestUserMessageAt.After(state.LatestUserMessageAt) {
+				state.LatestUserMessage = latestUserMessage
+				state.LatestUserMessageAt = latestUserMessageAt
+			}
 		}
 		if updatedAt.After(state.UpdatedAt) {
 			state.UpdatedAt = updatedAt
@@ -667,7 +684,7 @@ func (s *ProjectManagerService) readProjectManagerSessionFiles(
 			return nil
 		}
 
-		sessionID, cwd, projectPath, projectSource, summary, updatedAt, err := scanProjectManagerCodexSessionFileDetails(path)
+		sessionID, cwd, projectPath, projectSource, summary, latestUserMessage, latestUserMessageAt, updatedAt, err := scanProjectManagerCodexSessionFileDetails(path)
 		if err != nil {
 			return nil
 		}
@@ -684,15 +701,17 @@ func (s *ProjectManagerService) readProjectManagerSessionFiles(
 		}
 
 		result = append(result, projectManagerSessionFileEntry{
-			SessionID:     sessionID,
-			Path:          path,
-			ThreadName:    threadName,
-			Cwd:           cwd,
-			ProjectPath:   projectPath,
-			ProjectSource: projectSource,
-			Summary:       summary,
-			UpdatedAt:     updatedAt,
-			IsRollout:     projectManagerIsRolloutSessionPath(path),
+			SessionID:           sessionID,
+			Path:                path,
+			ThreadName:          threadName,
+			Cwd:                 cwd,
+			ProjectPath:         projectPath,
+			ProjectSource:       projectSource,
+			Summary:             summary,
+			LatestUserMessage:   latestUserMessage,
+			LatestUserMessageAt: latestUserMessageAt,
+			UpdatedAt:           updatedAt,
+			IsRollout:           projectManagerIsRolloutSessionPath(path),
 		})
 		return nil
 	})
@@ -745,10 +764,10 @@ func projectManagerLooksLikeSessionID(value string) bool {
 	return true
 }
 
-func scanProjectManagerCodexSessionFileDetails(path string) (sessionID string, cwd string, projectPath string, projectSource string, summary string, updatedAt time.Time, err error) {
+func scanProjectManagerCodexSessionFileDetails(path string) (sessionID string, cwd string, projectPath string, projectSource string, summary string, latestUserMessage string, latestUserMessageAt time.Time, updatedAt time.Time, err error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return "", "", "", "", "", time.Time{}, err
+		return "", "", "", "", "", "", time.Time{}, time.Time{}, err
 	}
 	defer file.Close()
 
@@ -796,14 +815,25 @@ func scanProjectManagerCodexSessionFileDetails(path string) (sessionID string, c
 			}
 		}
 
+		lineTimestamp := time.Time{}
+		if ts := strings.TrimSpace(gjson.Get(line, "timestamp").String()); ts != "" {
+			if parsed, parseErr := time.Parse(time.RFC3339Nano, ts); parseErr == nil {
+				lineTimestamp = parsed
+				if parsed.After(updatedAt) {
+					updatedAt = parsed
+				}
+			}
+		}
+
 		if summary == "" && gjson.Get(line, "type").String() == "event_msg" && gjson.Get(line, "payload.type").String() == "user_message" {
 			summary = projectManagerTrimSummary(gjson.Get(line, "payload.message").String())
 		}
 
-		if ts := strings.TrimSpace(gjson.Get(line, "timestamp").String()); ts != "" {
-			if parsed, parseErr := time.Parse(time.RFC3339Nano, ts); parseErr == nil && parsed.After(updatedAt) {
-				updatedAt = parsed
-			}
+		if userMessage := extractProjectManagerSessionLineUserMessage(line); userMessage != "" {
+			// JSONL 的行序就是事件落盘顺序；文件内取最后一条有效消息，
+			// 时间戳仅用于随后跨主文件和 rollout 文件比较。
+			latestUserMessage = userMessage
+			latestUserMessageAt = lineTimestamp
 		}
 
 		if cwd != "" && summary != "" && !updatedAt.IsZero() {
@@ -811,10 +841,36 @@ func scanProjectManagerCodexSessionFileDetails(path string) (sessionID string, c
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return "", "", "", "", "", time.Time{}, err
+		return "", "", "", "", "", "", time.Time{}, time.Time{}, err
 	}
 
-	return sessionID, cwd, projectPath, projectSource, summary, updatedAt, nil
+	return sessionID, cwd, projectPath, projectSource, summary, latestUserMessage, latestUserMessageAt, updatedAt, nil
+}
+
+func extractProjectManagerSessionLineUserMessage(line string) string {
+	recordType := gjson.Get(line, "type").String()
+	if recordType == "event_msg" && gjson.Get(line, "payload.type").String() == "user_message" {
+		return projectManagerTrimSummary(gjson.Get(line, "payload.message").String())
+	}
+	if recordType != "response_item" || gjson.Get(line, "payload.type").String() != "message" || gjson.Get(line, "payload.role").String() != "user" {
+		return ""
+	}
+
+	content := gjson.Get(line, "payload.content")
+	if !content.IsArray() {
+		return projectManagerTrimSummary(content.String())
+	}
+
+	// 新旧 Codex 会话都可能只有 response_item；这里只抽取文本片段，
+	// 图片和其他结构化内容不能被序列化成 JSON 噪声塞进卡片预览。
+	parts := make([]string, 0, 2)
+	content.ForEach(func(_, item gjson.Result) bool {
+		if text := strings.TrimSpace(item.Get("text").String()); text != "" {
+			parts = append(parts, text)
+		}
+		return true
+	})
+	return projectManagerTrimSummary(strings.Join(parts, "\n"))
 }
 
 func extractProjectManagerWorkspaceRootsFromLine(line string) []string {
@@ -898,6 +954,7 @@ func buildProjectManagerSessionSummaries(projects map[string]*projectManagerProj
 				SourceName:        session.SourceName,
 				DisplayName:       session.DisplayName,
 				Summary:           session.Summary,
+				LatestUserMessage: session.LatestUserMessage,
 				UpdatedAt:         session.UpdatedAt.UnixMilli(),
 				WindowID:          session.WindowID,
 				Cwd:               session.Cwd,

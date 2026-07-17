@@ -35,6 +35,7 @@ type SessionSummary struct {
 	SourceName        string `json:"source_name"`
 	DisplayName       string `json:"display_name"`
 	Summary           string `json:"summary"`
+	LatestUserMessage string `json:"latest_user_message"`
 	UpdatedAt         int64  `json:"updated_at"`
 	WindowID          string `json:"window_id"`
 	Cwd               string `json:"cwd"`

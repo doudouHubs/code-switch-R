@@ -637,6 +637,48 @@ func TestProjectManagerGetSnapshotFallsBackToSessionMetaCwd(t *testing.T) {
 	}
 }
 
+func TestProjectManagerGetSnapshotTracksLatestUserMessage(t *testing.T) {
+	home := setupProjectManagerTestHome(t)
+	service := NewProjectManagerService()
+
+	sessionID := "019ecab9-latest-user-message-case"
+	projectDir := filepath.Join(home, "workspace", "latest-user-message")
+	writeProjectManagerSessionIndex(t, home, sessionID, "Latest User Message Session", "2026-06-16T10:03:00Z")
+	writeProjectManagerConversationFixture(t, home, sessionID, projectDir, []string{
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:00Z","payload":{"type":"user_message","message":"第一问保留为稳定摘要"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:10Z","payload":{"type":"agent_message","message":"第一答"}}`,
+		`{"type":"response_item","timestamp":"2026-06-16T10:02:00Z","payload":{"type":"message","role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,ignored"},{"type":"input_text","text":"第二问才是卡片预览"}]}}`,
+		`{"type":"response_item","timestamp":"2026-06-16T10:02:10Z","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"助手消息不能覆盖用户预览"}]}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:02:20Z","payload":{"type":"user_message","message":"   "}}`,
+	})
+
+	snapshot, err := service.GetSnapshot()
+	if err != nil {
+		t.Fatalf("GetSnapshot 失败: %v", err)
+	}
+	if len(snapshot.Sessions) != 1 {
+		t.Fatalf("会话数不对，want=1 got=%d", len(snapshot.Sessions))
+	}
+
+	session := snapshot.Sessions[0]
+	if session.Summary != "第一问保留为稳定摘要" {
+		t.Fatalf("summary 应继续保留首条用户消息，got=%q", session.Summary)
+	}
+	if session.LatestUserMessage != "第二问才是卡片预览" {
+		t.Fatalf("卡片预览应取最后一条有效用户消息，got=%q", session.LatestUserMessage)
+	}
+
+	// 用新 service 重新读取落盘快照，锁住 latest_user_message 的缓存序列化契约。
+	cachedService := NewProjectManagerService()
+	cachedSnapshot, err := cachedService.GetSnapshot()
+	if err != nil {
+		t.Fatalf("从缓存读取 GetSnapshot 失败: %v", err)
+	}
+	if len(cachedSnapshot.Sessions) != 1 || cachedSnapshot.Sessions[0].LatestUserMessage != "第二问才是卡片预览" {
+		t.Fatalf("快照缓存丢失最新用户消息，sessions=%+v", cachedSnapshot.Sessions)
+	}
+}
+
 func TestProjectManagerGetSnapshotKeepsLargeRolloutSession(t *testing.T) {
 	home := setupProjectManagerTestHome(t)
 	service := NewProjectManagerService()
