@@ -11,8 +11,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// setupRenameTestEnv 把 HOME 指到临时目录并初始化独立的 app.db,
-// 同时初始化 request_log / provider_blacklist / health_check_history / provider_alias 表。
+// setupRenameTestEnv 把 HOME 指到临时目录并初始化独立的 app.db，
+// 同时初始化 request_log / provider_blacklist / provider_alias 表。
 func setupRenameTestEnv(t *testing.T) string {
 	t.Helper()
 
@@ -62,13 +62,6 @@ func setupRenameTestEnv(t *testing.T) string {
 			last_recovered_at DATETIME, last_degrade_hour INTEGER DEFAULT 0,
 			last_failure_window_start DATETIME, auto_recovered INTEGER DEFAULT 0,
 			UNIQUE(platform, provider_name)
-		)`,
-		`CREATE TABLE IF NOT EXISTS health_check_history (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			provider_id INTEGER NOT NULL, provider_name TEXT NOT NULL,
-			platform TEXT NOT NULL, model TEXT, endpoint TEXT,
-			status TEXT NOT NULL, latency_ms INTEGER, error_message TEXT,
-			checked_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE TABLE IF NOT EXISTS provider_alias (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -129,18 +122,6 @@ func seedBlacklist(t *testing.T, platform, providerName string) {
 	}
 }
 
-func seedHealthCheck(t *testing.T, platform string, providerID int64, providerName string) {
-	t.Helper()
-	db, _ := xdb.DB("default")
-	_, err := db.Exec(
-		`INSERT INTO health_check_history (provider_id, provider_name, platform, status) VALUES (?, ?, ?, 'ok')`,
-		providerID, providerName, platform,
-	)
-	if err != nil {
-		t.Fatalf("seed health_check 失败: %v", err)
-	}
-}
-
 func countRows(t *testing.T, query string, args ...interface{}) int {
 	t.Helper()
 	db, _ := xdb.DB("default")
@@ -162,8 +143,6 @@ func TestRenameProvider_HappyPath(t *testing.T) {
 
 	seedRequestLog(t, "claude", "OldName", 5)
 	seedBlacklist(t, "claude", "OldName")
-	seedHealthCheck(t, "claude", 1, "OldName")
-
 	if err := ps.RenameProvider("claude", 1, "NewName"); err != nil {
 		t.Fatalf("RenameProvider 失败: %v", err)
 	}
@@ -187,10 +166,6 @@ func TestRenameProvider_HappyPath(t *testing.T) {
 	if n := countRows(t, `SELECT COUNT(*) FROM provider_blacklist WHERE provider_name = ?`, "NewName"); n != 1 {
 		t.Errorf("provider_blacklist 应改名,实际 NewName 条数 %d", n)
 	}
-	if n := countRows(t, `SELECT COUNT(*) FROM health_check_history WHERE provider_name = ?`, "NewName"); n != 1 {
-		t.Errorf("health_check_history 应改名,实际 %d", n)
-	}
-
 	// 验证 alias 已写入
 	if n := countRows(t, `SELECT COUNT(*) FROM provider_alias WHERE alias_name = ? AND canonical_name = ?`, "OldName", "NewName"); n != 1 {
 		t.Errorf("alias 应有 1 条 OldName->NewName,实际 %d", n)

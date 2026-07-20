@@ -33,7 +33,6 @@ const getCachedString = (key: string, defaultValue: string): string => {
 const heatmapEnabled = ref(getCachedValue('heatmap', true))
 const homeTitleVisible = ref(getCachedValue('homeTitle', true))
 const autoStartEnabled = ref(getCachedValue('autoStart', false))
-const autoConnectivityTestEnabled = ref(getCachedValue('autoConnectivityTest', false))
 const switchNotifyEnabled = ref(getCachedValue('switchNotify', true)) // 切换通知开关
 const roundRobinEnabled = ref(getCachedValue('roundRobin', false))    // 同 Level 轮询开关
 const autoUpdateEnabled = ref(getCachedValue('autoUpdate', true))     // 自动更新开关
@@ -113,7 +112,6 @@ const loadAppSettings = async () => {
     budgetShowCountdownCodex.value = data?.budget_show_countdown_codex ?? false
     budgetShowForecastCodex.value = data?.budget_show_forecast_codex ?? false
     autoStartEnabled.value = data?.auto_start ?? false
-    autoConnectivityTestEnabled.value = data?.auto_connectivity_test ?? false
     switchNotifyEnabled.value = data?.enable_switch_notify ?? true
     roundRobinEnabled.value = data?.enable_round_robin ?? false
     autoUpdateEnabled.value = data?.auto_update ?? true
@@ -142,7 +140,6 @@ const loadAppSettings = async () => {
     localStorage.setItem('app-settings-budgetShowCountdownCodex', String(budgetShowCountdownCodex.value))
     localStorage.setItem('app-settings-budgetShowForecastCodex', String(budgetShowForecastCodex.value))
     localStorage.setItem('app-settings-autoStart', String(autoStartEnabled.value))
-    localStorage.setItem('app-settings-autoConnectivityTest', String(autoConnectivityTestEnabled.value))
     localStorage.setItem('app-settings-switchNotify', String(switchNotifyEnabled.value))
     localStorage.setItem('app-settings-roundRobin', String(roundRobinEnabled.value))
     localStorage.setItem('app-settings-autoUpdate', String(autoUpdateEnabled.value))
@@ -171,7 +168,6 @@ const loadAppSettings = async () => {
     budgetShowCountdownCodex.value = false
     budgetShowForecastCodex.value = false
     autoStartEnabled.value = false
-    autoConnectivityTestEnabled.value = false
     switchNotifyEnabled.value = true
     roundRobinEnabled.value = false
     requestCaptureEnabled.value = true
@@ -237,7 +233,6 @@ const persistAppSettings = async () => {
       budget_show_countdown_codex: budgetShowCountdownCodex.value,
       budget_show_forecast_codex: budgetShowForecastCodex.value,
       auto_start: autoStartEnabled.value,
-      auto_connectivity_test: autoConnectivityTestEnabled.value,
       enable_switch_notify: switchNotifyEnabled.value,
       enable_round_robin: roundRobinEnabled.value,
       auto_update: autoUpdateEnabled.value,
@@ -245,12 +240,6 @@ const persistAppSettings = async () => {
       request_capture_dir: requestCaptureDir.value.trim(),
     }
     await saveAppSettings(payload)
-
-    // 同步自动可用性监控设置到 HealthCheckService（复用旧字段名）
-    await Call.ByName(
-      'codeswitch/services.HealthCheckService.SetAutoAvailabilityPolling',
-      autoConnectivityTestEnabled.value
-    )
 
     // 更新缓存
     localStorage.setItem('app-settings-heatmap', String(heatmapEnabled.value))
@@ -274,7 +263,6 @@ const persistAppSettings = async () => {
     localStorage.setItem('app-settings-budgetShowCountdownCodex', String(budgetShowCountdownCodex.value))
     localStorage.setItem('app-settings-budgetShowForecastCodex', String(budgetShowForecastCodex.value))
     localStorage.setItem('app-settings-autoStart', String(autoStartEnabled.value))
-    localStorage.setItem('app-settings-autoConnectivityTest', String(autoConnectivityTestEnabled.value))
     localStorage.setItem('app-settings-switchNotify', String(switchNotifyEnabled.value))
     localStorage.setItem('app-settings-roundRobin', String(roundRobinEnabled.value))
     localStorage.setItem('app-settings-autoUpdate', String(autoUpdateEnabled.value))
@@ -903,26 +891,6 @@ onMounted(async () => {
                 <option value="last24h">{{ $t('components.general.label.budgetForecastMethod24h') }}</option>
               </select>
               <span class="hint-text">{{ $t('components.general.label.budgetForecastMethodHint') }}</span>
-            </div>
-          </ListItem>
-        </div>
-      </section>
-
-      <section>
-        <h2 class="mac-section-title">{{ $t('components.general.title.connectivity') }}</h2>
-        <div class="mac-panel">
-          <ListItem :label="$t('components.general.label.autoConnectivityTest')">
-            <div class="toggle-with-hint">
-              <label class="mac-switch">
-                <input
-                  type="checkbox"
-                  :disabled="settingsLoading || saveBusy"
-                  v-model="autoConnectivityTestEnabled"
-                  @change="persistAppSettings"
-                />
-                <span></span>
-              </label>
-              <span class="hint-text">{{ $t('components.general.label.autoConnectivityTestHint') }}</span>
             </div>
           </ListItem>
         </div>

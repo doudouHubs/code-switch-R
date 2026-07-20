@@ -1,6 +1,7 @@
 package services
 
 import (
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -59,7 +60,13 @@ func InitDatabase() error {
 	}
 	fmt.Printf("✅ SQLite PRAGMA 已设置: journal_mode=%s, busy_timeout=30000ms\n", journalMode)
 
-	// 4. 确保表结构存在
+	// 可用性检测模块已经退役，必须在其它服务启动前删除其历史表。
+	// DROP TABLE IF EXISTS 保证新安装和已迁移安装都能重复安全启动。
+	if err := dropRetiredHealthCheckHistoryTable(db); err != nil {
+		return fmt.Errorf("删除已退役的 health_check_history 表失败: %w", err)
+	}
+
+	// 4. 确保仍在使用的表结构存在
 	if err := ensureRequestLogTable(); err != nil {
 		return fmt.Errorf("初始化 request_log 表失败: %w", err)
 	}
@@ -79,6 +86,13 @@ func InitDatabase() error {
 	}
 
 	return nil
+}
+
+// dropRetiredHealthCheckHistoryTable 删除已明确废弃且不再读取的健康检查历史数据。
+// 该操作只处理退役模块自己的表，不触碰真实请求日志和供应商黑名单。
+func dropRetiredHealthCheckHistoryTable(db *sql.DB) error {
+	_, err := db.Exec(`DROP TABLE IF EXISTS health_check_history`)
+	return err
 }
 
 // ensureBlacklistTables 确保黑名单相关表存在

@@ -130,7 +130,7 @@ func (ps *ProviderService) RenameProvider(kind string, id int64, newName string)
 }
 
 // doRenameTx 在 tx 内完成 DB 侧所有改动:
-// request_log.provider / provider_blacklist.provider_name / health_check_history + 写 alias。
+// request_log.provider / provider_blacklist.provider_name + 写 alias。
 func doRenameTx(tx *sql.Tx, platform string, providerID int64, oldName, newName string) error {
 	if _, err := tx.Exec(
 		`UPDATE request_log SET provider = ? WHERE platform = ? AND provider = ?`,
@@ -144,13 +144,6 @@ func doRenameTx(tx *sql.Tx, platform string, providerID int64, oldName, newName 
 		newName, platform, oldName,
 	); err != nil {
 		return fmt.Errorf("更新 provider_blacklist 失败: %w", err)
-	}
-
-	if _, err := tx.Exec(
-		`UPDATE health_check_history SET provider_name = ? WHERE platform = ? AND provider_id = ?`,
-		newName, platform, providerID,
-	); err != nil {
-		return fmt.Errorf("更新 health_check_history 失败: %w", err)
 	}
 
 	expiresAt := time.Now().Add(aliasTTL).UTC().Format("2006-01-02 15:04:05")

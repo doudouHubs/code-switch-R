@@ -113,16 +113,8 @@ func main() {
 	mcpService := services.NewMCPService()
 	skillService := services.NewSkillService()
 	promptService := services.NewPromptService()
-	envCheckService := services.NewEnvCheckService()
 	importService := services.NewImportService(providerService, mcpService)
 	deeplinkService := services.NewDeepLinkService(providerService)
-	speedTestService := services.NewSpeedTestService()
-	connectivityTestService := services.NewConnectivityTestService(providerService, blacklistService, settingsService)
-	healthCheckService := services.NewHealthCheckService(providerService, blacklistService, settingsService)
-	// 初始化健康检查数据库表
-	if err := healthCheckService.Start(); err != nil {
-		log.Fatalf("初始化健康检查服务失败: %v", err)
-	}
 	dockService := dock.New()
 	versionService := NewVersionService()
 	updateService := services.NewUpdateService(AppVersion)
@@ -156,29 +148,6 @@ func main() {
 		}
 	}()
 
-	// 根据应用设置决定是否启动可用性监控（复用旧的 auto_connectivity_test 字段）
-	go func() {
-		time.Sleep(3 * time.Second) // 延迟3秒，等待应用初始化
-		settings, err := appSettings.GetAppSettings()
-
-		// 默认启用自动监控（保持开箱即用）
-		autoEnabled := true
-		if err != nil {
-			log.Printf("读取应用设置失败（使用默认值）: %v", err)
-		} else {
-			// 读取成功，使用配置值
-			autoEnabled = settings.AutoConnectivityTest
-		}
-
-		// 旧的 AutoConnectivityTest 字段现在控制可用性监控
-		if autoEnabled {
-			healthCheckService.SetAutoAvailabilityPolling(true)
-			log.Println("✅ 自动可用性监控已启动")
-		} else {
-			log.Println("ℹ️  自动可用性监控已禁用（可在设置中开启）")
-		}
-	}()
-
 	//fmt.Println(clipboardService)
 	// Create a new Wails application by providing the necessary options.
 	// Variables 'Name' and 'Description' are for application metadata.
@@ -202,12 +171,8 @@ func main() {
 			application.NewService(mcpService),
 			application.NewService(skillService),
 			application.NewService(promptService),
-			application.NewService(envCheckService),
 			application.NewService(importService),
 			application.NewService(deeplinkService),
-			application.NewService(speedTestService),
-			application.NewService(connectivityTestService),
-			application.NewService(healthCheckService),
 			application.NewService(dockService),
 			application.NewService(versionService),
 			application.NewService(updateService),
@@ -236,14 +201,10 @@ func main() {
 		// 1. 停止黑名单定时器
 		close(blacklistStopChan)
 
-		// 2. 停止健康检查轮询
-		healthCheckService.StopBackgroundPolling()
-		log.Println("✅ 健康检查服务已停止")
-
-		// 3. 停止代理服务器
+		// 2. 停止代理服务器
 		_ = providerRelay.Stop()
 
-		// 4. 优雅关闭数据库写入队列（10秒超时，双队列架构）
+		// 3. 优雅关闭数据库写入队列（10秒超时，双队列架构）
 		if err := services.ShutdownGlobalDBQueue(10 * time.Second); err != nil {
 			log.Printf("⚠️ 队列关闭超时: %v", err)
 		} else {

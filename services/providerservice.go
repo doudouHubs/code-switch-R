@@ -10,14 +10,6 @@ import (
 	"sync"
 )
 
-// AvailabilityConfig 可用性监控高级配置
-// 在可用性页面的"高级配置"弹窗中设置，可选
-type AvailabilityConfig struct {
-	TestModel    string `json:"testModel,omitempty"`    // 覆盖默认测试模型
-	TestEndpoint string `json:"testEndpoint,omitempty"` // 覆盖默认测试端点
-	Timeout      int    `json:"timeout,omitempty"`      // 覆盖默认超时（毫秒）
-}
-
 type Provider struct {
 	ID      int64  `json:"id"` // 修复：使用 int64 支持大 ID 值
 	Name    string `json:"name"`
@@ -46,20 +38,6 @@ type Provider struct {
 	// 使用 omitempty 确保零值不序列化，向后兼容
 	Level int `json:"level,omitempty"`
 
-	// ========== 可用性监控字段（新增 v0.5.0） ==========
-
-	// 可用性监控开关 - 在可用性页面配置
-	// 启用后才会执行后台健康检查
-	AvailabilityMonitorEnabled bool `json:"availabilityMonitorEnabled,omitempty"`
-
-	// 连通性自动拉黑开关 - 在 Provider 编辑页面配置
-	// 前置条件：AvailabilityMonitorEnabled 必须为 true
-	// 启用后，当健康检查连续失败达到阈值时自动拉黑
-	ConnectivityAutoBlacklist bool `json:"connectivityAutoBlacklist,omitempty"`
-
-	// 可用性高级配置 - 可选，在可用性页面的"高级配置"中设置
-	AvailabilityConfig *AvailabilityConfig `json:"availabilityConfig,omitempty"`
-
 	// 认证方式 - bearer / x-api-key / 自定义 Header 名
 	// 空值时使用平台默认（claude: x-api-key, codex: bearer）
 	ConnectivityAuthType string `json:"connectivityAuthType,omitempty"`
@@ -69,18 +47,6 @@ type Provider struct {
 	// openai_chat: 上游使用 OpenAI Chat Completions API，自动转换请求/响应格式
 	// auto: 根据 APIEndpoint 自动检测（包含 /chat/completions 则为 openai_chat）
 	UpstreamProtocol string `json:"upstreamProtocol,omitempty"`
-
-	// ========== 旧字段（已废弃，仅用于读取迁移） ==========
-	// 这些字段在保存时不再写入，但读取时会自动迁移到新字段
-
-	// [已废弃] 连通性检测开关 - 迁移到 AvailabilityMonitorEnabled
-	ConnectivityCheck bool `json:"connectivityCheck,omitempty"`
-
-	// [已废弃] 连通性检测模型 - 迁移到 AvailabilityConfig.TestModel
-	ConnectivityTestModel string `json:"connectivityTestModel,omitempty"`
-
-	// [已废弃] 连通性检测端点 - 迁移到 AvailabilityConfig.TestEndpoint
-	ConnectivityTestEndpoint string `json:"connectivityTestEndpoint,omitempty"`
 
 	// 内部字段：配置验证错误（不持久化）
 	configErrors []string `json:"-"`
@@ -216,8 +182,6 @@ func (ps *ProviderService) saveProvidersLocked(kind string, providers []Provider
 			}
 		}
 
-		// 清除旧连通性字段，确保保存时不再写入
-		p.clearLegacyFields()
 	}
 
 	// 如果有验证错误，返回汇总错误
@@ -260,29 +224,6 @@ func (ps *ProviderService) LoadProviders(kind string) ([]Provider, error) {
 		return nil, err
 	}
 	envelope.Providers = sanitizeProvidersForKind(kind, envelope.Providers)
-
-	// 执行字段迁移：将旧字段值迁移到新字段
-	migrated := false
-	for i := range envelope.Providers {
-		if envelope.Providers[i].migrateFromLegacy() {
-			migrated = true
-		}
-	}
-
-	// 如果有迁移，记录日志并持久化到磁盘
-	if migrated {
-		fmt.Printf("[ProviderService] 已从旧配置迁移可用性字段 (kind=%s)\n", kind)
-		// 自动保存迁移后的配置（使用带锁的保存方法避免死锁）
-		ps.mu.Lock()
-		err := ps.saveProvidersLocked(kind, envelope.Providers)
-		ps.mu.Unlock()
-
-		if err != nil {
-			log.Printf("[ProviderService] 迁移后写入失败: %v\n", err)
-		} else {
-			fmt.Printf("[ProviderService] 迁移后的配置已保存到磁盘 (kind=%s)\n", kind)
-		}
-	}
 
 	return envelope.Providers, nil
 }
@@ -334,7 +275,6 @@ func isPlaceholderClaudeBProvider(provider Provider) bool {
 }
 
 // loadProvidersNoLock 内部加载方法，在持有锁的情况下调用（避免递归加锁）
-// 执行配置加载和迁移，如有迁移则直接保存（不再加锁）
 // 仅在已持有 ps.mu 锁的上下文中调用（如 DuplicateProvider）
 func (ps *ProviderService) loadProvidersNoLock(kind string) ([]Provider, error) {
 	path, err := providerFilePath(kind)
@@ -359,62 +299,7 @@ func (ps *ProviderService) loadProvidersNoLock(kind string) ([]Provider, error) 
 		return nil, err
 	}
 
-	// 执行字段迁移（但不保存，避免在持锁时再次加锁）
-	migrated := false
-	for i := range envelope.Providers {
-		if envelope.Providers[i].migrateFromLegacy() {
-			migrated = true
-		}
-	}
-
-	if migrated {
-		fmt.Printf("[ProviderService] 已从旧配置迁移可用性字段 (kind=%s, 锁内模式)\n", kind)
-		// 在锁内模式下，直接保存而不再加锁
-		if err := ps.saveProvidersLocked(kind, envelope.Providers); err != nil {
-			log.Printf("[ProviderService] 锁内迁移保存失败: %v\n", err)
-		}
-	}
-
 	return envelope.Providers, nil
-}
-
-// migrateFromLegacy 将旧连通性字段迁移到新可用性字段
-// 返回 true 表示发生了迁移
-func (p *Provider) migrateFromLegacy() bool {
-	migrated := false
-
-	// 迁移 ConnectivityCheck -> AvailabilityMonitorEnabled
-	// 仅当新字段未设置（false）且旧字段已设置（true）时迁移
-	if p.ConnectivityCheck && !p.AvailabilityMonitorEnabled {
-		p.AvailabilityMonitorEnabled = true
-		migrated = true
-	}
-
-	// 迁移测试模型和端点到 AvailabilityConfig
-	if p.ConnectivityTestModel != "" || p.ConnectivityTestEndpoint != "" {
-		if p.AvailabilityConfig == nil {
-			p.AvailabilityConfig = &AvailabilityConfig{}
-		}
-		// 仅当新字段为空时才从旧字段迁移
-		if p.AvailabilityConfig.TestModel == "" && p.ConnectivityTestModel != "" {
-			p.AvailabilityConfig.TestModel = p.ConnectivityTestModel
-			migrated = true
-		}
-		if p.AvailabilityConfig.TestEndpoint == "" && p.ConnectivityTestEndpoint != "" {
-			p.AvailabilityConfig.TestEndpoint = p.ConnectivityTestEndpoint
-			migrated = true
-		}
-	}
-
-	return migrated
-}
-
-// clearLegacyFields 清除旧字段值，使其在序列化时被 omitempty 跳过
-func (p *Provider) clearLegacyFields() {
-	p.ConnectivityCheck = false
-	p.ConnectivityTestModel = ""
-	p.ConnectivityTestEndpoint = ""
-	// 注意：ConnectivityAuthType 现在是活跃字段，不再清除
 }
 
 // DuplicateProvider 复制供应商配置，生成新的副本
@@ -468,9 +353,6 @@ func (ps *ProviderService) DuplicateProvider(kind string, sourceID int64) (*Prov
 		APIEndpoint:          source.APIEndpoint,          // 复制端点配置
 		UpstreamProtocol:     source.UpstreamProtocol,     // 复制上游协议配置
 		ConnectivityAuthType: source.ConnectivityAuthType, // 复制认证方式
-		// 可用性监控配置
-		AvailabilityMonitorEnabled: source.AvailabilityMonitorEnabled,
-		ConnectivityAutoBlacklist:  false, // 副本默认关闭自动拉黑
 	}
 
 	// 6. 深拷贝 map（避免共享引用）
@@ -478,15 +360,6 @@ func (ps *ProviderService) DuplicateProvider(kind string, sourceID int64) (*Prov
 		cloned.SupportedModels = make(map[string]bool, len(source.SupportedModels))
 		for k, v := range source.SupportedModels {
 			cloned.SupportedModels[k] = v
-		}
-	}
-
-	// 深拷贝 AvailabilityConfig
-	if source.AvailabilityConfig != nil {
-		cloned.AvailabilityConfig = &AvailabilityConfig{
-			TestModel:    source.AvailabilityConfig.TestModel,
-			TestEndpoint: source.AvailabilityConfig.TestEndpoint,
-			Timeout:      source.AvailabilityConfig.Timeout,
 		}
 	}
 
