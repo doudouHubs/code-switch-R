@@ -105,6 +105,12 @@ export function SaveProjectRunCommand(projectPath: string, command: string): $Ca
     return $Call.ByID(488284630, projectPath, command);
 }
 
+export function SearchProjectSessionConversations(projectPath: string, query: string): $CancellablePromise<$models.ProjectSessionSearchResult[]> {
+    return $Call.ByID(2204346111, projectPath, query).then(($result: any) => {
+        return $$createType7($result);
+    });
+}
+
 export function SetProjectCodexProvider(projectPath: string, providerID: number): $CancellablePromise<void> {
     return $Call.ByID(1805942307, projectPath, providerID);
 }
@@ -120,3 +126,5 @@ const $$createType2 = $models.ProjectManagerSnapshot.createFrom;
 const $$createType3 = $Create.Array($$createType0);
 const $$createType4 = $models.ProjectSummary.createFrom;
 const $$createType5 = $Create.Array($$createType4);
+const $$createType6 = $models.ProjectSessionSearchResult.createFrom;
+const $$createType7 = $Create.Array($$createType6);

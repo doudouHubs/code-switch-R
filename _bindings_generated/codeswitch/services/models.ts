@@ -32,7 +32,6 @@ export class AppSettings {
     "budget_forecast_method_codex": string;
     "auto_start": boolean;
     "auto_update": boolean;
-    "auto_connectivity_test": boolean;
 
     /**
      * 供应商切换通知开关
@@ -122,9 +121,6 @@ export class AppSettings {
         if (!("auto_update" in $$source)) {
             this["auto_update"] = false;
         }
-        if (!("auto_connectivity_test" in $$source)) {
-            this["auto_connectivity_test"] = false;
-        }
         if (!("enable_switch_notify" in $$source)) {
             this["enable_switch_notify"] = false;
         }
@@ -147,41 +143,6 @@ export class AppSettings {
     static createFrom($$source: any = {}): AppSettings {
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         return new AppSettings($$parsedSource as Partial<AppSettings>);
-    }
-}
-
-/**
- * AvailabilityConfig 可用性监控高级配置
- * 在可用性页面的"高级配置"弹窗中设置，可选
- */
-export class AvailabilityConfig {
-    /**
-     * 覆盖默认测试模型
-     */
-    "testModel"?: string;
-
-    /**
-     * 覆盖默认测试端点
-     */
-    "testEndpoint"?: string;
-
-    /**
-     * 覆盖默认超时（毫秒）
-     */
-    "timeout"?: number;
-
-    /** Creates a new AvailabilityConfig instance. */
-    constructor($$source: Partial<AvailabilityConfig> = {}) {
-
-        Object.assign(this, $$source);
-    }
-
-    /**
-     * Creates a new AvailabilityConfig instance from a string or object.
-     */
-    static createFrom($$source: any = {}): AvailabilityConfig {
-        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        return new AvailabilityConfig($$parsedSource as Partial<AvailabilityConfig>);
     }
 }
 
@@ -839,56 +800,6 @@ export class ConfigureResult {
 }
 
 /**
- * ConnectivityResult 连通性测试结果
- */
-export class ConnectivityResult {
-    "providerId": number;
-    "providerName": string;
-    "platform": string;
-    "status": number;
-    "subStatus": string;
-    "latencyMs": number;
-    "lastChecked": time$0.Time;
-    "message"?: string;
-    "httpCode"?: number;
-
-    /** Creates a new ConnectivityResult instance. */
-    constructor($$source: Partial<ConnectivityResult> = {}) {
-        if (!("providerId" in $$source)) {
-            this["providerId"] = 0;
-        }
-        if (!("providerName" in $$source)) {
-            this["providerName"] = "";
-        }
-        if (!("platform" in $$source)) {
-            this["platform"] = "";
-        }
-        if (!("status" in $$source)) {
-            this["status"] = 0;
-        }
-        if (!("subStatus" in $$source)) {
-            this["subStatus"] = "";
-        }
-        if (!("latencyMs" in $$source)) {
-            this["latencyMs"] = 0;
-        }
-        if (!("lastChecked" in $$source)) {
-            this["lastChecked"] = null;
-        }
-
-        Object.assign(this, $$source);
-    }
-
-    /**
-     * Creates a new ConnectivityResult instance from a string or object.
-     */
-    static createFrom($$source: any = {}): ConnectivityResult {
-        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        return new ConnectivityResult($$parsedSource as Partial<ConnectivityResult>);
-    }
-}
-
-/**
  * ConsoleLog 控制台日志条目
  */
 export class ConsoleLog {
@@ -1109,102 +1020,6 @@ export class DeepLinkImportRequest {
 }
 
 /**
- * EndpointLatency 端点延迟测试结果
- */
-export class EndpointLatency {
-    /**
-     * 端点 URL
-     */
-    "url": string;
-
-    /**
-     * 延迟（毫秒），nil 表示失败
-     */
-    "latency": number | null;
-
-    /**
-     * HTTP 状态码
-     */
-    "status"?: number | null;
-
-    /**
-     * 错误信息
-     */
-    "error"?: string | null;
-
-    /** Creates a new EndpointLatency instance. */
-    constructor($$source: Partial<EndpointLatency> = {}) {
-        if (!("url" in $$source)) {
-            this["url"] = "";
-        }
-        if (!("latency" in $$source)) {
-            this["latency"] = null;
-        }
-
-        Object.assign(this, $$source);
-    }
-
-    /**
-     * Creates a new EndpointLatency instance from a string or object.
-     */
-    static createFrom($$source: any = {}): EndpointLatency {
-        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        return new EndpointLatency($$parsedSource as Partial<EndpointLatency>);
-    }
-}
-
-/**
- * EnvConflict 环境变量冲突
- */
-export class EnvConflict {
-    /**
-     * 变量名
-     */
-    "varName": string;
-
-    /**
-     * 变量值
-     */
-    "varValue": string;
-
-    /**
-     * 来源类型: "system" | "file"
-     */
-    "sourceType": string;
-
-    /**
-     * 来源路径
-     */
-    "sourcePath": string;
-
-    /** Creates a new EnvConflict instance. */
-    constructor($$source: Partial<EnvConflict> = {}) {
-        if (!("varName" in $$source)) {
-            this["varName"] = "";
-        }
-        if (!("varValue" in $$source)) {
-            this["varValue"] = "";
-        }
-        if (!("sourceType" in $$source)) {
-            this["sourceType"] = "";
-        }
-        if (!("sourcePath" in $$source)) {
-            this["sourcePath"] = "";
-        }
-
-        Object.assign(this, $$source);
-    }
-
-    /**
-     * Creates a new EnvConflict instance from a string or object.
-     */
-    static createFrom($$source: any = {}): EnvConflict {
-        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        return new EnvConflict($$parsedSource as Partial<EnvConflict>);
-    }
-}
-
-/**
  * GeminiAuthType 认证类型
  */
 export enum GeminiAuthType {
@@ -1413,148 +1228,6 @@ export class GeminiStatus {
     }
 }
 
-/**
- * HealthCheckHistory 健康检查历史（单个 Provider 的时间线）
- */
-export class HealthCheckHistory {
-    "providerId": number;
-    "providerName": string;
-    "platform": string;
-
-    /**
-     * 历史记录（最近 N 条）
-     */
-    "items": HealthCheckResult[];
-
-    /**
-     * 最新一条
-     */
-    "latest": HealthCheckResult | null;
-
-    /**
-     * 可用率（%）
-     */
-    "uptime": number;
-
-    /**
-     * 平均延迟
-     */
-    "avgLatencyMs": number;
-
-    /** Creates a new HealthCheckHistory instance. */
-    constructor($$source: Partial<HealthCheckHistory> = {}) {
-        if (!("providerId" in $$source)) {
-            this["providerId"] = 0;
-        }
-        if (!("providerName" in $$source)) {
-            this["providerName"] = "";
-        }
-        if (!("platform" in $$source)) {
-            this["platform"] = "";
-        }
-        if (!("items" in $$source)) {
-            this["items"] = [];
-        }
-        if (!("latest" in $$source)) {
-            this["latest"] = null;
-        }
-        if (!("uptime" in $$source)) {
-            this["uptime"] = 0;
-        }
-        if (!("avgLatencyMs" in $$source)) {
-            this["avgLatencyMs"] = 0;
-        }
-
-        Object.assign(this, $$source);
-    }
-
-    /**
-     * Creates a new HealthCheckHistory instance from a string or object.
-     */
-    static createFrom($$source: any = {}): HealthCheckHistory {
-        const $$createField3_0 = $$createType12;
-        const $$createField4_0 = $$createType13;
-        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        if ("items" in $$parsedSource) {
-            $$parsedSource["items"] = $$createField3_0($$parsedSource["items"]);
-        }
-        if ("latest" in $$parsedSource) {
-            $$parsedSource["latest"] = $$createField4_0($$parsedSource["latest"]);
-        }
-        return new HealthCheckHistory($$parsedSource as Partial<HealthCheckHistory>);
-    }
-}
-
-/**
- * HealthCheckResult 健康检查结果
- */
-export class HealthCheckResult {
-    "id": number;
-    "providerId": number;
-    "providerName": string;
-    "platform": string;
-    "model"?: string;
-    "endpoint"?: string;
-
-    /**
-     * operational/degraded/failed/validation_failed
-     */
-    "status": string;
-
-    /**
-     * 响应延迟（毫秒）
-     */
-    "latencyMs": number;
-
-    /**
-     * 错误消息
-     */
-    "errorMessage": string;
-
-    /**
-     * 检测时间
-     */
-    "checkedAt": time$0.Time;
-
-    /** Creates a new HealthCheckResult instance. */
-    constructor($$source: Partial<HealthCheckResult> = {}) {
-        if (!("id" in $$source)) {
-            this["id"] = 0;
-        }
-        if (!("providerId" in $$source)) {
-            this["providerId"] = 0;
-        }
-        if (!("providerName" in $$source)) {
-            this["providerName"] = "";
-        }
-        if (!("platform" in $$source)) {
-            this["platform"] = "";
-        }
-        if (!("status" in $$source)) {
-            this["status"] = "";
-        }
-        if (!("latencyMs" in $$source)) {
-            this["latencyMs"] = 0;
-        }
-        if (!("errorMessage" in $$source)) {
-            this["errorMessage"] = "";
-        }
-        if (!("checkedAt" in $$source)) {
-            this["checkedAt"] = null;
-        }
-
-        Object.assign(this, $$source);
-    }
-
-    /**
-     * Creates a new HealthCheckResult instance from a string or object.
-     */
-    static createFrom($$source: any = {}): HealthCheckResult {
-        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        return new HealthCheckResult($$parsedSource as Partial<HealthCheckResult>);
-    }
-}
-
 export class HeatmapStat {
     "day": string;
     "total_requests": number;
@@ -1711,7 +1384,7 @@ export class LogStats {
      * Creates a new LogStats instance from a string or object.
      */
     static createFrom($$source: any = {}): LogStats {
-        const $$createField11_0 = $$createType15;
+        const $$createField11_0 = $$createType12;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("series" in $$parsedSource) {
             $$parsedSource["series"] = $$createField11_0($$parsedSource["series"]);
@@ -1796,8 +1469,8 @@ export class MCPParseResult {
      * Creates a new MCPParseResult instance from a string or object.
      */
     static createFrom($$source: any = {}): MCPParseResult {
-        const $$createField0_0 = $$createType17;
-        const $$createField1_0 = $$createType18;
+        const $$createField0_0 = $$createType14;
+        const $$createField1_0 = $$createType15;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("servers" in $$parsedSource) {
             $$parsedSource["servers"] = $$createField0_0($$parsedSource["servers"]);
@@ -1855,10 +1528,10 @@ export class MCPServer {
      * Creates a new MCPServer instance from a string or object.
      */
     static createFrom($$source: any = {}): MCPServer {
-        const $$createField3_0 = $$createType18;
+        const $$createField3_0 = $$createType15;
         const $$createField4_0 = $$createType4;
-        const $$createField8_0 = $$createType18;
-        const $$createField12_0 = $$createType18;
+        const $$createField8_0 = $$createType15;
+        const $$createField12_0 = $$createType15;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("args" in $$parsedSource) {
             $$parsedSource["args"] = $$createField3_0($$parsedSource["args"]);
@@ -1873,42 +1546,6 @@ export class MCPServer {
             $$parsedSource["missing_placeholders"] = $$createField12_0($$parsedSource["missing_placeholders"]);
         }
         return new MCPServer($$parsedSource as Partial<MCPServer>);
-    }
-}
-
-/**
- * ManualTestResult 手动测试结果
- */
-export class ManualTestResult {
-    "success": boolean;
-    "latencyMs": number;
-    "httpCode": number;
-    "message": string;
-
-    /** Creates a new ManualTestResult instance. */
-    constructor($$source: Partial<ManualTestResult> = {}) {
-        if (!("success" in $$source)) {
-            this["success"] = false;
-        }
-        if (!("latencyMs" in $$source)) {
-            this["latencyMs"] = 0;
-        }
-        if (!("httpCode" in $$source)) {
-            this["httpCode"] = 0;
-        }
-        if (!("message" in $$source)) {
-            this["message"] = "";
-        }
-
-        Object.assign(this, $$source);
-    }
-
-    /**
-     * Creates a new ManualTestResult instance from a string or object.
-     */
-    static createFrom($$source: any = {}): ManualTestResult {
-        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        return new ManualTestResult($$parsedSource as Partial<ManualTestResult>);
     }
 }
 
@@ -1941,7 +1578,7 @@ export class NetworkSettings {
      * Creates a new NetworkSettings instance from a string or object.
      */
     static createFrom($$source: any = {}): NetworkSettings {
-        const $$createField4_0 = $$createType19;
+        const $$createField4_0 = $$createType16;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("targetCli" in $$parsedSource) {
             $$parsedSource["targetCli"] = $$createField4_0($$parsedSource["targetCli"]);
@@ -1971,8 +1608,8 @@ export class ProjectManagerSnapshot {
      * Creates a new ProjectManagerSnapshot instance from a string or object.
      */
     static createFrom($$source: any = {}): ProjectManagerSnapshot {
-        const $$createField0_0 = $$createType21;
-        const $$createField1_0 = $$createType23;
+        const $$createField0_0 = $$createType18;
+        const $$createField1_0 = $$createType20;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("projects" in $$parsedSource) {
             $$parsedSource["projects"] = $$createField0_0($$parsedSource["projects"]);
@@ -1981,6 +1618,31 @@ export class ProjectManagerSnapshot {
             $$parsedSource["sessions"] = $$createField1_0($$parsedSource["sessions"]);
         }
         return new ProjectManagerSnapshot($$parsedSource as Partial<ProjectManagerSnapshot>);
+    }
+}
+
+export class ProjectSessionSearchResult {
+    "session_id": string;
+    "matched_content": string;
+
+    /** Creates a new ProjectSessionSearchResult instance. */
+    constructor($$source: Partial<ProjectSessionSearchResult> = {}) {
+        if (!("session_id" in $$source)) {
+            this["session_id"] = "";
+        }
+        if (!("matched_content" in $$source)) {
+            this["matched_content"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ProjectSessionSearchResult instance from a string or object.
+     */
+    static createFrom($$source: any = {}): ProjectSessionSearchResult {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new ProjectSessionSearchResult($$parsedSource as Partial<ProjectSessionSearchResult>);
     }
 }
 
@@ -2111,24 +1773,6 @@ export class Provider {
     "level"?: number;
 
     /**
-     * 可用性监控开关 - 在可用性页面配置
-     * 启用后才会执行后台健康检查
-     */
-    "availabilityMonitorEnabled"?: boolean;
-
-    /**
-     * 连通性自动拉黑开关 - 在 Provider 编辑页面配置
-     * 前置条件：AvailabilityMonitorEnabled 必须为 true
-     * 启用后，当健康检查连续失败达到阈值时自动拉黑
-     */
-    "connectivityAutoBlacklist"?: boolean;
-
-    /**
-     * 可用性高级配置 - 可选，在可用性页面的"高级配置"中设置
-     */
-    "availabilityConfig"?: AvailabilityConfig | null;
-
-    /**
      * 认证方式 - bearer / x-api-key / 自定义 Header 名
      * 空值时使用平台默认（claude: x-api-key, codex: bearer）
      */
@@ -2141,21 +1785,6 @@ export class Provider {
      * auto: 根据 APIEndpoint 自动检测（包含 /chat/completions 则为 openai_chat）
      */
     "upstreamProtocol"?: string;
-
-    /**
-     * [已废弃] 连通性检测开关 - 迁移到 AvailabilityMonitorEnabled
-     */
-    "connectivityCheck"?: boolean;
-
-    /**
-     * [已废弃] 连通性检测模型 - 迁移到 AvailabilityConfig.TestModel
-     */
-    "connectivityTestModel"?: string;
-
-    /**
-     * [已废弃] 连通性检测端点 - 迁移到 AvailabilityConfig.TestEndpoint
-     */
-    "connectivityTestEndpoint"?: string;
 
     /** Creates a new Provider instance. */
     constructor($$source: Partial<Provider> = {}) {
@@ -2194,18 +1823,14 @@ export class Provider {
      * Creates a new Provider instance from a string or object.
      */
     static createFrom($$source: any = {}): Provider {
-        const $$createField10_0 = $$createType24;
+        const $$createField10_0 = $$createType21;
         const $$createField11_0 = $$createType4;
-        const $$createField15_0 = $$createType26;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("supportedModels" in $$parsedSource) {
             $$parsedSource["supportedModels"] = $$createField10_0($$parsedSource["supportedModels"]);
         }
         if ("modelMapping" in $$parsedSource) {
             $$parsedSource["modelMapping"] = $$createField11_0($$parsedSource["modelMapping"]);
-        }
-        if ("availabilityConfig" in $$parsedSource) {
-            $$parsedSource["availabilityConfig"] = $$createField15_0($$parsedSource["availabilityConfig"]);
         }
         return new Provider($$parsedSource as Partial<Provider>);
     }
@@ -2269,95 +1894,6 @@ export class ProviderDailyStat {
     static createFrom($$source: any = {}): ProviderDailyStat {
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         return new ProviderDailyStat($$parsedSource as Partial<ProviderDailyStat>);
-    }
-}
-
-/**
- * ProviderTimeline Provider 时间线（用于前端展示）
- */
-export class ProviderTimeline {
-    "providerId": number;
-    "providerName": string;
-    "platform": string;
-    "availabilityMonitorEnabled": boolean;
-    "connectivityAutoBlacklist": boolean;
-
-    /**
-     * 高级配置
-     */
-    "availabilityConfig"?: AvailabilityConfig | null;
-
-    /**
-     * 历史记录
-     */
-    "items": HealthCheckResult[];
-
-    /**
-     * 最新一条
-     */
-    "latest": HealthCheckResult | null;
-
-    /**
-     * 可用率
-     */
-    "uptime": number;
-
-    /**
-     * 平均延迟
-     */
-    "avgLatencyMs": number;
-
-    /** Creates a new ProviderTimeline instance. */
-    constructor($$source: Partial<ProviderTimeline> = {}) {
-        if (!("providerId" in $$source)) {
-            this["providerId"] = 0;
-        }
-        if (!("providerName" in $$source)) {
-            this["providerName"] = "";
-        }
-        if (!("platform" in $$source)) {
-            this["platform"] = "";
-        }
-        if (!("availabilityMonitorEnabled" in $$source)) {
-            this["availabilityMonitorEnabled"] = false;
-        }
-        if (!("connectivityAutoBlacklist" in $$source)) {
-            this["connectivityAutoBlacklist"] = false;
-        }
-        if (!("items" in $$source)) {
-            this["items"] = [];
-        }
-        if (!("latest" in $$source)) {
-            this["latest"] = null;
-        }
-        if (!("uptime" in $$source)) {
-            this["uptime"] = 0;
-        }
-        if (!("avgLatencyMs" in $$source)) {
-            this["avgLatencyMs"] = 0;
-        }
-
-        Object.assign(this, $$source);
-    }
-
-    /**
-     * Creates a new ProviderTimeline instance from a string or object.
-     */
-    static createFrom($$source: any = {}): ProviderTimeline {
-        const $$createField5_0 = $$createType26;
-        const $$createField6_0 = $$createType12;
-        const $$createField7_0 = $$createType13;
-        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        if ("availabilityConfig" in $$parsedSource) {
-            $$parsedSource["availabilityConfig"] = $$createField5_0($$parsedSource["availabilityConfig"]);
-        }
-        if ("items" in $$parsedSource) {
-            $$parsedSource["items"] = $$createField6_0($$parsedSource["items"]);
-        }
-        if ("latest" in $$parsedSource) {
-            $$parsedSource["latest"] = $$createField7_0($$parsedSource["latest"]);
-        }
-        return new ProviderTimeline($$parsedSource as Partial<ProviderTimeline>);
     }
 }
 
@@ -2587,8 +2123,8 @@ export class SessionConversationDetail {
      * Creates a new SessionConversationDetail instance from a string or object.
      */
     static createFrom($$source: any = {}): SessionConversationDetail {
-        const $$createField0_0 = $$createType22;
-        const $$createField1_0 = $$createType28;
+        const $$createField0_0 = $$createType19;
+        const $$createField1_0 = $$createType23;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("session" in $$parsedSource) {
             $$parsedSource["session"] = $$createField0_0($$parsedSource["session"]);
@@ -2661,6 +2197,7 @@ export class SessionSummary {
     "source_name": string;
     "display_name": string;
     "summary": string;
+    "latest_user_message": string;
     "updated_at": number;
     "window_id": string;
     "cwd": string;
@@ -2689,6 +2226,9 @@ export class SessionSummary {
         }
         if (!("summary" in $$source)) {
             this["summary"] = "";
+        }
+        if (!("latest_user_message" in $$source)) {
+            this["latest_user_message"] = "";
         }
         if (!("updated_at" in $$source)) {
             this["updated_at"] = 0;
@@ -3011,7 +2551,7 @@ export class WSLDetection {
      * Creates a new WSLDetection instance from a string or object.
      */
     static createFrom($$source: any = {}): WSLDetection {
-        const $$createField1_0 = $$createType18;
+        const $$createField1_0 = $$createType15;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("distros" in $$parsedSource) {
             $$parsedSource["distros"] = $$createField1_0($$parsedSource["distros"]);
@@ -3114,21 +2654,16 @@ const $$createType7 = ConfigFile.createFrom;
 const $$createType8 = $Create.Array($$createType7);
 const $$createType9 = ProxyInjection.createFrom;
 const $$createType10 = $Create.Array($$createType9);
-const $$createType11 = HealthCheckResult.createFrom;
+const $$createType11 = LogStatsSeries.createFrom;
 const $$createType12 = $Create.Array($$createType11);
-const $$createType13 = $Create.Nullable($$createType11);
-const $$createType14 = LogStatsSeries.createFrom;
-const $$createType15 = $Create.Array($$createType14);
-const $$createType16 = MCPServer.createFrom;
-const $$createType17 = $Create.Array($$createType16);
-const $$createType18 = $Create.Array($Create.Any);
-const $$createType19 = TargetCli.createFrom;
-const $$createType20 = ProjectSummary.createFrom;
-const $$createType21 = $Create.Array($$createType20);
-const $$createType22 = SessionSummary.createFrom;
+const $$createType13 = MCPServer.createFrom;
+const $$createType14 = $Create.Array($$createType13);
+const $$createType15 = $Create.Array($Create.Any);
+const $$createType16 = TargetCli.createFrom;
+const $$createType17 = ProjectSummary.createFrom;
+const $$createType18 = $Create.Array($$createType17);
+const $$createType19 = SessionSummary.createFrom;
+const $$createType20 = $Create.Array($$createType19);
+const $$createType21 = $Create.Map($Create.Any, $Create.Any);
+const $$createType22 = SessionConversationItem.createFrom;
 const $$createType23 = $Create.Array($$createType22);
-const $$createType24 = $Create.Map($Create.Any, $Create.Any);
-const $$createType25 = AvailabilityConfig.createFrom;
-const $$createType26 = $Create.Nullable($$createType25);
-const $$createType27 = SessionConversationItem.createFrom;
-const $$createType28 = $Create.Array($$createType27);

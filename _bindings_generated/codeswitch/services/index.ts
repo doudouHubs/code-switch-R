@@ -6,13 +6,10 @@ import * as BlacklistService from "./blacklistservice.js";
 import * as ClaudeSettingsService from "./claudesettingsservice.js";
 import * as CliConfigService from "./cliconfigservice.js";
 import * as CodexSettingsService from "./codexsettingsservice.js";
-import * as ConnectivityTestService from "./connectivitytestservice.js";
 import * as ConsoleService from "./consoleservice.js";
 import * as CustomCliService from "./customcliservice.js";
 import * as DeepLinkService from "./deeplinkservice.js";
-import * as EnvCheckService from "./envcheckservice.js";
 import * as GeminiService from "./geminiservice.js";
-import * as HealthCheckService from "./healthcheckservice.js";
 import * as ImportService from "./importservice.js";
 import * as LogService from "./logservice.js";
 import * as MCPService from "./mcpservice.js";
@@ -22,7 +19,6 @@ import * as PromptService from "./promptservice.js";
 import * as ProviderService from "./providerservice.js";
 import * as SettingsService from "./settingsservice.js";
 import * as SkillService from "./skillservice.js";
-import * as SpeedTestService from "./speedtestservice.js";
 import * as SuiStore from "./suistore.js";
 import * as UpdateService from "./updateservice.js";
 export {
@@ -31,13 +27,10 @@ export {
     ClaudeSettingsService,
     CliConfigService,
     CodexSettingsService,
-    ConnectivityTestService,
     ConsoleService,
     CustomCliService,
     DeepLinkService,
-    EnvCheckService,
     GeminiService,
-    HealthCheckService,
     ImportService,
     LogService,
     MCPService,
@@ -47,14 +40,12 @@ export {
     ProviderService,
     SettingsService,
     SkillService,
-    SpeedTestService,
     SuiStore,
     UpdateService
 };
 
 export {
     AppSettings,
-    AvailabilityConfig,
     BlacklistLevelConfig,
     BlacklistSettings,
     BlacklistStatus,
@@ -69,20 +60,15 @@ export {
     ConfigImportResult,
     ConfigImportStatus,
     ConfigureResult,
-    ConnectivityResult,
     ConsoleLog,
     CustomCliProxyStatus,
     CustomCliTool,
     DeepLinkImportRequest,
-    EndpointLatency,
-    EnvConflict,
     GeminiAuthType,
     GeminiPreset,
     GeminiProvider,
     GeminiProxyStatus,
     GeminiStatus,
-    HealthCheckHistory,
-    HealthCheckResult,
     HeatmapStat,
     Hotkey,
     ListenMode,
@@ -90,14 +76,13 @@ export {
     LogStatsSeries,
     MCPParseResult,
     MCPServer,
-    ManualTestResult,
     NetworkSettings,
     ProjectManagerSnapshot,
+    ProjectSessionSearchResult,
     ProjectSummary,
     Prompt,
     Provider,
     ProviderDailyStat,
-    ProviderTimeline,
     ProxyInjection,
     ReqeustLog,
     RetryConfig,
