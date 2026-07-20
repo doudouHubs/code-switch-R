@@ -56,6 +56,26 @@ func TestOverlayAliases(t *testing.T) {
 	}
 }
 
+// TestGPT56SolUsesGPT55Pricing 锁定临时模型名的全局估算口径,
+// 避免上游模型名先于基础价格表发布时整批请求被错误计为 0 元。
+func TestGPT56SolUsesGPT55Pricing(t *testing.T) {
+	svc := newTestService(t)
+	usage := UsageSnapshot{
+		InputTokens:     1000,
+		OutputTokens:    100,
+		CacheReadTokens: 800,
+	}
+
+	got := svc.CalculateCost("gpt-5.6-sol", usage)
+	want := svc.CalculateCost("gpt-5.5", usage)
+	if !got.HasPricing || got.TotalCost <= 0 {
+		t.Fatalf("gpt-5.6-sol 应命中非零定价,实际 %+v", got)
+	}
+	if got != want {
+		t.Fatalf("gpt-5.6-sol 应完全复用 gpt-5.5 定价: got=%+v want=%+v", got, want)
+	}
+}
+
 // TestFamilyFallback 检验 family fallback 规则按前缀命中 vendor 版。
 func TestFamilyFallback(t *testing.T) {
 	svc := newTestService(t)

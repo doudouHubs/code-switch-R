@@ -28,6 +28,7 @@ func (ls *LogService) CostSince(start string, platform string) (float64, error) 
 	options := []xdb.Option{
 		xdb.WhereGte("created_at", startTime.Format(timeLayout)),
 		xdb.Field(
+			"platform",
 			"model",
 			"input_tokens",
 			"output_tokens",
@@ -52,7 +53,7 @@ func (ls *LogService) CostSince(start string, platform string) (float64, error) 
 	total := 0.0
 	for _, record := range records {
 		usage := buildSnapshotFromRecord(record)
-		cost := ls.calculateCost(record.GetString("model"), usage)
+		cost := ls.calculateCost(record.GetString("platform"), record.GetString("model"), usage)
 		total += cost.TotalCost
 	}
 	return total, nil
@@ -176,6 +177,7 @@ func (ls *LogService) HeatmapStats(days int) ([]HeatmapStat, error) {
 	options := []xdb.Option{
 		xdb.WhereGe("created_at", rangeStart.Format(timeLayout)),
 		xdb.Field(
+			"platform",
 			"model",
 			"input_tokens",
 			"output_tokens",
@@ -214,7 +216,7 @@ func (ls *LogService) HeatmapStats(days int) ([]HeatmapStat, error) {
 		bucket.InputTokens += int64(usage.InputTokens)
 		bucket.OutputTokens += int64(usage.OutputTokens)
 		bucket.ReasoningTokens += int64(usage.ReasoningTokens)
-		cost := ls.calculateCost(record.GetString("model"), usage)
+		cost := ls.calculateCost(record.GetString("platform"), record.GetString("model"), usage)
 		bucket.TotalCost += cost.TotalCost
 	}
 	if len(hourBuckets) == 0 {
@@ -249,6 +251,7 @@ func (ls *LogService) StatsSince(platform string) (LogStats, error) {
 	options := []xdb.Option{
 		xdb.WhereGte("created_at", queryStart.Format(timeLayout)),
 		xdb.Field(
+			"platform",
 			"model",
 			"input_tokens",
 			"output_tokens",
@@ -309,7 +312,7 @@ func (ls *LogService) StatsSince(platform string) (LogStats, error) {
 		}
 		bucket := seriesBuckets[bucketIndex]
 		usage := buildSnapshotFromRecord(record)
-		cost := ls.calculateCost(record.GetString("model"), usage)
+		cost := ls.calculateCost(record.GetString("platform"), record.GetString("model"), usage)
 
 		bucket.TotalRequests++
 		bucket.InputTokens += int64(usage.InputTokens)
@@ -357,6 +360,7 @@ func (ls *LogService) ProviderDailyStats(platform string) ([]ProviderDailyStat, 
 	options := []xdb.Option{
 		xdb.WhereGte("created_at", queryStart.Format(timeLayout)),
 		xdb.Field(
+			"platform",
 			"provider",
 			"model",
 			"http_code",
@@ -405,7 +409,7 @@ func (ls *LogService) ProviderDailyStats(platform string) ([]ProviderDailyStat, 
 		}
 		httpCode := record.GetInt("http_code")
 		usage := buildSnapshotFromRecord(record)
-		cost := ls.calculateCost(record.GetString("model"), usage)
+		cost := ls.calculateCost(record.GetString("platform"), record.GetString("model"), usage)
 		stat.TotalRequests++
 		// 只有 HTTP 200-299 才算成功，其他（包括 0）都算失败
 		if httpCode >= 200 && httpCode < 300 {
@@ -454,7 +458,7 @@ func (ls *LogService) decorateCost(logEntry *ReqeustLog) {
 			Ephemeral1hTokens: logEntry.Ephemeral1hTokens,
 		}
 	}
-	cost := ls.pricing.CalculateCost(logEntry.Model, usage)
+	cost := ls.calculateCost(logEntry.Platform, logEntry.Model, usage)
 	logEntry.HasPricing = cost.HasPricing
 	logEntry.InputCost = cost.InputCost
 	logEntry.OutputCost = cost.OutputCost
@@ -466,11 +470,28 @@ func (ls *LogService) decorateCost(logEntry *ReqeustLog) {
 	logEntry.TotalCost = cost.TotalCost
 }
 
-func (ls *LogService) calculateCost(model string, usage modelpricing.UsageSnapshot) modelpricing.CostBreakdown {
+func (ls *LogService) calculateCost(platform string, model string, usage modelpricing.UsageSnapshot) modelpricing.CostBreakdown {
 	if ls == nil || ls.pricing == nil {
 		return modelpricing.CostBreakdown{}
 	}
-	return ls.pricing.CalculateCost(model, usage)
+	return ls.pricing.CalculateCost(model, buildPricingUsage(platform, usage))
+}
+
+// buildPricingUsage 只转换计价口径,不修改日志保存和页面展示使用的原始 token 快照。
+// OpenAI Responses API 的 input_tokens 已包含 cached_tokens,因此 Codex 计价前必须扣除缓存命中部分,
+// 否则同一批缓存 token 会同时按普通输入价和缓存价收费。
+func buildPricingUsage(platform string, usage modelpricing.UsageSnapshot) modelpricing.UsageSnapshot {
+	pricingUsage := usage
+	if !strings.EqualFold(strings.TrimSpace(platform), "codex") {
+		return pricingUsage
+	}
+
+	pricingUsage.InputTokens -= pricingUsage.CacheReadTokens
+	// 异常或旧数据可能出现 cache_read > input,此时普通输入只能按 0 计费,不能产生负费用。
+	if pricingUsage.InputTokens < 0 {
+		pricingUsage.InputTokens = 0
+	}
+	return pricingUsage
 }
 
 func parseCreatedAt(record xdb.Record) (time.Time, bool) {
