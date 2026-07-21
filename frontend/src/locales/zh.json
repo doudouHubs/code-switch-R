@@ -62,7 +62,6 @@
     "home": "首页",
     "projects": "Codex项目",
     "prompts": "提示词",
-    "mcp": "MCP",
     "skill": "技能",
     "gemini": "Gemini",
     "logs": "日志",
@@ -241,16 +240,15 @@
         "github": "打开 GitHub",
         "theme": "切换主题",
         "settings": "打开设置",
-        "mcp": "打开 MCP 面板",
         "skill": "打开 Skill 列表",
         "gemini": "打开 Gemini CLI 管理",
         "import": "导入 cc-switch 配置",
         "duplicate": "复制供应商"
       },
       "importConfig": {
-        "tooltip": "导入 {providers} 个供应商 · {servers} 个 MCP 服务器",
-        "success": "已导入 {providers} 个供应商与 {servers} 个 MCP 服务器",
-        "empty": "cc-switch 中的供应商与 MCP 均已同步",
+        "tooltip": "导入 {providers} 个供应商",
+        "success": "已导入 {providers} 个供应商",
+        "empty": "cc-switch 中的供应商均已同步",
         "error": "导入 cc-switch 配置失败"
       },
       "firstRun": {
@@ -697,145 +695,14 @@
         "loading": "加载中...",
         "configFound": "已找到配置文件",
         "configNotFound": "未找到配置文件",
-        "pendingCount": "{providers} 个供应商，{mcp} 个 MCP",
+        "pendingCount": "{providers} 个供应商",
         "action": "导入操作",
         "importBtn": "导入配置",
         "importing": "导入中...",
-        "success": "导入成功：{providers} 个供应商，{mcp} 个 MCP 服务器",
+        "success": "导入成功：{providers} 个供应商",
         "nothingToImport": "没有需要导入的配置（可能已全部导入）",
         "failed": "导入失败",
         "fileNotFound": "配置文件不存在，请检查路径是否正确"
-      }
-    },
-    "mcp": {
-      "hero": {
-        "eyebrow": "MCP 管理",
-        "title": "管理 MCP 服务器",
-        "lead": "集中维护本地 / 远程 MCP Servers，了解各平台的启用状态并快速编辑配置。"
-      },
-      "controls": {
-        "back": "返回主页",
-        "settings": "打开设置",
-        "refresh": "刷新列表",
-        "create": "新增服务器"
-      },
-      "import": {
-        "title": "批量导入 MCP 服务器",
-        "inputDesc": "粘贴 MCP 配置 JSON，支持 Claude Desktop 格式、数组格式或服务器映射格式。",
-        "placeholder": "粘贴 Claude Desktop 或标准 MCP 配置 JSON...",
-        "next": "下一步",
-        "parsing": "解析中...",
-        "back": "上一步",
-        "reviewTitle": "共解析 {count} 个服务器",
-        "selectAll": "全选",
-        "conflictNotice": "{count} 个服务器与现有配置冲突",
-        "strategySkip": "跳过冲突",
-        "strategyOverwrite": "覆盖现有",
-        "status": {
-          "new": "新增",
-          "conflict": "冲突"
-        },
-        "submit": "导入 {count} 个",
-        "importing": "导入中...",
-        "success": "成功导入 {count} 个 MCP 服务器",
-        "allSkipped": "所有服务器均已跳过，未导入任何内容",
-        "noServers": "未找到有效的服务器配置",
-        "needName": "单服务器配置需要提供名称",
-        "parseError": "JSON 解析失败",
-        "importError": "导入失败，请重试"
-      },
-      "section": {
-        "title": "已注册服务器",
-        "subtitle": "数据来自 ~/.code-switch/mcp.json，修改后立即保存"
-      },
-      "list": {
-        "loading": "正在载入服务器...",
-        "empty": "暂无 MCP 服务器，点击下方按钮快速创建",
-        "loadError": "加载 MCP 服务器失败",
-        "saveError": "保存 MCP 服务器失败",
-        "edit": "编辑服务器",
-        "delete": "删除服务器",
-        "placeholderWarning": "请先替换变量：{vars}"
-      },
-      "toast": {
-        "placeholder": "请先替换变量：{vars}"
-      },
-      "status": {
-        "active": "已启用",
-        "inactive": "未启用"
-      },
-      "types": {
-        "stdio": "本地进程 (stdio)",
-        "stdioShort": "本地进程",
-        "http": "远程 HTTP",
-        "httpShort": "HTTP 服务"
-      },
-      "platforms": {
-        "claude": "Claude Code",
-        "codex": "Codex",
-        "gemini": "Gemini CLI"
-      },
-      "form": {
-        "createTitle": "新增 MCP 服务器",
-        "editTitle": "编辑 MCP 服务器",
-        "name": "服务器名称",
-        "type": "类型",
-        "command": "执行命令",
-        "args": "命令参数",
-        "argsHint": "每行一个参数，保存时会自动按顺序传入",
-        "url": "服务地址",
-        "website": "官网地址",
-        "tips": "提示信息",
-        "tipsHint": "例如：请前往 ref.tools 获取 API Key",
-        "jsonEditor": {
-          "title": "JSON 配置",
-          "dirty": "未应用",
-          "lock": "锁定",
-          "unlock": "解锁",
-          "apply": "应用到表单",
-          "reset": "重置",
-          "hint": "此 JSON 不包含 name 与平台。名称、官网、提示与目标平台仍以表单为准。",
-          "toast": {
-            "dirtyNotApplied": "JSON 修改未应用，将按表单内容保存"
-          },
-          "errors": {
-            "empty": "请输入 JSON 内容",
-            "invalidJson": "JSON 格式无效：{message}",
-            "mustBeObject": "JSON 顶层必须是对象",
-            "typeRequired": "缺少 type 字段（必须为 stdio 或 http）",
-            "typeInvalid": "type 必须为 stdio 或 http",
-            "commandRequired": "stdio 类型需要 command",
-            "urlRequired": "http 类型需要 url",
-            "argsInvalid": "args 必须是字符串数组",
-            "envInvalid": "env 必须是对象，且所有值为字符串",
-            "applyFailed": "应用失败，请检查 JSON 内容"
-          }
-        },
-        "env": "环境变量",
-        "envKey": "变量名",
-        "envValue": "变量值",
-        "envAdd": "新增变量",
-        "envRemove": "删除变量",
-        "platforms": {
-          "title": "目标平台"
-        },
-        "actions": {
-          "cancel": "取消",
-          "save": "保存",
-          "delete": "删除"
-        },
-        "errors": {
-          "name": "请输入服务器名称",
-          "command": "stdio 类型需要提供 command",
-          "url": "http 类型需要提供 URL",
-          "duplicate": "名称已存在，请使用其他名称",
-          "noPlatformSelected": "请至少勾选一个平台（Claude Code 或 Codex）"
-        },
-        "warnings": {
-          "savedWithPlaceholders": "✅ 配置已保存，但因包含占位符（{vars}），未同步到 Claude/Codex。请填写占位符后重新保存。"
-        },
-        "deleteTitle": "删除 MCP 服务器",
-        "deleteMessage": "确认删除 {name} 吗？操作不可撤销"
       }
     },
     "gemini": {

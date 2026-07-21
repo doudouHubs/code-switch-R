@@ -471,11 +471,10 @@ const handleImport = async () => {
       alert(t('components.general.import.fileNotFound'))
       return
     }
-    const imported = result.imported_providers + result.imported_mcp
+    const imported = result.imported_providers
     if (imported > 0) {
       alert(t('components.general.import.success', {
-        providers: result.imported_providers,
-        mcp: result.imported_mcp
+        providers: result.imported_providers
       }))
     } else {
       alert(t('components.general.import.nothingToImport'))
@@ -985,10 +984,9 @@ onMounted(async () => {
             </span>
             <span class="info-text" v-else-if="importStatus?.config_exists">
               {{ $t('components.general.import.configFound') }}
-              <span v-if="importStatus.pending_provider_count > 0 || importStatus.pending_mcp_count > 0">
+              <span v-if="importStatus.pending_provider_count > 0">
                 ({{ $t('components.general.import.pendingCount', {
-                  providers: importStatus.pending_provider_count,
-                  mcp: importStatus.pending_mcp_count
+                  providers: importStatus.pending_provider_count
                 }) }})
               </span>
             </span>

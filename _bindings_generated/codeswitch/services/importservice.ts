@@ -34,16 +34,6 @@ export function ImportFromPath(path: string): $CancellablePromise<$models.Config
 }
 
 /**
- * ImportMCPServers 将服务器写入配置，并同步到 Claude/Codex。
- * strategy:
- * - "skip": 已存在则跳过
- * - "overwrite": 用导入内容更新（保留既有 enable_platform 的并集）
- */
-export function ImportMCPServers(servers: $models.MCPServer[], strategy: string): $CancellablePromise<number> {
-    return $Call.ByID(3450963826, servers, strategy);
-}
-
-/**
  * IsFirstRun 检查是否首次使用（用于显示导入提示）
  */
 export function IsFirstRun(): $CancellablePromise<boolean> {
@@ -57,20 +47,6 @@ export function MarkFirstRunDone(): $CancellablePromise<void> {
     return $Call.ByID(838327945);
 }
 
-/**
- * ParseMCPJSON 解析用户粘贴的 MCP JSON，返回可供前端预览/选择的结构化结果。
- * 支持格式：
- * 1) Claude Desktop: {"mcpServers": {"name": {...}}}
- * 2) 数组: [{"name": "...", ...}, ...]
- * 3) 单服务器: {"command": "...", "args": [...] }（name 可选，缺失时 needName=true）
- * 4) 服务器映射: {"name": {...}, "name2": {...}}
- */
-export function ParseMCPJSON(jsonStr: string): $CancellablePromise<$models.MCPParseResult | null> {
-    return $Call.ByID(489842720, jsonStr).then(($result: any) => {
-        return $$createType3($result);
-    });
-}
-
 export function Start(): $CancellablePromise<void> {
     return $Call.ByID(3119656637);
 }
@@ -82,5 +58,3 @@ export function Stop(): $CancellablePromise<void> {
 // Private type creation functions
 const $$createType0 = $models.ConfigImportStatus.createFrom;
 const $$createType1 = $models.ConfigImportResult.createFrom;
-const $$createType2 = $models.MCPParseResult.createFrom;
-const $$createType3 = $Create.Nullable($$createType2);

@@ -706,7 +706,6 @@ export class ConfigFile {
 export class ConfigImportResult {
     "status": ConfigImportStatus;
     "imported_providers": number;
-    "imported_mcp": number;
 
     /** Creates a new ConfigImportResult instance. */
     constructor($$source: Partial<ConfigImportResult> = {}) {
@@ -715,9 +714,6 @@ export class ConfigImportResult {
         }
         if (!("imported_providers" in $$source)) {
             this["imported_providers"] = 0;
-        }
-        if (!("imported_mcp" in $$source)) {
-            this["imported_mcp"] = 0;
         }
 
         Object.assign(this, $$source);
@@ -740,9 +736,7 @@ export class ConfigImportStatus {
     "config_exists": boolean;
     "config_path"?: string;
     "pending_providers": boolean;
-    "pending_mcp": boolean;
     "pending_provider_count": number;
-    "pending_mcp_count": number;
 
     /** Creates a new ConfigImportStatus instance. */
     constructor($$source: Partial<ConfigImportStatus> = {}) {
@@ -752,14 +746,8 @@ export class ConfigImportStatus {
         if (!("pending_providers" in $$source)) {
             this["pending_providers"] = false;
         }
-        if (!("pending_mcp" in $$source)) {
-            this["pending_mcp"] = false;
-        }
         if (!("pending_provider_count" in $$source)) {
             this["pending_provider_count"] = 0;
-        }
-        if (!("pending_mcp_count" in $$source)) {
-            this["pending_mcp_count"] = 0;
         }
 
         Object.assign(this, $$source);
@@ -1443,113 +1431,6 @@ export class LogStatsSeries {
 }
 
 /**
- * MCPParseResult MCP JSON 解析结果（供前端批量导入向导使用）
- */
-export class MCPParseResult {
-    "servers": MCPServer[];
-    "conflicts": string[];
-    "needName": boolean;
-
-    /** Creates a new MCPParseResult instance. */
-    constructor($$source: Partial<MCPParseResult> = {}) {
-        if (!("servers" in $$source)) {
-            this["servers"] = [];
-        }
-        if (!("conflicts" in $$source)) {
-            this["conflicts"] = [];
-        }
-        if (!("needName" in $$source)) {
-            this["needName"] = false;
-        }
-
-        Object.assign(this, $$source);
-    }
-
-    /**
-     * Creates a new MCPParseResult instance from a string or object.
-     */
-    static createFrom($$source: any = {}): MCPParseResult {
-        const $$createField0_0 = $$createType14;
-        const $$createField1_0 = $$createType15;
-        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        if ("servers" in $$parsedSource) {
-            $$parsedSource["servers"] = $$createField0_0($$parsedSource["servers"]);
-        }
-        if ("conflicts" in $$parsedSource) {
-            $$parsedSource["conflicts"] = $$createField1_0($$parsedSource["conflicts"]);
-        }
-        return new MCPParseResult($$parsedSource as Partial<MCPParseResult>);
-    }
-}
-
-export class MCPServer {
-    "name": string;
-    "type": string;
-    "command"?: string;
-    "args"?: string[];
-    "env"?: { [_ in string]?: string };
-    "url"?: string;
-    "website"?: string;
-    "tips"?: string;
-    "enable_platform": string[];
-    "enabled_in_claude": boolean;
-    "enabled_in_codex": boolean;
-    "enabled_in_gemini": boolean;
-    "missing_placeholders": string[];
-
-    /** Creates a new MCPServer instance. */
-    constructor($$source: Partial<MCPServer> = {}) {
-        if (!("name" in $$source)) {
-            this["name"] = "";
-        }
-        if (!("type" in $$source)) {
-            this["type"] = "";
-        }
-        if (!("enable_platform" in $$source)) {
-            this["enable_platform"] = [];
-        }
-        if (!("enabled_in_claude" in $$source)) {
-            this["enabled_in_claude"] = false;
-        }
-        if (!("enabled_in_codex" in $$source)) {
-            this["enabled_in_codex"] = false;
-        }
-        if (!("enabled_in_gemini" in $$source)) {
-            this["enabled_in_gemini"] = false;
-        }
-        if (!("missing_placeholders" in $$source)) {
-            this["missing_placeholders"] = [];
-        }
-
-        Object.assign(this, $$source);
-    }
-
-    /**
-     * Creates a new MCPServer instance from a string or object.
-     */
-    static createFrom($$source: any = {}): MCPServer {
-        const $$createField3_0 = $$createType15;
-        const $$createField4_0 = $$createType4;
-        const $$createField8_0 = $$createType15;
-        const $$createField12_0 = $$createType15;
-        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        if ("args" in $$parsedSource) {
-            $$parsedSource["args"] = $$createField3_0($$parsedSource["args"]);
-        }
-        if ("env" in $$parsedSource) {
-            $$parsedSource["env"] = $$createField4_0($$parsedSource["env"]);
-        }
-        if ("enable_platform" in $$parsedSource) {
-            $$parsedSource["enable_platform"] = $$createField8_0($$parsedSource["enable_platform"]);
-        }
-        if ("missing_placeholders" in $$parsedSource) {
-            $$parsedSource["missing_placeholders"] = $$createField12_0($$parsedSource["missing_placeholders"]);
-        }
-        return new MCPServer($$parsedSource as Partial<MCPServer>);
-    }
-}
-
-/**
  * NetworkSettings 网络设置
  */
 export class NetworkSettings {
@@ -1578,7 +1459,7 @@ export class NetworkSettings {
      * Creates a new NetworkSettings instance from a string or object.
      */
     static createFrom($$source: any = {}): NetworkSettings {
-        const $$createField4_0 = $$createType16;
+        const $$createField4_0 = $$createType13;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("targetCli" in $$parsedSource) {
             $$parsedSource["targetCli"] = $$createField4_0($$parsedSource["targetCli"]);
@@ -1608,8 +1489,8 @@ export class ProjectManagerSnapshot {
      * Creates a new ProjectManagerSnapshot instance from a string or object.
      */
     static createFrom($$source: any = {}): ProjectManagerSnapshot {
-        const $$createField0_0 = $$createType18;
-        const $$createField1_0 = $$createType20;
+        const $$createField0_0 = $$createType15;
+        const $$createField1_0 = $$createType17;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("projects" in $$parsedSource) {
             $$parsedSource["projects"] = $$createField0_0($$parsedSource["projects"]);
@@ -1823,7 +1704,7 @@ export class Provider {
      * Creates a new Provider instance from a string or object.
      */
     static createFrom($$source: any = {}): Provider {
-        const $$createField10_0 = $$createType21;
+        const $$createField10_0 = $$createType18;
         const $$createField11_0 = $$createType4;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("supportedModels" in $$parsedSource) {
@@ -2123,8 +2004,8 @@ export class SessionConversationDetail {
      * Creates a new SessionConversationDetail instance from a string or object.
      */
     static createFrom($$source: any = {}): SessionConversationDetail {
-        const $$createField0_0 = $$createType19;
-        const $$createField1_0 = $$createType23;
+        const $$createField0_0 = $$createType16;
+        const $$createField1_0 = $$createType20;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("session" in $$parsedSource) {
             $$parsedSource["session"] = $$createField0_0($$parsedSource["session"]);
@@ -2551,7 +2432,7 @@ export class WSLDetection {
      * Creates a new WSLDetection instance from a string or object.
      */
     static createFrom($$source: any = {}): WSLDetection {
-        const $$createField1_0 = $$createType15;
+        const $$createField1_0 = $$createType21;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("distros" in $$parsedSource) {
             $$parsedSource["distros"] = $$createField1_0($$parsedSource["distros"]);
@@ -2656,14 +2537,12 @@ const $$createType9 = ProxyInjection.createFrom;
 const $$createType10 = $Create.Array($$createType9);
 const $$createType11 = LogStatsSeries.createFrom;
 const $$createType12 = $Create.Array($$createType11);
-const $$createType13 = MCPServer.createFrom;
-const $$createType14 = $Create.Array($$createType13);
-const $$createType15 = $Create.Array($Create.Any);
-const $$createType16 = TargetCli.createFrom;
-const $$createType17 = ProjectSummary.createFrom;
-const $$createType18 = $Create.Array($$createType17);
-const $$createType19 = SessionSummary.createFrom;
+const $$createType13 = TargetCli.createFrom;
+const $$createType14 = ProjectSummary.createFrom;
+const $$createType15 = $Create.Array($$createType14);
+const $$createType16 = SessionSummary.createFrom;
+const $$createType17 = $Create.Array($$createType16);
+const $$createType18 = $Create.Map($Create.Any, $Create.Any);
+const $$createType19 = SessionConversationItem.createFrom;
 const $$createType20 = $Create.Array($$createType19);
-const $$createType21 = $Create.Map($Create.Any, $Create.Any);
-const $$createType22 = SessionConversationItem.createFrom;
-const $$createType23 = $Create.Array($$createType22);
+const $$createType21 = $Create.Array($Create.Any);

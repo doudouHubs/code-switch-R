@@ -76,7 +76,6 @@ const navItems: NavItem[] = [
   { path: '/', icon: 'home', labelKey: 'sidebar.home' },
   { path: '/projects', icon: 'grid', labelKey: 'sidebar.projects', isNew: true },
   { path: '/prompts', icon: 'file-text', labelKey: 'sidebar.prompts', isNew: true },
-  { path: '/mcp', icon: 'plug', labelKey: 'sidebar.mcp' },
   { path: '/skill', icon: 'tool', labelKey: 'sidebar.skill' },
   { path: '/logs', icon: 'bar-chart', labelKey: 'sidebar.logs' },
   { path: '/console', icon: 'terminal', labelKey: 'sidebar.console' },

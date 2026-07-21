@@ -110,10 +110,9 @@ func main() {
 	codexSettings := services.NewCodexSettingsService(providerRelay.Addr())
 	cliConfigService := services.NewCliConfigService(providerRelay.Addr())
 	logService := services.NewLogService()
-	mcpService := services.NewMCPService()
 	skillService := services.NewSkillService()
 	promptService := services.NewPromptService()
-	importService := services.NewImportService(providerService, mcpService)
+	importService := services.NewImportService(providerService)
 	deeplinkService := services.NewDeepLinkService(providerService)
 	dockService := dock.New()
 	versionService := NewVersionService()
@@ -168,7 +167,6 @@ func main() {
 			application.NewService(cliConfigService),
 			application.NewService(logService),
 			application.NewService(appSettings),
-			application.NewService(mcpService),
 			application.NewService(skillService),
 			application.NewService(promptService),
 			application.NewService(importService),

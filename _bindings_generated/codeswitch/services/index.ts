@@ -12,7 +12,6 @@ import * as DeepLinkService from "./deeplinkservice.js";
 import * as GeminiService from "./geminiservice.js";
 import * as ImportService from "./importservice.js";
 import * as LogService from "./logservice.js";
-import * as MCPService from "./mcpservice.js";
 import * as NetworkService from "./networkservice.js";
 import * as ProjectManagerService from "./projectmanagerservice.js";
 import * as PromptService from "./promptservice.js";
@@ -33,7 +32,6 @@ export {
     GeminiService,
     ImportService,
     LogService,
-    MCPService,
     NetworkService,
     ProjectManagerService,
     PromptService,
@@ -74,8 +72,6 @@ export {
     ListenMode,
     LogStats,
     LogStatsSeries,
-    MCPParseResult,
-    MCPServer,
     NetworkSettings,
     ProjectManagerSnapshot,
     ProjectSessionSearchResult,

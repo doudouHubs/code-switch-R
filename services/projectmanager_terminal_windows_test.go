@@ -6,12 +6,10 @@ import (
 	"encoding/base64"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"testing"
 	"time"
 	"unicode/utf16"
@@ -96,7 +94,7 @@ func TestBuildProjectManagerProjectTerminalWTArgs(t *testing.T) {
 	}
 }
 
-func TestBuildProjectManagerProjectCommandWTArgsUsesCmdBoundary(t *testing.T) {
+func TestBuildProjectManagerProjectCommandWTArgsUsesWrapperBoundary(t *testing.T) {
 	projectPath := `F:\GitlabProjects\code-switch-R`
 	windowID := projectManagerProjectWindowID(projectPath)
 	tabTitle := "[PM]Run - code-switch-R"
@@ -109,9 +107,6 @@ func TestBuildProjectManagerProjectCommandWTArgsUsesCmdBoundary(t *testing.T) {
 		"-d", projectPath,
 		"--title", tabTitle,
 		"--",
-		"cmd.exe",
-		"/d",
-		"/c",
 		wrapperPath,
 	}
 
@@ -447,11 +442,11 @@ func TestProjectManagerWTLauncherExecutableUsesPwshOnly(t *testing.T) {
 	}
 }
 
-func TestStartProjectManagerWTCommandUsesHiddenPwshLauncher(t *testing.T) {
-	originalFactory := projectManagerWTCommandFactory
+func TestStartProjectManagerWTCommandUsesPwshLauncherStarter(t *testing.T) {
+	originalStarter := projectManagerWTCommandStarter
 	originalLookPath := projectManagerLookPath
 	t.Cleanup(func() {
-		projectManagerWTCommandFactory = originalFactory
+		projectManagerWTCommandStarter = originalStarter
 		projectManagerLookPath = originalLookPath
 	})
 	projectManagerLookPath = func(file string) (string, error) {
@@ -461,13 +456,14 @@ func TestStartProjectManagerWTCommandUsesHiddenPwshLauncher(t *testing.T) {
 		return "", errors.New("not found")
 	}
 
-	var captured *exec.Cmd
-	projectManagerWTCommandFactory = func(name string, args ...string) *exec.Cmd {
-		captured = exec.Command("cmd", "/c", "exit", "0")
-		captured.Path = name
-		captured.Args = append([]string{name}, args...)
-		captured.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-		return captured
+	var capturedWorkingDir string
+	var capturedName string
+	var capturedArgs []string
+	projectManagerWTCommandStarter = func(workingDir string, name string, args ...string) error {
+		capturedWorkingDir = workingDir
+		capturedName = name
+		capturedArgs = append([]string(nil), args...)
+		return nil
 	}
 
 	workingDir := `F:\GitlabProjects\code-switch-R`
@@ -477,20 +473,20 @@ func TestStartProjectManagerWTCommandUsesHiddenPwshLauncher(t *testing.T) {
 	if err := startProjectManagerWTCommand(workingDir, wtPath, wtArgs); err != nil {
 		t.Fatalf("期望 WT 直接启动成功，got err=%v", err)
 	}
-	if captured == nil {
+	if capturedName == "" {
 		t.Fatalf("期望捕获到 WT 启动命令")
 	}
 	launcher := `E:\software\PowerShell7\7\pwsh.exe`
-	if captured.Path != launcher {
-		t.Fatalf("WT 应通过隐藏 pwsh launcher 启动，want=%q got=%q", launcher, captured.Path)
+	if capturedName != launcher {
+		t.Fatalf("WT 应通过隐藏 pwsh launcher 启动，want=%q got=%q", launcher, capturedName)
 	}
-	if captured.Dir != workingDir {
-		t.Fatalf("launcher 工作目录不对，want=%q got=%q", workingDir, captured.Dir)
+	if capturedWorkingDir != workingDir {
+		t.Fatalf("launcher 工作目录不对，want=%q got=%q", workingDir, capturedWorkingDir)
 	}
-	if len(captured.Args) != 4 || captured.Args[1] != "-NoProfile" || captured.Args[2] != "-EncodedCommand" {
-		t.Fatalf("launcher 参数前缀不对，got=%v", captured.Args)
+	if len(capturedArgs) != 3 || capturedArgs[0] != "-NoProfile" || capturedArgs[1] != "-EncodedCommand" {
+		t.Fatalf("launcher 参数前缀不对，got=%v", capturedArgs)
 	}
-	decoded := decodeProjectManagerPowerShellEncodedCommand(t, captured.Args[3])
+	decoded := decodeProjectManagerPowerShellEncodedCommand(t, capturedArgs[2])
 	wantCommand := buildProjectManagerWTLaunchCommand(wtPath, wtArgs, workingDir)
 	if decoded != wantCommand {
 		t.Fatalf("launcher EncodedCommand 解码后不对，want=%q got=%q", wantCommand, decoded)
@@ -576,12 +572,12 @@ func TestBuildProjectManagerAICommitLauncherArgs(t *testing.T) {
 	}
 }
 
-func TestStartProjectManagerAICommitTerminalUsesHiddenPwshLauncher(t *testing.T) {
+func TestStartProjectManagerAICommitTerminalUsesPwshLauncherStarter(t *testing.T) {
 	originalLookPath := projectManagerLookPath
-	originalCommandContext := projectManagerAICommitCommandFactory
+	originalStarter := projectManagerAICommitCommandStarter
 	t.Cleanup(func() {
 		projectManagerLookPath = originalLookPath
-		projectManagerAICommitCommandFactory = originalCommandContext
+		projectManagerAICommitCommandStarter = originalStarter
 	})
 
 	projectManagerLookPath = func(file string) (string, error) {
@@ -591,36 +587,34 @@ func TestStartProjectManagerAICommitTerminalUsesHiddenPwshLauncher(t *testing.T)
 		return `E:\software\PowerShell7\7\pwsh.exe`, nil
 	}
 
-	var captured *exec.Cmd
-	projectManagerAICommitCommandFactory = func(name string, args ...string) *exec.Cmd {
-		captured = exec.Command("cmd", "/c", "exit", "0")
-		captured.Path = name
-		captured.Args = append([]string{name}, args...)
-		captured.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-		return captured
+	var capturedWorkingDir string
+	var capturedName string
+	var capturedArgs []string
+	projectManagerAICommitCommandStarter = func(workingDir string, name string, args ...string) error {
+		capturedWorkingDir = workingDir
+		capturedName = name
+		capturedArgs = append([]string(nil), args...)
+		return nil
 	}
 
 	projectPath := `F:\GitlabProjects\code-switch-R`
 	if err := startProjectManagerAICommitTerminal(projectPath); err != nil {
 		t.Fatalf("期望启动入口构造成功，got err=%v", err)
 	}
-	if captured == nil {
+	if capturedName == "" {
 		t.Fatalf("期望捕获到启动命令")
 	}
-	if captured.Path != `E:\software\PowerShell7\7\pwsh.exe` {
-		t.Fatalf("AI-Commit 启动器不对，want=%q got=%q", `E:\software\PowerShell7\7\pwsh.exe`, captured.Path)
+	if capturedName != `E:\software\PowerShell7\7\pwsh.exe` {
+		t.Fatalf("AI-Commit 启动器不对，want=%q got=%q", `E:\software\PowerShell7\7\pwsh.exe`, capturedName)
 	}
-	if captured.Dir != projectPath {
-		t.Fatalf("AI-Commit 工作目录不对，want=%q got=%q", projectPath, captured.Dir)
+	if capturedWorkingDir != projectPath {
+		t.Fatalf("AI-Commit 工作目录不对，want=%q got=%q", projectPath, capturedWorkingDir)
 	}
-	if len(captured.Args) != 4 {
-		t.Fatalf("AI-Commit launcher 参数数量不对，got=%v", captured.Args)
+	if len(capturedArgs) != 3 {
+		t.Fatalf("AI-Commit launcher 参数数量不对，got=%v", capturedArgs)
 	}
-	if captured.Args[1] != "-NoProfile" || captured.Args[2] != "-EncodedCommand" {
-		t.Fatalf("AI-Commit launcher 参数前缀不对，got=%v", captured.Args)
-	}
-	if captured.SysProcAttr == nil || !captured.SysProcAttr.HideWindow {
-		t.Fatalf("AI-Commit 外层启动器必须隐藏窗口，got=%+v", captured.SysProcAttr)
+	if capturedArgs[0] != "-NoProfile" || capturedArgs[1] != "-EncodedCommand" {
+		t.Fatalf("AI-Commit launcher 参数前缀不对，got=%v", capturedArgs)
 	}
 }
 

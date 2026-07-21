@@ -36,8 +36,8 @@ var (
 	projectManagerExecCommand       = func(name string, args ...string) projectManagerCommandRunner {
 		return exec.Command(name, args...)
 	}
-	projectManagerWTCommandFactory       = hideWindowCmd
-	projectManagerAICommitCommandFactory = hideWindowCmd
+	projectManagerWTCommandStarter       = startProjectManagerHiddenCommand
+	projectManagerAICommitCommandStarter = startProjectManagerHiddenCommand
 )
 
 func projectManagerProjectWindowID(projectPath string) string {
@@ -368,17 +368,9 @@ func buildProjectManagerProjectTerminalWTArgs(projectPath string, windowID strin
 }
 
 func buildProjectManagerProjectCommandWTArgs(projectPath string, windowID string, tabTitle string, wrapperPath string) []string {
-	return []string{
-		"-w", resolveProjectManagerWTWindowName(windowID),
-		"new-tab",
-		"-d", projectPath,
-		"--title", tabTitle,
-		"--",
-		"cmd.exe",
-		"/d",
-		"/c",
-		wrapperPath,
-	}
+	// wrapper.cmd 已经负责启动 pwsh 并传递脚本参数，WT 尾部只能接收这一个文件路径。
+	// 再套 cmd.exe /d /c 会被 WT 合并成单个 executable 字符串，最终触发 0x80070002。
+	return buildProjectManagerWTArgs(projectPath, wrapperPath, windowID, tabTitle)
 }
 
 func startProjectManagerWTCommand(workingDir string, wtPath string, wtArgs []string) error {
@@ -388,10 +380,8 @@ func startProjectManagerWTCommand(workingDir string, wtPath string, wtArgs []str
 		return err
 	}
 	log.Printf("[ProjectManager] 准备通过 launcher 启动 WT working_dir=%q launcher=%q wt=%q args=%q", workingDir, launcher, wtPath, wtArgs)
-	cmd := projectManagerWTCommandFactory(launcher, buildProjectManagerWTLauncherArgs(wtPath, wtArgs, workingDir)...)
-	cmd.Dir = workingDir
 	projectManagerWriteTerminalDebug("start", workingDir, launcher, wtPath, wtArgs, nil)
-	if err := cmd.Start(); err != nil {
+	if err := projectManagerWTCommandStarter(workingDir, launcher, buildProjectManagerWTLauncherArgs(wtPath, wtArgs, workingDir)...); err != nil {
 		projectManagerWriteTerminalDebug("start-error", workingDir, launcher, wtPath, wtArgs, err)
 		return err
 	}
@@ -661,8 +651,18 @@ func startProjectManagerAICommitTerminal(projectPath string) error {
 		return err
 	}
 
-	cmd := projectManagerAICommitCommandFactory(shellExecutable, buildProjectManagerAICommitLauncherArgs(projectPath, shellExecutable)...)
-	cmd.Dir = projectPath
+	return projectManagerAICommitCommandStarter(
+		projectPath,
+		shellExecutable,
+		buildProjectManagerAICommitLauncherArgs(projectPath, shellExecutable)...,
+	)
+}
+
+func startProjectManagerHiddenCommand(workingDir string, executable string, args ...string) error {
+	// 进程构造与启动必须封装在同一个边界内。测试只替换 starter 并记录参数，
+	// 不能再拿到 *exec.Cmd 后误把无害替身改回真实 pwsh 并调用 Start。
+	cmd := hideWindowCmd(executable, args...)
+	cmd.Dir = workingDir
 	return cmd.Start()
 }
 

@@ -61,7 +61,6 @@
   "sidebar": {
     "home": "Home",
     "prompts": "Prompts",
-    "mcp": "MCP",
     "skill": "Skills",
     "gemini": "Gemini",
     "projects": "Codex Projects",
@@ -240,16 +239,15 @@
         "github": "Open project GitHub",
         "theme": "Toggle theme",
         "settings": "Open settings",
-        "mcp": "Open MCP panel",
         "skill": "Open skill catalog",
         "gemini": "Open Gemini CLI manager",
         "import": "Import cc-switch config",
         "duplicate": "Duplicate provider"
       },
       "importConfig": {
-        "tooltip": "Import {providers} providers · {servers} MCP servers",
-        "success": "Imported {providers} providers and {servers} MCP servers",
-        "empty": "Everything from cc-switch is already in sync",
+        "tooltip": "Import {providers} providers",
+        "success": "Imported {providers} providers",
+        "empty": "All cc-switch providers are already in sync",
         "error": "Failed to import cc-switch config"
       },
       "firstRun": {
@@ -696,145 +694,14 @@
         "loading": "Loading...",
         "configFound": "Config file found",
         "configNotFound": "Config file not found",
-        "pendingCount": "{providers} providers, {mcp} MCPs",
+        "pendingCount": "{providers} providers",
         "action": "Import action",
         "importBtn": "Import config",
         "importing": "Importing...",
-        "success": "Imported: {providers} providers, {mcp} MCP servers",
+        "success": "Imported: {providers} providers",
         "nothingToImport": "Nothing to import (all may have been imported)",
         "failed": "Import failed",
         "fileNotFound": "Config file not found, please check the path"
-      }
-    },
-    "mcp": {
-      "hero": {
-        "eyebrow": "MCP Manager",
-        "title": "Manage MCP Servers",
-        "lead": "Keep every stdio or HTTP MCP server in one place and track which platform currently loads it."
-      },
-      "controls": {
-        "back": "Back to home",
-        "settings": "Open settings",
-        "refresh": "Refresh",
-        "create": "New server"
-      },
-      "import": {
-        "title": "Batch Import MCP Servers",
-        "inputDesc": "Paste MCP configuration JSON. Supports Claude Desktop format, array format, or server map format.",
-        "placeholder": "{\n  \"mcpServers\": {\n    \"server-name\": {\n      \"command\": \"npx\",\n      \"args\": [\"-y\", \"@modelcontextprotocol/server-xxx\"]\n    }\n  }\n}",
-        "next": "Next",
-        "parsing": "Parsing...",
-        "back": "Back",
-        "reviewTitle": "Found {count} servers",
-        "selectAll": "Select All",
-        "conflictNotice": "{count} server(s) conflict with existing configuration",
-        "strategySkip": "Skip conflicts",
-        "strategyOverwrite": "Overwrite existing",
-        "status": {
-          "new": "New",
-          "conflict": "Conflict"
-        },
-        "submit": "Import {count}",
-        "importing": "Importing...",
-        "success": "Successfully imported {count} MCP server(s)",
-        "allSkipped": "All servers were skipped, nothing imported",
-        "noServers": "No valid server configuration found",
-        "needName": "Single server config requires a name",
-        "parseError": "Failed to parse JSON",
-        "importError": "Import failed. Please try again."
-      },
-      "section": {
-        "title": "Registered servers",
-        "subtitle": "Synced from ~/.code-switch/mcp.json and saved immediately"
-      },
-      "list": {
-        "loading": "Loading servers...",
-        "empty": "No MCP servers yet. Use the button below to create one.",
-        "loadError": "Failed to load MCP servers",
-        "saveError": "Failed to save MCP servers",
-        "edit": "Edit server",
-        "delete": "Delete server",
-        "placeholderWarning": "Replace placeholders first: {vars}"
-      },
-      "toast": {
-        "placeholder": "Replace placeholders first: {vars}"
-      },
-      "status": {
-        "active": "Enabled",
-        "inactive": "Disabled"
-      },
-      "types": {
-        "stdio": "Local stdio process",
-        "stdioShort": "Local process",
-        "http": "Remote HTTP",
-        "httpShort": "HTTP service"
-      },
-      "platforms": {
-        "claude": "Claude Code",
-        "codex": "Codex",
-        "gemini": "Gemini CLI"
-      },
-      "form": {
-        "createTitle": "Create MCP server",
-        "editTitle": "Edit MCP server",
-        "name": "Server name",
-        "type": "Type",
-        "command": "Command",
-        "args": "Arguments",
-        "argsHint": "One argument per line. They will be passed in order.",
-        "url": "Service URL",
-        "website": "Website",
-        "tips": "Helper note",
-        "tipsHint": "Example: Visit ref.tools to get your API key",
-        "jsonEditor": {
-          "title": "JSON Config",
-          "dirty": "Not applied",
-          "lock": "Lock",
-          "unlock": "Unlock",
-          "apply": "Apply to form",
-          "reset": "Reset",
-          "hint": "This JSON does not include name or platforms. Name, website, tips, and platforms are controlled by the form.",
-          "toast": {
-            "dirtyNotApplied": "JSON changes are not applied. Saving will use the form values."
-          },
-          "errors": {
-            "empty": "Please enter JSON content",
-            "invalidJson": "Invalid JSON: {message}",
-            "mustBeObject": "JSON root must be an object",
-            "typeRequired": "Missing type (must be stdio or http)",
-            "typeInvalid": "type must be stdio or http",
-            "commandRequired": "command is required for stdio servers",
-            "urlRequired": "url is required for http servers",
-            "argsInvalid": "args must be an array of strings",
-            "envInvalid": "env must be an object with string values",
-            "applyFailed": "Failed to apply JSON. Please check the content."
-          }
-        },
-        "env": "Environment variables",
-        "envKey": "Key",
-        "envValue": "Value",
-        "envAdd": "Add variable",
-        "envRemove": "Delete variable",
-        "platforms": {
-          "title": "Target platforms"
-        },
-        "actions": {
-          "cancel": "Cancel",
-          "save": "Save",
-          "delete": "Delete"
-        },
-        "errors": {
-          "name": "Please enter a server name",
-          "command": "Command is required for stdio servers",
-          "url": "HTTP servers require a URL",
-          "duplicate": "This name already exists",
-          "noPlatformSelected": "Please select at least one platform (Claude Code or Codex)"
-        },
-        "warnings": {
-          "savedWithPlaceholders": "✅ Config saved, but not synced to Claude/Codex due to placeholders ({vars}). Please fill placeholders and save again."
-        },
-        "deleteTitle": "Delete MCP server",
-        "deleteMessage": "Are you sure you want to delete {name}? This action cannot be undone."
       }
     },
     "gemini": {

@@ -1139,7 +1139,6 @@ const providerStatsLoaded = reactive<Record<ProviderTab, boolean>>({
 let providerStatsTimer: number | undefined
 const showHeatmap = ref(true)
 const showHomeTitle = ref(true)
-const mcpIcon = lobeIcons['mcp'] ?? ''
 const appVersion = ref('')
 const importStatus = ref<ConfigImportStatus | null>(null)
 const importBusy = ref(false)
@@ -1191,7 +1190,7 @@ let highlightTimer: number | undefined
 const showImportButton = computed(() => {
   const status = importStatus.value
   if (!status) return false
-  return status.config_exists && (status.pending_providers || status.pending_mcp)
+  return status.config_exists && status.pending_providers
 })
 
 const importButtonTooltip = computed(() => {
@@ -1204,7 +1203,6 @@ const importButtonTooltip = computed(() => {
   }
   return t('components.main.importConfig.tooltip', {
     providers: status.pending_provider_count,
-    servers: status.pending_mcp_count,
   })
 })
 
@@ -2200,10 +2198,6 @@ const goToLogs = () => {
   router.push('/logs')
 }
 
-const goToMcp = () => {
-  router.push('/mcp')
-}
-
 const goToSkill = () => {
   router.push('/skill')
 }
@@ -2681,15 +2675,13 @@ const handleImportClick = async () => {
     const result = await importFromCcSwitch()
     importStatus.value = result?.status ?? null
     const importedProviders = result?.imported_providers ?? 0
-    const importedMCP = result?.imported_mcp ?? 0
     if (importedProviders > 0) {
       await loadProvidersFromDisk()
     }
-    if (importedProviders > 0 || importedMCP > 0) {
+    if (importedProviders > 0) {
       showToast(
         t('components.main.importConfig.success', {
           providers: importedProviders,
-          servers: importedMCP,
         })
       )
     } else if (result?.status?.config_exists) {

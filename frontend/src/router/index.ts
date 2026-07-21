@@ -2,7 +2,6 @@ import { createRouter, createWebHashHistory } from 'vue-router'
 import MainPage from '../components/Main/Index.vue'
 import LogsPage from '../components/Logs/Index.vue'
 import GeneralPage from '../components/General/Index.vue'
-import McpPage from '../components/Mcp/index.vue'
 import SkillPage from '../components/Skill/Index.vue'
 import PromptsPage from '../components/Prompts/Index.vue'
 import ConsolePage from '../components/Console/Index.vue'
@@ -13,7 +12,6 @@ import ProjectManagerSessionDetailPage from '../components/ProjectManager/Sessio
 const routes = [
   { path: '/', component: MainPage },
   { path: '/prompts', component: PromptsPage },
-  { path: '/mcp', component: McpPage },
   { path: '/skill', component: SkillPage },
   { path: '/logs', component: LogsPage },
   { path: '/console', component: ConsolePage },
