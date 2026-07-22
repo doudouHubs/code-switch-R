@@ -412,6 +412,34 @@
         "openingSession": "打开中...",
         "pathDetail": "看路径"
       },
+      "codexStatus": {
+        "threadLabel": "线程",
+        "turnLabel": "任务轮次",
+        "agentLabel": "子 Agent",
+        "states": {
+          "not_loaded": "未加载",
+          "idle": "空闲",
+          "active": "正在运行",
+          "waiting_approval": "等待审批",
+          "waiting_user_input": "等待用户输入",
+          "system_error": "系统错误"
+        },
+        "turn": {
+          "unknown": "暂无状态",
+          "completed": "已完成",
+          "interrupted": "已中断",
+          "failed": "失败",
+          "in_progress": "进行中"
+        },
+        "agent": {
+          "unsupported": "不可用（当前 Codex CLI 版本不支持）",
+          "unknown": "暂无状态",
+          "active": "{count} 个运行中"
+        },
+        "projectSummary": "项目汇总：运行 {active}，等待 {waiting}，错误 {errors}",
+        "monitorUnavailable": "状态监控尚未安装或尚未完成初始化",
+        "monitorError": "监控异常"
+      },
       "provider": {
         "title": "设置 Codex 供应商",
         "hint": "为“{name}”选择一个 Codex 首选供应商。项目首选不需要在首页启用；是否回落到全局路由由 auto 开关决定。",

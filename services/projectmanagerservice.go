@@ -71,6 +71,7 @@ type ProjectManagerService struct {
 	snapshotCache           *projectManagerSnapshotCacheService
 	detailCache             *projectManagerConversationCacheService
 	conversationSearchCache *projectManagerConversationSearchCacheService
+	codexStatus             *projectManagerCodexStatusService
 	snapshotBuildMu         sync.Mutex
 	conversationSearchMu    sync.Mutex
 	warmRefreshMu           sync.Mutex
@@ -84,6 +85,7 @@ func NewProjectManagerService() *ProjectManagerService {
 		snapshotCache:           newProjectManagerSnapshotCacheService(),
 		detailCache:             newProjectManagerConversationCacheService(),
 		conversationSearchCache: newProjectManagerConversationSearchCacheService(),
+		codexStatus:             newProjectManagerCodexStatusService(),
 	}
 }
 

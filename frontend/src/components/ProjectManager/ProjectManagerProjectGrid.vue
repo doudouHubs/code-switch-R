@@ -1,8 +1,14 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import ProjectManagerCardMenu from './ProjectManagerCardMenu.vue'
+import ProjectManagerCodexStatusLight from './ProjectManagerCodexStatusLight.vue'
 import ProjectManagerHighlightedText from './ProjectManagerHighlightedText.vue'
-import type { ProjectSummary } from '../../services/projectManager'
+import type {
+  CodexProjectRuntimeStatus,
+  CodexSessionRuntimeStatus,
+  CodexStatusMonitorInfo,
+  ProjectSummary,
+} from '../../services/projectManager'
 
 type ProjectManagerCardMenuAction = {
   key: string
@@ -11,13 +17,16 @@ type ProjectManagerCardMenuAction = {
   danger?: boolean
 }
 
-defineProps<{
+const props = defineProps<{
   projects: ProjectSummary[]
   searchKeyword: string
   formatUpdatedAt: (timestamp: number) => string
   isProjectDeleting: (projectId: string) => boolean
   isProjectCommitting: (projectId: string) => boolean
   isProjectRunning: (projectId: string) => boolean
+  codexMonitor: CodexStatusMonitorInfo
+  resolveCodexProjectStatus: (projectPath: string) => CodexProjectRuntimeStatus | undefined
+  resolveCodexSessionStatus: (sessionId: string) => CodexSessionRuntimeStatus | undefined
 }>()
 
 const emit = defineEmits<{
@@ -31,6 +40,11 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+
+const resolveLatestSessionStatus = (projectPath: string) => {
+  const sessionID = props.resolveCodexProjectStatus(projectPath)?.latest_session_id
+  return sessionID ? props.resolveCodexSessionStatus(sessionID) : undefined
+}
 
 const resolveProjectActions = (project: ProjectSummary): ProjectManagerCardMenuAction[] => [
   {
@@ -77,12 +91,19 @@ const handleProjectAction = (project: ProjectSummary, actionKey: string) => {
       @click="!isProjectDeleting(project.id) && emit('enter', project)"
     >
       <div class="card-topline">
-        <h3 class="card-title">
-          <ProjectManagerHighlightedText
-            :text="project.display_name"
-            :keyword="searchKeyword"
+        <div class="card-title-row">
+          <ProjectManagerCodexStatusLight
+            :monitor="codexMonitor"
+            :project-status="resolveCodexProjectStatus(project.path)"
+            :session-status="resolveLatestSessionStatus(project.path)"
           />
-        </h3>
+          <h3 class="card-title">
+            <ProjectManagerHighlightedText
+              :text="project.display_name"
+              :keyword="searchKeyword"
+            />
+          </h3>
+        </div>
         <div class="card-topline-actions">
           <button
             :class="['card-run-trigger', { 'is-loading': isProjectRunning(project.id) }]"

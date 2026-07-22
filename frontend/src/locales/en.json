@@ -411,6 +411,34 @@
         "openingSession": "Opening...",
         "pathDetail": "Path"
       },
+      "codexStatus": {
+        "threadLabel": "Thread",
+        "turnLabel": "Turn",
+        "agentLabel": "Sub-agent",
+        "states": {
+          "not_loaded": "Not loaded",
+          "idle": "Idle",
+          "active": "Running",
+          "waiting_approval": "Waiting for approval",
+          "waiting_user_input": "Waiting for user input",
+          "system_error": "System error"
+        },
+        "turn": {
+          "unknown": "No status",
+          "completed": "Completed",
+          "interrupted": "Interrupted",
+          "failed": "Failed",
+          "in_progress": "In progress"
+        },
+        "agent": {
+          "unsupported": "Unavailable (not supported by this Codex CLI version)",
+          "unknown": "No status",
+          "active": "{count} active"
+        },
+        "projectSummary": "Project: {active} running, {waiting} waiting, {errors} errors",
+        "monitorUnavailable": "Status monitoring is not installed or has not finished initializing",
+        "monitorError": "Monitor error"
+      },
       "provider": {
         "title": "Set Codex Provider",
         "hint": "Choose a preferred Codex provider for \"{name}\". Project preference does not require the provider to be enabled on the home page; the auto switch controls whether routing can fall back to the global chain.",

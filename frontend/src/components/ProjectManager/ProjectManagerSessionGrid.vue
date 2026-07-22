@@ -1,8 +1,13 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import ProjectManagerCardMenu from './ProjectManagerCardMenu.vue'
+import ProjectManagerCodexStatusLight from './ProjectManagerCodexStatusLight.vue'
 import ProjectManagerHighlightedText from './ProjectManagerHighlightedText.vue'
-import type { SessionSummary } from '../../services/projectManager'
+import type {
+  CodexSessionRuntimeStatus,
+  CodexStatusMonitorInfo,
+  SessionSummary,
+} from '../../services/projectManager'
 
 type ProjectManagerCardMenuAction = {
   key: string
@@ -19,6 +24,8 @@ const props = defineProps<{
   showProjectNameTag: boolean
   isSessionOpening: (sessionId: string) => boolean
   isSessionDeleting: (sessionId: string) => boolean
+  codexMonitor: CodexStatusMonitorInfo
+  resolveCodexSessionStatus: (sessionId: string) => CodexSessionRuntimeStatus | undefined
 }>()
 
 const emit = defineEmits<{
@@ -77,12 +84,18 @@ const emitOpenDetail = (session: SessionSummary) => {
       @click="emitOpenDetail(session)"
     >
       <div class="card-topline">
-        <h3 class="card-title">
-          <ProjectManagerHighlightedText
-            :text="session.display_name"
-            :keyword="searchKeyword"
+        <div class="card-title-row">
+          <ProjectManagerCodexStatusLight
+            :monitor="codexMonitor"
+            :session-status="resolveCodexSessionStatus(session.id)"
           />
-        </h3>
+          <h3 class="card-title">
+            <ProjectManagerHighlightedText
+              :text="session.display_name"
+              :keyword="searchKeyword"
+            />
+          </h3>
+        </div>
         <ProjectManagerCardMenu
           :label="t('components.projectManager.card.moreActions')"
           :actions="resolveSessionActions(session)"

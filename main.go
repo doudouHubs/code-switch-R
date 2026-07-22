@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"os"
 	"runtime"
 	"strings"
 	"time"
@@ -77,6 +78,17 @@ func (a *AppService) OpenSecondWindow() {
 // and starts a goroutine that emits a time-based event every second. It subsequently runs the application and
 // logs any error that might occur.
 func main() {
+	// Codex Hook 会同步启动当前 EXE；必须在数据库和 Wails 初始化前走轻量分支，
+	// 否则一次状态事件就会拉起一个完整 CodeSwitch 实例并阻塞 Codex。
+	if services.IsProjectManagerCodexHookInvocation(os.Args[1:]) {
+		if err := services.RunProjectManagerCodexHookReceiver(os.Stdin); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "CodeSwitch Codex hook failed: %v\n", err)
+			// Hook 的失败必须回传给 Codex；继续返回 0 会让状态灯静默丢事件，排障时只剩假成功。
+			os.Exit(1)
+		}
+		return
+	}
+
 	appservice := &AppService{}
 
 	// 【修复】第一步：初始化数据库（必须最先执行）
@@ -192,17 +204,23 @@ func main() {
 	notificationService.SetApp(app)
 	// 设置 UpdateService 的 App 引用，用于发送更新事件
 	updateService.SetApp(app)
+	// 状态监控只在 GUI 主进程中运行；Hook 子进程只负责落盘事件。
+	projectManagerService.SetApp(app)
+	projectManagerService.StartCodexStatusMonitor()
 
 	app.OnShutdown(func() {
 		log.Println("🛑 应用正在关闭，停止后台服务...")
 
-		// 1. 停止黑名单定时器
+		// 1. 停止 Codex 状态监控，避免退出期间继续推送前端事件。
+		projectManagerService.StopCodexStatusMonitor()
+
+		// 2. 停止黑名单定时器
 		close(blacklistStopChan)
 
-		// 2. 停止代理服务器
+		// 3. 停止代理服务器
 		_ = providerRelay.Stop()
 
-		// 3. 优雅关闭数据库写入队列（10秒超时，双队列架构）
+		// 4. 优雅关闭数据库写入队列（10秒超时，双队列架构）
 		if err := services.ShutdownGlobalDBQueue(10 * time.Second); err != nil {
 			log.Printf("⚠️ 队列关闭超时: %v", err)
 		} else {

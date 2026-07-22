@@ -9,6 +9,7 @@ import {
 } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
+import { Events } from "@wailsio/runtime";
 import BaseButton from "../common/BaseButton.vue";
 import BaseModal from "../common/BaseModal.vue";
 import ProjectManagerBreadcrumb from "./ProjectManagerBreadcrumb.vue";
@@ -22,6 +23,7 @@ import {
   clearProjectCodexProvider,
   deleteProject,
   deleteSession,
+  fetchCodexRuntimeStatusSnapshot,
   fetchProjectManagerSnapshot,
   openProjectFolder,
   openProjectTerminal,
@@ -38,6 +40,9 @@ import {
   type ProjectManagerSnapshot,
   type ProjectSessionSearchResult,
   type SessionSummary,
+  type CodexProjectRuntimeStatus,
+  type CodexRuntimeStatusSnapshot,
+  type CodexSessionRuntimeStatus,
 } from "../../services/projectManager";
 import { LoadProviders } from "../../../bindings/codeswitch/services/providerservice";
 import type { Provider } from "../../../bindings/codeswitch/services/models";
@@ -64,6 +69,15 @@ const deletingProjectIds = ref<string[]>([]);
 const deletingSessionIds = ref<string[]>([]);
 const snapshotProjects = ref<ProjectSummary[]>([]);
 const snapshotSessions = ref<SessionSummary[]>([]);
+const codexRuntimeSnapshot = ref<CodexRuntimeStatusSnapshot>({
+  monitor: {
+    installed: false,
+    agent_hooks_supported: false,
+  },
+  sessions: [],
+  projects: [],
+  updated_at: 0,
+});
 const selectedProjectId = ref("");
 const searchKeyword = ref("");
 const projectSessionSearchLoading = ref(false);
@@ -108,6 +122,7 @@ const openingSessionTimers = new Map<string, ReturnType<typeof setTimeout>>();
 let projectManagerWarmRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 let projectSessionSearchTimer: ReturnType<typeof setTimeout> | null = null;
 let projectSessionSearchRequestVersion = 0;
+let stopCodexStatusEvents: (() => void) | null = null;
 
 const dateFormatter = computed(
   () =>
@@ -122,6 +137,42 @@ const dateFormatter = computed(
 const normalizedKeyword = computed(() =>
   searchKeyword.value.trim().toLowerCase(),
 );
+
+const normalizeCodexProjectPathKey = (path: string) => {
+  let normalized = path.trim().replaceAll("/", "\\");
+  while (normalized.length > 3 && normalized.endsWith("\\")) {
+    normalized = normalized.slice(0, -1);
+  }
+  return normalized.toLowerCase();
+};
+
+const codexSessionStatusByID = computed(
+  () =>
+    new Map<string, CodexSessionRuntimeStatus>(
+      codexRuntimeSnapshot.value.sessions.map((status) => [
+        status.session_id,
+        status,
+      ]),
+    ),
+);
+
+const codexProjectStatusByPath = computed(
+  () =>
+    new Map<string, CodexProjectRuntimeStatus>(
+      codexRuntimeSnapshot.value.projects.map((status) => [
+        normalizeCodexProjectPathKey(status.project_path),
+        status,
+      ]),
+    ),
+);
+
+const resolveCodexSessionStatus = (sessionID: string) =>
+  codexSessionStatusByID.value.get(sessionID);
+
+const resolveCodexProjectStatus = (projectPath: string) =>
+  codexProjectStatusByPath.value.get(
+    normalizeCodexProjectPathKey(projectPath),
+  );
 
 const selectedProject = computed(
   () =>
@@ -585,6 +636,57 @@ const applySnapshot = (snapshot: ProjectManagerSnapshot) => {
   }
 };
 
+const applyCodexRuntimeSnapshot = (snapshot: CodexRuntimeStatusSnapshot) => {
+  // 状态灯只是增强层；即使旧后端或损坏事件返回了缺字段数据，
+  // 也必须退回灰灯，不能让整个项目管理页面因为一次监控异常白屏。
+  const updatedAt = snapshot?.updated_at ?? Date.now();
+  if (updatedAt < codexRuntimeSnapshot.value.updated_at) {
+    return;
+  }
+  codexRuntimeSnapshot.value = {
+    monitor: snapshot?.monitor ?? {
+      installed: false,
+      agent_hooks_supported: false,
+    },
+    sessions: Array.isArray(snapshot?.sessions) ? snapshot.sessions : [],
+    projects: Array.isArray(snapshot?.projects) ? snapshot.projects : [],
+    updated_at: updatedAt,
+  };
+};
+
+const resolveCodexRuntimeStatusEvent = (
+  data: unknown,
+): CodexRuntimeStatusSnapshot | null => {
+  // Wails v3 的 Event.Emit(name, data...) 使用可变参数，单个快照也会以
+  // event.data = [snapshot] 的形式到达。若直接把数组当快照，会把已加载的
+  // 项目状态覆盖为空数组，所有活动灯随即退成灰色。
+  if (!Array.isArray(data) || data.length !== 1) {
+    return null;
+  }
+
+  const [snapshot] = data;
+  if (
+    !snapshot ||
+    typeof snapshot !== "object" ||
+    Array.isArray(snapshot) ||
+    !Array.isArray((snapshot as Partial<CodexRuntimeStatusSnapshot>).sessions) ||
+    !Array.isArray((snapshot as Partial<CodexRuntimeStatusSnapshot>).projects)
+  ) {
+    return null;
+  }
+
+  return snapshot as CodexRuntimeStatusSnapshot;
+};
+
+const loadCodexRuntimeSnapshot = async () => {
+  try {
+    applyCodexRuntimeSnapshot(await fetchCodexRuntimeStatusSnapshot());
+  } catch (error) {
+    // 兼容尚未提供状态接口的旧后端；项目与会话浏览功能不应被状态灯连坐。
+    console.warn("failed to load Codex runtime status snapshot", error);
+  }
+};
+
 const scheduleSilentWarmRefresh = () => {
   if (projectManagerWarmRefreshTimer) {
     clearTimeout(projectManagerWarmRefreshTimer);
@@ -847,11 +949,26 @@ const resolveSessionSummary = (session: SessionSummary) => {
 };
 
 onMounted(() => {
+  // 先订阅增量事件再拉初始快照，避免 Codex 状态恰好在页面挂载窗口内更新却无人接收。
+  stopCodexStatusEvents = Events.On(
+    "project-manager:codex-status",
+    (event) => {
+      const snapshot = resolveCodexRuntimeStatusEvent(event.data);
+      if (!snapshot) {
+        console.warn("received malformed Codex runtime status event", event.data);
+        return;
+      }
+      applyCodexRuntimeSnapshot(snapshot);
+    },
+  );
+  void loadCodexRuntimeSnapshot();
   loadSnapshot();
   scheduleSilentWarmRefresh();
 });
 
 onBeforeUnmount(() => {
+  stopCodexStatusEvents?.();
+  stopCodexStatusEvents = null;
   clearProjectSessionSearchTimer();
   projectSessionSearchRequestVersion += 1;
   openingSessionTimers.forEach((timeoutId) => {
@@ -906,6 +1023,9 @@ onBeforeUnmount(() => {
       :is-project-deleting="isProjectDeleting"
       :is-project-committing="isProjectCommitting"
       :is-project-running="isProjectRunning"
+      :codex-monitor="codexRuntimeSnapshot.monitor"
+      :resolve-codex-project-status="resolveCodexProjectStatus"
+      :resolve-codex-session-status="resolveCodexSessionStatus"
       @enter="enterProject"
       @delete="openDeleteModal('project', $event)"
       @open-folder="handleOpenProjectFolder"
@@ -924,6 +1044,8 @@ onBeforeUnmount(() => {
       :show-project-name-tag="activeMode === 'session'"
       :is-session-opening="isSessionOpening"
       :is-session-deleting="isSessionDeleting"
+      :codex-monitor="codexRuntimeSnapshot.monitor"
+      :resolve-codex-session-status="resolveCodexSessionStatus"
       @delete="openDeleteModal('session', $event)"
       @rename="openRenameModal('session', $event)"
       @open-session="handleOpenSession"

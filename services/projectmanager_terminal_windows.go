@@ -36,8 +36,7 @@ var (
 	projectManagerExecCommand       = func(name string, args ...string) projectManagerCommandRunner {
 		return exec.Command(name, args...)
 	}
-	projectManagerWTCommandStarter       = startProjectManagerHiddenCommand
-	projectManagerAICommitCommandStarter = startProjectManagerHiddenCommand
+	projectManagerWTCommandStarter = startProjectManagerHiddenCommand
 )
 
 func projectManagerProjectWindowID(projectPath string) string {
@@ -367,7 +366,7 @@ func buildProjectManagerProjectTerminalWTArgs(projectPath string, windowID strin
 	}
 }
 
-func buildProjectManagerProjectCommandWTArgs(projectPath string, windowID string, tabTitle string, wrapperPath string) []string {
+func buildProjectManagerProjectTaskWTArgs(projectPath string, windowID string, tabTitle string, wrapperPath string) []string {
 	// wrapper.cmd 已经负责启动 pwsh 并传递脚本参数，WT 尾部只能接收这一个文件路径。
 	// 再套 cmd.exe /d /c 会被 WT 合并成单个 executable 字符串，最终触发 0x80070002。
 	return buildProjectManagerWTArgs(projectPath, wrapperPath, windowID, tabTitle)
@@ -516,43 +515,58 @@ func startProjectManagerProjectFallbackTerminal(projectPath string) error {
 }
 
 func startProjectManagerProjectCommandTerminal(projectPath string, command string) error {
+	return startProjectManagerProjectTaskTerminal(
+		projectPath,
+		"project-run",
+		projectManagerProjectRunTabTitle(projectPath),
+		buildProjectManagerProjectCommandPowerShellCommand(projectPath, command),
+		"项目运行指令",
+	)
+}
+
+func startProjectManagerProjectTaskTerminal(
+	projectPath string,
+	scriptPrefix string,
+	tabTitle string,
+	terminalCommand string,
+	taskLabel string,
+) error {
 	projectWindowID := projectManagerProjectWindowID(projectPath)
-	tabTitle := projectManagerProjectRunTabTitle(projectPath)
-	terminalCommand := buildProjectManagerProjectCommandPowerShellCommand(projectPath, command)
+	launchPrefix := scriptPrefix + "-" + projectWindowID
 
 	wtPath := findProjectManagerWTExecutable()
 	if wtPath != "" {
 		_, wrapperPath, err := createProjectManagerTerminalLaunchFiles(
-			"project-run-"+projectWindowID,
+			launchPrefix,
 			terminalCommand,
 		)
 		if err != nil {
-			return fmt.Errorf("创建项目运行脚本失败: %w", err)
+			return fmt.Errorf("创建%s脚本失败: %w", taskLabel, err)
 		}
 
-		args := buildProjectManagerProjectCommandWTArgs(projectPath, projectWindowID, tabTitle, wrapperPath)
+		args := buildProjectManagerProjectTaskWTArgs(projectPath, projectWindowID, tabTitle, wrapperPath)
 		if err := startProjectManagerWTCommand(projectPath, wtPath, args); err == nil {
-			log.Printf("[ProjectManager] 已通过 WT 启动项目运行指令 project=%s window=%s title=%q", projectPath, projectWindowID, tabTitle)
+			log.Printf("[ProjectManager] 已通过 WT 启动%s project=%s window=%s title=%q", taskLabel, projectPath, projectWindowID, tabTitle)
 			return nil
 		} else {
-			log.Printf("[ProjectManager] 启动项目运行 WT 失败，准备回退 shell project=%s window=%s err=%v", projectPath, projectWindowID, err)
+			log.Printf("[ProjectManager] 启动%s WT 失败，准备回退 shell project=%s window=%s err=%v", taskLabel, projectPath, projectWindowID, err)
 		}
 	}
 
-	if err := startProjectManagerProjectCommandFallbackTerminal(projectPath, terminalCommand); err != nil {
-		return fmt.Errorf("启动项目运行终端失败: %w", err)
+	if err := startProjectManagerProjectTaskFallbackTerminal(projectPath, launchPrefix, terminalCommand); err != nil {
+		return fmt.Errorf("启动%s终端失败: %w", taskLabel, err)
 	}
-	log.Printf("[ProjectManager] WT 不可用，已回退到 shell 项目运行指令 project=%s", projectPath)
+	log.Printf("[ProjectManager] WT 不可用，已回退到 shell %s project=%s", taskLabel, projectPath)
 	return nil
 }
 
-func startProjectManagerProjectCommandFallbackTerminal(projectPath string, terminalCommand string) error {
+func startProjectManagerProjectTaskFallbackTerminal(projectPath string, scriptPrefix string, terminalCommand string) error {
 	shellExecutable, err := projectManagerRequiredPwshExecutable()
 	if err != nil {
 		return err
 	}
 	scriptPath, err := createProjectManagerTerminalScript(
-		"project-run-"+projectManagerProjectWindowID(projectPath),
+		scriptPrefix,
 		terminalCommand,
 	)
 	if err != nil {
@@ -646,15 +660,12 @@ func projectManagerHasCommittableChanges(projectPath string) (bool, error) {
 }
 
 func startProjectManagerAICommitTerminal(projectPath string) error {
-	shellExecutable, err := projectManagerRequiredPwshExecutable()
-	if err != nil {
-		return err
-	}
-
-	return projectManagerAICommitCommandStarter(
+	return startProjectManagerProjectTaskTerminal(
 		projectPath,
-		shellExecutable,
-		buildProjectManagerAICommitLauncherArgs(projectPath, shellExecutable)...,
+		"ai-commit",
+		projectManagerAICommitTabTitle(projectPath),
+		buildProjectManagerAICommitPowerShellCommand(projectPath),
+		"AI-Commit",
 	)
 }
 
@@ -664,40 +675,6 @@ func startProjectManagerHiddenCommand(workingDir string, executable string, args
 	cmd := hideWindowCmd(executable, args...)
 	cmd.Dir = workingDir
 	return cmd.Start()
-}
-
-func buildProjectManagerAICommitLauncherArgs(projectPath string, shellExecutable string) []string {
-	return []string{
-		"-NoProfile",
-		"-EncodedCommand",
-		encodeProjectManagerPowerShellCommand(buildProjectManagerAICommitLaunchCommand(projectPath, shellExecutable)),
-	}
-}
-
-func buildProjectManagerAICommitLaunchCommand(projectPath string, shellExecutable string) string {
-	escapedProjectPath := escapeProjectManagerPowerShellSingleQuoted(projectPath)
-	escapedShellExecutable := escapeProjectManagerPowerShellSingleQuoted(shellExecutable)
-	innerArgs := []string{
-		"-NoProfile",
-		"-ExecutionPolicy",
-		"Bypass",
-		"-Command",
-		buildProjectManagerAICommitPowerShellCommand(projectPath),
-	}
-	quotedInnerArgs := make([]string, 0, len(innerArgs))
-	for _, arg := range innerArgs {
-		quotedInnerArgs = append(quotedInnerArgs, fmt.Sprintf("'%s'", escapeProjectManagerPowerShellSingleQuoted(arg)))
-	}
-
-	// 这里外层不能再直接从 GUI 进程裸起一个 pwsh 去跑 commit。
-	// 那样命令虽然可能在后台执行，但不会带出用户可见的终端窗口，体感就是“点了没反应”。
-	// 所以外层隐藏 pwsh 只负责 Start-Process，真正给用户看的任务窗口必须由内层可见 pwsh 拉起。
-	return fmt.Sprintf(
-		"$ErrorActionPreference = 'Stop'; Start-Process -FilePath '%s' -ArgumentList @(%s) -WorkingDirectory '%s' | Out-Null",
-		escapedShellExecutable,
-		strings.Join(quotedInnerArgs, ", "),
-		escapedProjectPath,
-	)
 }
 
 func buildProjectManagerAICommitPowerShellCommand(projectPath string) string {
@@ -785,11 +762,19 @@ func buildProjectManagerProjectCommandPowerShellCommand(projectPath string, comm
 }
 
 func projectManagerProjectRunTabTitle(projectPath string) string {
+	return projectManagerProjectTaskTabTitle("Run", projectPath)
+}
+
+func projectManagerAICommitTabTitle(projectPath string) string {
+	return projectManagerProjectTaskTabTitle("AI-Commit", projectPath)
+}
+
+func projectManagerProjectTaskTabTitle(taskName string, projectPath string) string {
 	name := strings.TrimSpace(filepath.Base(projectPath))
 	if name == "" || name == "." {
 		name = "Project"
 	}
-	return fmt.Sprintf("[PM]Run - %s", name)
+	return fmt.Sprintf("[PM]%s - %s", taskName, name)
 }
 
 func createProjectManagerTerminalLaunchFiles(prefix string, command string) (string, string, error) {

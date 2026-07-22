@@ -94,13 +94,13 @@ func TestBuildProjectManagerProjectTerminalWTArgs(t *testing.T) {
 	}
 }
 
-func TestBuildProjectManagerProjectCommandWTArgsUsesWrapperBoundary(t *testing.T) {
+func TestBuildProjectManagerProjectTaskWTArgsUsesWrapperBoundary(t *testing.T) {
 	projectPath := `F:\GitlabProjects\code-switch-R`
 	windowID := projectManagerProjectWindowID(projectPath)
-	tabTitle := "[PM]Run - code-switch-R"
-	wrapperPath := `C:\Users\X1\.code-switch\project-manager-terminal-wrappers\project-run.cmd`
+	tabTitle := "[PM]AI-Commit - code-switch-R"
+	wrapperPath := `C:\Users\X1\.code-switch\project-manager-terminal-wrappers\ai-commit.cmd`
 
-	got := buildProjectManagerProjectCommandWTArgs(projectPath, windowID, tabTitle, wrapperPath)
+	got := buildProjectManagerProjectTaskWTArgs(projectPath, windowID, tabTitle, wrapperPath)
 	want := []string{
 		"-w", windowID,
 		"new-tab",
@@ -111,7 +111,27 @@ func TestBuildProjectManagerProjectCommandWTArgsUsesWrapperBoundary(t *testing.T
 	}
 
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("项目运行指令 WT 参数不对，want=%v got=%v", want, got)
+		t.Fatalf("项目任务 WT 参数不对，want=%v got=%v", want, got)
+	}
+}
+
+func TestProjectManagerProjectTaskTabTitles(t *testing.T) {
+	projectPath := `F:\GitlabProjects\code-switch-R`
+	tests := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{name: "project run", got: projectManagerProjectRunTabTitle(projectPath), want: "[PM]Run - code-switch-R"},
+		{name: "AI-Commit", got: projectManagerAICommitTabTitle(projectPath), want: "[PM]AI-Commit - code-switch-R"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if test.got != test.want {
+				t.Fatalf("项目任务 tab 标题不对，want=%q got=%q", test.want, test.got)
+			}
+		})
 	}
 }
 
@@ -530,92 +550,6 @@ func TestProjectManagerRequiredPwshExecutable(t *testing.T) {
 			t.Fatalf("期望提示缺少 pwsh.exe，got=%v", err)
 		}
 	})
-}
-
-func TestBuildProjectManagerAICommitLaunchCommand(t *testing.T) {
-	projectPath := `F:\GitlabProjects\code-switch-R`
-	shellExecutable := `E:\software\PowerShell7\7\pwsh.exe`
-
-	got := buildProjectManagerAICommitLaunchCommand(projectPath, shellExecutable)
-	expectedParts := []string{
-		"Start-Process -FilePath 'E:\\software\\PowerShell7\\7\\pwsh.exe'",
-		"-ArgumentList @(",
-		"'-NoProfile'",
-		"'-ExecutionPolicy'",
-		"'Bypass'",
-		"'-Command'",
-		"& $__codeSwitchCodexCommand --dangerously-bypass-approvals-and-sandbox -p commit-fast exec --ephemeral ''$commit commit本地文件''",
-		"-WorkingDirectory 'F:\\GitlabProjects\\code-switch-R'",
-	}
-
-	for _, part := range expectedParts {
-		if !strings.Contains(got, part) {
-			t.Fatalf("AI-Commit 启动命令缺少片段 %q，got=%q", part, got)
-		}
-	}
-}
-
-func TestBuildProjectManagerAICommitLauncherArgs(t *testing.T) {
-	projectPath := `F:\GitlabProjects\code-switch-R`
-	shellExecutable := `E:\software\PowerShell7\7\pwsh.exe`
-
-	got := buildProjectManagerAICommitLauncherArgs(projectPath, shellExecutable)
-	wantPrefix := []string{"-NoProfile", "-EncodedCommand"}
-	if !reflect.DeepEqual(got[:2], wantPrefix) {
-		t.Fatalf("AI-Commit launcher 参数前缀不对，want=%v got=%v", wantPrefix, got[:2])
-	}
-
-	decoded := decodeProjectManagerPowerShellEncodedCommand(t, got[2])
-	wantCommand := buildProjectManagerAICommitLaunchCommand(projectPath, shellExecutable)
-	if decoded != wantCommand {
-		t.Fatalf("AI-Commit launcher EncodedCommand 解码后不对，want=%q got=%q", wantCommand, decoded)
-	}
-}
-
-func TestStartProjectManagerAICommitTerminalUsesPwshLauncherStarter(t *testing.T) {
-	originalLookPath := projectManagerLookPath
-	originalStarter := projectManagerAICommitCommandStarter
-	t.Cleanup(func() {
-		projectManagerLookPath = originalLookPath
-		projectManagerAICommitCommandStarter = originalStarter
-	})
-
-	projectManagerLookPath = func(file string) (string, error) {
-		if file != "pwsh.exe" {
-			t.Fatalf("期望只查找 pwsh.exe，got=%q", file)
-		}
-		return `E:\software\PowerShell7\7\pwsh.exe`, nil
-	}
-
-	var capturedWorkingDir string
-	var capturedName string
-	var capturedArgs []string
-	projectManagerAICommitCommandStarter = func(workingDir string, name string, args ...string) error {
-		capturedWorkingDir = workingDir
-		capturedName = name
-		capturedArgs = append([]string(nil), args...)
-		return nil
-	}
-
-	projectPath := `F:\GitlabProjects\code-switch-R`
-	if err := startProjectManagerAICommitTerminal(projectPath); err != nil {
-		t.Fatalf("期望启动入口构造成功，got err=%v", err)
-	}
-	if capturedName == "" {
-		t.Fatalf("期望捕获到启动命令")
-	}
-	if capturedName != `E:\software\PowerShell7\7\pwsh.exe` {
-		t.Fatalf("AI-Commit 启动器不对，want=%q got=%q", `E:\software\PowerShell7\7\pwsh.exe`, capturedName)
-	}
-	if capturedWorkingDir != projectPath {
-		t.Fatalf("AI-Commit 工作目录不对，want=%q got=%q", projectPath, capturedWorkingDir)
-	}
-	if len(capturedArgs) != 3 {
-		t.Fatalf("AI-Commit launcher 参数数量不对，got=%v", capturedArgs)
-	}
-	if capturedArgs[0] != "-NoProfile" || capturedArgs[1] != "-EncodedCommand" {
-		t.Fatalf("AI-Commit launcher 参数前缀不对，got=%v", capturedArgs)
-	}
 }
 
 func TestOpenProjectManagerProjectTerminalRejectsMissingDirectory(t *testing.T) {

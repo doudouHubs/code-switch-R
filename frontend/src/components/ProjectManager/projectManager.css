@@ -437,6 +437,14 @@
   color: var(--mac-text);
 }
 
+.project-manager-page .card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: 1;
+  min-width: 0;
+}
+
 .project-manager-page .card-eyebrow {
   margin: 0;
   font-size: 0.78rem;

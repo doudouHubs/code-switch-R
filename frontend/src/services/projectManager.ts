@@ -59,6 +59,53 @@ export interface ProjectManagerSnapshot {
   snapshot_updated_at?: number;
 }
 
+export type CodexRuntimeState =
+  | "not_loaded"
+  | "idle"
+  | "active"
+  | "waiting_approval"
+  | "waiting_user_input"
+  | "system_error";
+
+export interface CodexStatusMonitorInfo {
+  installed: boolean;
+  codex_version?: string;
+  agent_hooks_supported: boolean;
+  error?: string;
+}
+
+export interface CodexSessionRuntimeStatus {
+  session_id: string;
+  turn_id?: string;
+  project_path: string;
+  state: CodexRuntimeState;
+  turn_status?: "completed" | "interrupted" | "failed" | "in_progress";
+  active_agents: number;
+  agent_supported: boolean;
+  monitored: boolean;
+  updated_at: number;
+  last_event?: string;
+  last_error?: string;
+}
+
+export interface CodexProjectRuntimeStatus {
+  project_path: string;
+  state: CodexRuntimeState;
+  active_sessions: number;
+  waiting_sessions: number;
+  error_sessions: number;
+  latest_session_id?: string;
+  latest_session_state?: CodexRuntimeState;
+  updated_at: number;
+}
+
+export interface CodexRuntimeStatusSnapshot {
+  monitor: CodexStatusMonitorInfo;
+  sessions: CodexSessionRuntimeStatus[];
+  projects: CodexProjectRuntimeStatus[];
+  updated_at: number;
+}
+
 export const fetchProjectManagerSnapshot =
   async (): Promise<ProjectManagerSnapshot> => {
     const result = await Call.ByName(`${PROJECT_MANAGER_SERVICE}.GetSnapshot`);
@@ -71,6 +118,14 @@ export const refreshProjectManagerSnapshot =
       `${PROJECT_MANAGER_SERVICE}.RefreshProjectIndex`,
     );
     return result as ProjectManagerSnapshot;
+  };
+
+export const fetchCodexRuntimeStatusSnapshot =
+  async (): Promise<CodexRuntimeStatusSnapshot> => {
+    const result = await Call.ByName(
+      `${PROJECT_MANAGER_SERVICE}.GetCodexRuntimeStatusSnapshot`,
+    );
+    return result as CodexRuntimeStatusSnapshot;
   };
 
 export const searchProjectSessionConversations = async (
