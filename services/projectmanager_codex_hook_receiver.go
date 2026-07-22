@@ -21,30 +21,33 @@ const (
 )
 
 type projectManagerCodexHookEvent struct {
-	EventID          string `json:"event_id"`
-	HookEventName    string `json:"hook_event_name"`
-	SessionID        string `json:"session_id"`
-	TurnID           string `json:"turn_id,omitempty"`
-	AgentID          string `json:"agent_id,omitempty"`
-	AgentType        string `json:"agent_type,omitempty"`
-	ToolName         string `json:"tool_name,omitempty"`
-	Cwd              string `json:"cwd"`
-	TranscriptPath   string `json:"transcript_path,omitempty"`
-	CodexPID         uint32 `json:"codex_pid,omitempty"`
-	CodexStartedAt   string `json:"codex_started_at,omitempty"`
-	ReceivedAt       int64  `json:"received_at"`
-	ReceivedUnixNano int64  `json:"received_unix_nano"`
+	EventID                   string `json:"event_id"`
+	HookEventName             string `json:"hook_event_name"`
+	SessionID                 string `json:"session_id"`
+	TurnID                    string `json:"turn_id,omitempty"`
+	AgentID                   string `json:"agent_id,omitempty"`
+	AgentType                 string `json:"agent_type,omitempty"`
+	ToolName                  string `json:"tool_name,omitempty"`
+	Cwd                       string `json:"cwd"`
+	TranscriptPath            string `json:"transcript_path,omitempty"`
+	PlanImplementationPending bool   `json:"plan_implementation_pending,omitempty"`
+	CodexPID                  uint32 `json:"codex_pid,omitempty"`
+	CodexStartedAt            string `json:"codex_started_at,omitempty"`
+	ReceivedAt                int64  `json:"received_at"`
+	ReceivedUnixNano          int64  `json:"received_unix_nano"`
 }
 
 type projectManagerCodexHookPayload struct {
-	HookEventName  string `json:"hook_event_name"`
-	SessionID      string `json:"session_id"`
-	TurnID         string `json:"turn_id"`
-	AgentID        string `json:"agent_id"`
-	AgentType      string `json:"agent_type"`
-	ToolName       string `json:"tool_name"`
-	Cwd            string `json:"cwd"`
-	TranscriptPath any    `json:"transcript_path"`
+	HookEventName        string `json:"hook_event_name"`
+	SessionID            string `json:"session_id"`
+	TurnID               string `json:"turn_id"`
+	AgentID              string `json:"agent_id"`
+	AgentType            string `json:"agent_type"`
+	ToolName             string `json:"tool_name"`
+	Cwd                  string `json:"cwd"`
+	TranscriptPath       any    `json:"transcript_path"`
+	PermissionMode       string `json:"permission_mode"`
+	LastAssistantMessage any    `json:"last_assistant_message"`
 }
 
 func IsProjectManagerCodexHookInvocation(args []string) bool {
@@ -83,19 +86,20 @@ func RunProjectManagerCodexHookReceiver(reader io.Reader) error {
 	now := time.Now().UTC()
 	pid, startedAt, _ := resolveProjectManagerCodexAncestorProcess()
 	event := projectManagerCodexHookEvent{
-		EventID:          uuid.NewString(),
-		HookEventName:    payload.HookEventName,
-		SessionID:        payload.SessionID,
-		TurnID:           strings.TrimSpace(payload.TurnID),
-		AgentID:          strings.TrimSpace(payload.AgentID),
-		AgentType:        strings.TrimSpace(payload.AgentType),
-		ToolName:         strings.TrimSpace(payload.ToolName),
-		Cwd:              normalizeProjectManagerProjectPath(payload.Cwd),
-		TranscriptPath:   projectManagerCodexNullablePath(payload.TranscriptPath),
-		CodexPID:         pid,
-		CodexStartedAt:   startedAt,
-		ReceivedAt:       now.UnixMilli(),
-		ReceivedUnixNano: now.UnixNano(),
+		EventID:                   uuid.NewString(),
+		HookEventName:             payload.HookEventName,
+		SessionID:                 payload.SessionID,
+		TurnID:                    strings.TrimSpace(payload.TurnID),
+		AgentID:                   strings.TrimSpace(payload.AgentID),
+		AgentType:                 strings.TrimSpace(payload.AgentType),
+		ToolName:                  strings.TrimSpace(payload.ToolName),
+		Cwd:                       normalizeProjectManagerProjectPath(payload.Cwd),
+		TranscriptPath:            projectManagerCodexNullablePath(payload.TranscriptPath),
+		PlanImplementationPending: projectManagerCodexPlanImplementationPending(payload),
+		CodexPID:                  pid,
+		CodexStartedAt:            startedAt,
+		ReceivedAt:                now.UnixMilli(),
+		ReceivedUnixNano:          now.UnixNano(),
 	}
 
 	eventDir, err := projectManagerCodexEventRootPath()
@@ -104,6 +108,17 @@ func RunProjectManagerCodexHookReceiver(reader io.Reader) error {
 	}
 	fileName := fmt.Sprintf("%020d-%s.json", event.ReceivedUnixNano, event.EventID)
 	return AtomicWriteJSON(filepath.Join(eventDir, fileName), event)
+}
+
+func projectManagerCodexPlanImplementationPending(payload projectManagerCodexHookPayload) bool {
+	if !strings.EqualFold(strings.TrimSpace(payload.HookEventName), "stop") ||
+		!strings.EqualFold(strings.TrimSpace(payload.PermissionMode), "plan") {
+		return false
+	}
+	// 计划确认弹窗由 Codex TUI 在 Stop 后本地生成，不会再发送 request_user_input。
+	// 这里只把 assistant 正文归约为状态位，避免计划内容写入 CodeSwitch 的事件文件。
+	message, ok := payload.LastAssistantMessage.(string)
+	return ok && strings.Contains(message, "<proposed_plan>")
 }
 
 func projectManagerCodexNullablePath(value any) string {

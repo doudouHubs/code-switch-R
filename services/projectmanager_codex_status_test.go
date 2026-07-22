@@ -283,6 +283,46 @@ func TestRunProjectManagerCodexHookReceiverWritesSanitizedEvent(t *testing.T) {
 	}
 }
 
+func TestRunProjectManagerCodexHookReceiverMarksPlanImplementationPending(t *testing.T) {
+	setProjectManagerCodexTestHome(t)
+	payload := `{
+  "hook_event_name":"Stop",
+  "session_id":"session-1",
+  "turn_id":"turn-1",
+  "cwd":"F:/work/demo/",
+  "permission_mode":"plan",
+  "last_assistant_message":"<proposed_plan>must-not-be-persisted</proposed_plan>"
+}`
+	if err := RunProjectManagerCodexHookReceiver(strings.NewReader(payload)); err != nil {
+		t.Fatalf("receive hook: %v", err)
+	}
+	eventRoot, err := projectManagerCodexEventRootPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(eventRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("event files = %d, want 1", len(entries))
+	}
+	data, err := os.ReadFile(filepath.Join(eventRoot, entries[0].Name()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(data, []byte("must-not-be-persisted")) {
+		t.Fatal("hook event persisted last assistant message")
+	}
+	var event projectManagerCodexHookEvent
+	if err := json.Unmarshal(data, &event); err != nil {
+		t.Fatal(err)
+	}
+	if !event.PlanImplementationPending {
+		t.Fatalf("plan implementation pending = %t, want true", event.PlanImplementationPending)
+	}
+}
+
 func TestProjectManagerCodexStatusStateMachine(t *testing.T) {
 	service := newProjectManagerCodexStatusService()
 	service.monitor.AgentHooksSupported = true
@@ -344,6 +384,31 @@ func TestProjectManagerCodexStatusStateMachine(t *testing.T) {
 	}
 	if service.applyEvent(event("UserPromptSubmit", 2)) {
 		t.Fatal("stale event was applied")
+	}
+}
+
+func TestProjectManagerCodexStatusStateMachineKeepsPlanImplementationPending(t *testing.T) {
+	service := newProjectManagerCodexStatusService()
+	service.applyEvent(projectManagerCodexHookEvent{
+		EventID:          "prompt",
+		HookEventName:    "UserPromptSubmit",
+		SessionID:        "session-1",
+		TurnID:           "turn-1",
+		ReceivedAt:       1,
+		ReceivedUnixNano: 1,
+	})
+	service.applyEvent(projectManagerCodexHookEvent{
+		EventID:                   "stop",
+		HookEventName:             "Stop",
+		SessionID:                 "session-1",
+		TurnID:                    "turn-1",
+		PlanImplementationPending: true,
+		ReceivedAt:                2,
+		ReceivedUnixNano:          2,
+	})
+	status := service.sessions["session-1"]
+	if status.State != CodexRuntimeWaitingUserInput || status.TurnStatus != "completed" {
+		t.Fatalf("plan implementation status = %#v", status)
 	}
 }
 
@@ -432,5 +497,25 @@ func TestReconcileProjectManagerCodexTranscriptDetectsPendingUserInput(t *testin
 	}
 	if resolvedStatus.State != CodexRuntimeActive {
 		t.Fatalf("resolved state = %s", resolvedStatus.State)
+	}
+}
+
+func TestReconcileProjectManagerCodexTranscriptPreservesPlanImplementationPending(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	completed := `{"type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-1"}}`
+	if err := os.WriteFile(path, []byte(completed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	status := &CodexSessionRuntimeStatus{
+		TurnID:         "turn-1",
+		State:          CodexRuntimeWaitingUserInput,
+		TurnStatus:     "completed",
+		TranscriptPath: path,
+	}
+	if reconcileProjectManagerCodexTranscript(status) {
+		t.Fatal("task_complete overwrote plan implementation pending state")
+	}
+	if status.State != CodexRuntimeWaitingUserInput || status.TurnStatus != "completed" {
+		t.Fatalf("plan implementation status = %#v", status)
 	}
 }

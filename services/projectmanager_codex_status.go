@@ -238,7 +238,13 @@ func (s *projectManagerCodexStatusService) applyEvent(event projectManagerCodexH
 			status.State = CodexRuntimeActive
 		}
 	case "stop":
-		status.State = CodexRuntimeIdle
+		// Plan 模式的确认框在回合完成后由 TUI 本地显示；核心不会再发用户输入事件。
+		// 保留 completed 可准确表达回合已结束，同时用 waiting_user_input 提示用户仍需决定下一步。
+		if event.PlanImplementationPending {
+			status.State = CodexRuntimeWaitingUserInput
+		} else {
+			status.State = CodexRuntimeIdle
+		}
 		status.TurnStatus = "completed"
 		status.LastError = ""
 		status.ActiveAgents = 0
@@ -356,7 +362,9 @@ func reconcileProjectManagerCodexTranscript(status *CodexSessionRuntimeStatus) b
 			status.UpdatedAt = time.Now().UnixMilli()
 			return true
 		case "task_complete", "turn_complete":
-			if status.TurnStatus == "completed" && status.State == CodexRuntimeIdle {
+			// Stop Hook 已识别到计划确认框时，转录里的完成事件不能把待确认状态回填为 idle。
+			if status.TurnStatus == "completed" &&
+				(status.State == CodexRuntimeIdle || status.State == CodexRuntimeWaitingUserInput) {
 				return false
 			}
 			status.TurnStatus = "completed"

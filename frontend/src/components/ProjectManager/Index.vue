@@ -41,6 +41,7 @@ import {
   type ProjectSessionSearchResult,
   type SessionSummary,
   type CodexProjectRuntimeStatus,
+  type CodexRuntimeState,
   type CodexRuntimeStatusSnapshot,
   type CodexSessionRuntimeStatus,
 } from "../../services/projectManager";
@@ -174,19 +175,44 @@ const resolveCodexProjectStatus = (projectPath: string) =>
     normalizeCodexProjectPathKey(projectPath),
   );
 
-const resolveProjectCardStatusGroup = (projectPath: string): 0 | 1 | 2 => {
-  const state = resolveCodexProjectStatus(projectPath)?.state;
+type CodexCardStatusGroup = "running" | "idle" | "not_loaded";
+
+const resolveCodexCardStatusGroup = (
+  state: CodexRuntimeState | undefined,
+): CodexCardStatusGroup => {
   if (
     state === "active" ||
     state === "waiting_approval" ||
     state === "waiting_user_input"
   ) {
-    return 0;
+    return "running";
   }
   if (state === "idle" || state === "system_error") {
-    return 1;
+    return "idle";
   }
-  return 2;
+  return "not_loaded";
+};
+
+const groupCardsByCodexStatus = <T>(
+  cards: T[],
+  resolveState: (card: T) => CodexRuntimeState | undefined,
+) => {
+  const cardsByGroup: Record<CodexCardStatusGroup, T[]> = {
+    running: [],
+    idle: [],
+    not_loaded: [],
+  };
+
+  cards.forEach((card) => {
+    cardsByGroup[resolveCodexCardStatusGroup(resolveState(card))].push(card);
+  });
+
+  // 桶分组仅决定三类卡片的前后关系，组内不按细分状态或更新时间重排，避免来回跳动。
+  return [
+    ...cardsByGroup.running,
+    ...cardsByGroup.idle,
+    ...cardsByGroup.not_loaded,
+  ];
 };
 
 const selectedProject = computed(
@@ -238,34 +264,17 @@ const matchesKeyword = (fields: Array<string | undefined>, keyword: string) => {
 
 const projectCards = computed(() => {
   const keyword = normalizedKeyword.value;
-  const runningProjects: ProjectSummary[] = [];
-  const idleProjects: ProjectSummary[] = [];
-  const notLoadedProjects: ProjectSummary[] = [];
+  const filteredProjects = snapshotProjects.value.filter((project) =>
+    matchesKeyword(
+      [project.display_name, project.source_name, project.path],
+      keyword,
+    ),
+  );
 
-  snapshotProjects.value.forEach((project) => {
-    if (
-      !matchesKeyword(
-        [project.display_name, project.source_name, project.path],
-        keyword,
-      )
-    ) {
-      return;
-    }
-
-    // 桶分组仅决定三类项目的前后关系，避免同组卡片因细分状态或更新时间来回跳动。
-    switch (resolveProjectCardStatusGroup(project.path)) {
-      case 0:
-        runningProjects.push(project);
-        break;
-      case 1:
-        idleProjects.push(project);
-        break;
-      default:
-        notLoadedProjects.push(project);
-    }
-  });
-
-  return [...runningProjects, ...idleProjects, ...notLoadedProjects];
+  return groupCardsByCodexStatus(
+    filteredProjects,
+    (project) => resolveCodexProjectStatus(project.path)?.state,
+  );
 });
 
 const currentProjectSessions = computed(() => {
@@ -274,12 +283,16 @@ const currentProjectSessions = computed(() => {
   const projectSessions = snapshotSessions.value.filter(
     (session) => !projectId || session.project_id === projectId,
   );
-  if (!keyword || !projectSessionSearchResolved.value) {
-    return projectSessions;
-  }
-
   const matchedSessions = projectSessionSearchResultByID.value;
-  return projectSessions.filter((session) => matchedSessions.has(session.id));
+  const filteredSessions =
+    !keyword || !projectSessionSearchResolved.value
+      ? projectSessions
+      : projectSessions.filter((session) => matchedSessions.has(session.id));
+
+  return groupCardsByCodexStatus(
+    filteredSessions,
+    (session) => resolveCodexSessionStatus(session.id)?.state,
+  );
 });
 
 const flatSessionCards = computed(() => {
