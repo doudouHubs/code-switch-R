@@ -174,6 +174,21 @@ const resolveCodexProjectStatus = (projectPath: string) =>
     normalizeCodexProjectPathKey(projectPath),
   );
 
+const resolveProjectCardStatusGroup = (projectPath: string): 0 | 1 | 2 => {
+  const state = resolveCodexProjectStatus(projectPath)?.state;
+  if (
+    state === "active" ||
+    state === "waiting_approval" ||
+    state === "waiting_user_input"
+  ) {
+    return 0;
+  }
+  if (state === "idle" || state === "system_error") {
+    return 1;
+  }
+  return 2;
+};
+
 const selectedProject = computed(
   () =>
     snapshotProjects.value.find(
@@ -223,12 +238,34 @@ const matchesKeyword = (fields: Array<string | undefined>, keyword: string) => {
 
 const projectCards = computed(() => {
   const keyword = normalizedKeyword.value;
-  return snapshotProjects.value.filter((project) =>
-    matchesKeyword(
-      [project.display_name, project.source_name, project.path],
-      keyword,
-    ),
-  );
+  const runningProjects: ProjectSummary[] = [];
+  const idleProjects: ProjectSummary[] = [];
+  const notLoadedProjects: ProjectSummary[] = [];
+
+  snapshotProjects.value.forEach((project) => {
+    if (
+      !matchesKeyword(
+        [project.display_name, project.source_name, project.path],
+        keyword,
+      )
+    ) {
+      return;
+    }
+
+    // 桶分组仅决定三类项目的前后关系，避免同组卡片因细分状态或更新时间来回跳动。
+    switch (resolveProjectCardStatusGroup(project.path)) {
+      case 0:
+        runningProjects.push(project);
+        break;
+      case 1:
+        idleProjects.push(project);
+        break;
+      default:
+        notLoadedProjects.push(project);
+    }
+  });
+
+  return [...runningProjects, ...idleProjects, ...notLoadedProjects];
 });
 
 const currentProjectSessions = computed(() => {
