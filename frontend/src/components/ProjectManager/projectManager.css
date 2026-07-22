@@ -331,17 +331,17 @@
 
 .project-manager-page .project-grid,
 .project-manager-page .session-grid {
-  display: grid;
-  gap: 18px;
+  position: relative;
+  width: 100%;
   margin-top: 20px;
 }
 
-.project-manager-page .project-grid {
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
-}
-
-.project-manager-page .session-grid {
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+.project-manager-page .project-grid > .project-card,
+.project-manager-page .session-grid > .session-card {
+  position: absolute;
+  top: 0;
+  left: 0;
+  margin: 0;
 }
 
 .project-manager-page .project-card,
@@ -372,9 +372,16 @@
 
 .project-manager-page .project-card:hover,
 .project-manager-page .session-card:hover {
+  z-index: 2;
   transform: translateY(-4px);
   box-shadow: 0 26px 48px rgba(32, 45, 69, 0.18);
   border-color: rgba(47, 123, 248, 0.35);
+}
+
+.project-manager-page .project-card:focus-within,
+.project-manager-page .session-card:focus-within {
+  /* 菜单弹层属于卡片内部，提升当前卡片层级可避免被后渲染的相邻卡片盖住。 */
+  z-index: 4;
 }
 
 .project-manager-page .session-card.is-opening {
@@ -513,7 +520,6 @@
 
 .project-manager-page .card-summary {
   flex: 1;
-  min-height: 74px;
   color: var(--mac-text);
   display: -webkit-box;
   overflow: hidden;

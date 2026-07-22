@@ -3,6 +3,7 @@ import { useI18n } from 'vue-i18n'
 import ProjectManagerCardMenu from './ProjectManagerCardMenu.vue'
 import ProjectManagerCodexStatusLight from './ProjectManagerCodexStatusLight.vue'
 import ProjectManagerHighlightedText from './ProjectManagerHighlightedText.vue'
+import ProjectManagerMasonryGrid from './ProjectManagerMasonryGrid.vue'
 import type {
   CodexSessionRuntimeStatus,
   CodexStatusMonitorInfo,
@@ -76,7 +77,7 @@ const emitOpenDetail = (session: SessionSummary) => {
 </script>
 
 <template>
-  <section class="session-grid">
+  <ProjectManagerMasonryGrid class="session-grid" :min-column-width="280" :gap="18">
     <article
       v-for="session in sessions"
       :key="session.id"
@@ -141,5 +142,5 @@ const emitOpenDetail = (session: SessionSummary) => {
         </button>
       </div>
     </article>
-  </section>
+  </ProjectManagerMasonryGrid>
 </template>

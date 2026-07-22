@@ -3,6 +3,7 @@ import { useI18n } from 'vue-i18n'
 import ProjectManagerCardMenu from './ProjectManagerCardMenu.vue'
 import ProjectManagerCodexStatusLight from './ProjectManagerCodexStatusLight.vue'
 import ProjectManagerHighlightedText from './ProjectManagerHighlightedText.vue'
+import ProjectManagerMasonryGrid from './ProjectManagerMasonryGrid.vue'
 import type {
   CodexProjectRuntimeStatus,
   CodexSessionRuntimeStatus,
@@ -83,7 +84,7 @@ const handleProjectAction = (project: ProjectSummary, actionKey: string) => {
 </script>
 
 <template>
-  <section class="project-grid">
+  <ProjectManagerMasonryGrid class="project-grid" :min-column-width="340" :gap="18">
     <article
       v-for="project in projects"
       :key="project.id"
@@ -175,5 +176,5 @@ const handleProjectAction = (project: ProjectSummary, actionKey: string) => {
         </div>
       </div>
     </article>
-  </section>
+  </ProjectManagerMasonryGrid>
 </template>
