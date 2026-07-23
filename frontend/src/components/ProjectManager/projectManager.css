@@ -1604,6 +1604,11 @@
   padding-bottom: 14px;
 }
 
+.project-manager-page .conversation-virtual-row.has-open-turn-usage {
+  /* 每行的 translateY 会创建独立层叠上下文；提升当前行才能让内部浮层跨过后续消息行。 */
+  z-index: 4;
+}
+
 .project-manager-page .message-entry {
   display: flex;
   align-items: flex-start;

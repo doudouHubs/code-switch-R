@@ -18,7 +18,7 @@ const (
 	projectManagerUIACLSCTXInProcServer      = 0x1
 	projectManagerUIACoInitApartmentThreaded = 0x2
 	projectManagerUIASFalse                  = 0x1
-	projectManagerUIARPCChangedMode           = 0x80010106
+	projectManagerUIARPCChangedMode          = 0x80010106
 	projectManagerUIATreeScopeDescendants    = 0x4
 	projectManagerUIAControlTypePropertyID   = 30003
 	projectManagerUIATabItemControlTypeID    = 50019

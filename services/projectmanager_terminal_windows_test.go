@@ -740,6 +740,35 @@ func TestTryReuseProjectManagerSessionTerminalSkipsInactiveRuntimeBeforeFocus(t 
 	}
 }
 
+func TestTryReuseProjectManagerSessionTerminalRejectsLegacyRuntimeWithoutStableTabID(t *testing.T) {
+	home := setupProjectManagerTestHome(t)
+	service := NewProjectManagerService()
+	sessionID := "session-legacy"
+	runtimePath := filepath.Join(home, ".code-switch", "project-manager-runtime", sessionID+".json")
+	runtimeContent := `{"session_id":"session-legacy","shell_pid":45678,"launch_source":"project-manager","window_id":"codeswitch-project-deadbeef","tab_title":"[PM]session-legacy - Old"}`
+	if err := AtomicWriteText(runtimePath, runtimeContent); err != nil {
+		t.Fatalf("写入 runtime fixture 失败: %v", err)
+	}
+
+	originalSnapshot := projectManagerSnapshotProcesses
+	t.Cleanup(func() {
+		projectManagerSnapshotProcesses = originalSnapshot
+	})
+	projectManagerSnapshotProcesses = func() (map[uint32]projectManagerProcessEntry, error) {
+		return map[uint32]projectManagerProcessEntry{
+			45678: {PID: 45678, ExeFile: "pwsh.exe"},
+		}, nil
+	}
+
+	reused, err := service.tryReuseProjectManagerSessionTerminal(SessionSummary{ID: sessionID})
+	if reused {
+		t.Fatal("缺少稳定 tab 身份的旧 runtime 不应被当成已精确复用")
+	}
+	if err == nil || !strings.Contains(err.Error(), "无法精确定位") {
+		t.Fatalf("旧 runtime 应返回明确定位错误，got=%v", err)
+	}
+}
+
 func decodeProjectManagerPowerShellEncodedCommand(t *testing.T, encoded string) string {
 	t.Helper()
 

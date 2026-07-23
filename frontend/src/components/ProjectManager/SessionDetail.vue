@@ -1020,7 +1020,10 @@ onBeforeUnmount(() => {
           v-for="entry in virtualMessages"
           :key="getVirtualRowKey(entry.row)"
           :ref="element => setMessageRowRef(entry.entry.id, element)"
-          class="conversation-virtual-row"
+          :class="[
+            'conversation-virtual-row',
+            { 'has-open-turn-usage': isTurnUsageOpen(entry.entry.item.id) },
+          ]"
           :data-index="entry.row.index"
           :style="{ transform: `translateY(${entry.row.start}px)` }"
         >

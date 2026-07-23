@@ -23,11 +23,11 @@ const projectManagerTerminalScriptDir = "project-manager-terminal-scripts"
 const projectManagerTerminalWrapperDir = "project-manager-terminal-wrappers"
 
 var (
-	projectManagerWTExecutableOnce  sync.Once
-	projectManagerWTExecutablePath  string
-	projectManagerWTExecutableReady bool
-	projectManagerLookPath          = exec.LookPath
-	projectManagerSessionTerminalTabBinder = bindProjectManagerSessionTerminalTab
+	projectManagerWTExecutableOnce              sync.Once
+	projectManagerWTExecutablePath              string
+	projectManagerWTExecutableReady             bool
+	projectManagerLookPath                      = exec.LookPath
+	projectManagerSessionTerminalTabBinder      = bindProjectManagerSessionTerminalTab
 	projectManagerProjectTerminalTabSnapshotter = func(
 		service *ProjectManagerService,
 		session SessionSummary,
