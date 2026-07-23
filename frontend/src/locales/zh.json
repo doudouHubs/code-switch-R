@@ -168,9 +168,7 @@
     },
     "main": {
       "hero": {
-        "eyebrow": "Claude & Codex 供应商总览",
-        "title": "实时掌握 AI 编程供给",
-        "lead": "下方绿砖墙展示每日算力与额度消耗情况，帮助我们快速洞察不同供应商的负载趋势"
+        "eyebrow": "Claude & Codex 供应商总览"
       },
       "heatmap": {
         "ariaLabel": "每日算力消耗热力图",
@@ -503,6 +501,23 @@
         "forking": "Fork 中...",
         "forkSuccess": "已创建 fork 并打开终端",
         "forkUnavailable": "这段历史缺少 turn_id，无法使用原生 fork",
+        "turnUsage": {
+          "tokenUnit": "Token",
+          "unavailable": "Token --",
+          "openDetails": "查看本轮 Token 明细",
+          "detailsLabel": "本轮 Token 明细",
+          "total": "本轮总计",
+          "input": "输入",
+          "output": "输出",
+          "cachedInput": "缓存输入",
+          "reasoningOutput": "推理输出",
+          "modelCalls": "模型调用",
+          "duration": "耗时",
+          "durationSeconds": "{count} 秒",
+          "durationMinutes": "{minutes} 分 {seconds} 秒",
+          "partial": "未完成",
+          "partialNote": "该任务轮次尚未结束，当前仅显示已累计的 Token。"
+        },
         "copyConversationTitle": "复制对话内容",
         "copySuccess": "已复制对话内容",
         "copyUnavailable": "这条对话没有可复制的文字",
@@ -640,7 +655,6 @@
         "language": "界面语言",
         "theme": "主题模式",
         "heatmap": "显示主界面热力墙",
-        "homeTitle": "显示首页标题",
         "budgetTotal": "预算总额",
         "budgetTotalHint": "用于托盘菜单进度条（USD）",
         "budgetUsedAdjustment": "已用额度调整",

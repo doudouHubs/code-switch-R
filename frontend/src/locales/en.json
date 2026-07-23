@@ -167,9 +167,7 @@
     },
     "main": {
       "hero": {
-        "eyebrow": "Claude & Codex vendor overview",
-        "title": "Stay on top of AI coding supply.",
-        "lead": "The green heatmap highlights daily compute and token usage so we can monitor each vendor's load."
+        "eyebrow": "Claude & Codex vendor overview"
       },
       "heatmap": {
         "ariaLabel": "Daily compute consumption heatmap",
@@ -502,6 +500,23 @@
         "forking": "Forking...",
         "forkSuccess": "Fork created and terminal opened",
         "forkUnavailable": "This history segment has no turn_id, so native fork is unavailable",
+        "turnUsage": {
+          "tokenUnit": "Tokens",
+          "unavailable": "Token --",
+          "openDetails": "Show turn Token details",
+          "detailsLabel": "Turn Token details",
+          "total": "Turn total",
+          "input": "Input",
+          "output": "Output",
+          "cachedInput": "Cached input",
+          "reasoningOutput": "Reasoning output",
+          "modelCalls": "Model calls",
+          "duration": "Duration",
+          "durationSeconds": "{count}s",
+          "durationMinutes": "{minutes}m {seconds}s",
+          "partial": "Partial",
+          "partialNote": "This turn has not completed; only accumulated Token usage is shown."
+        },
         "copyConversationTitle": "Copy conversation text",
         "copySuccess": "Conversation text copied",
         "copyUnavailable": "This conversation item has no text to copy",
@@ -641,7 +656,6 @@
         "startup": "Started when logged in",
         "theme": "Theme mode",
         "heatmap": "Show dashboard heatmap",
-        "homeTitle": "Show home title",
         "budgetTotal": "Budget total",
         "budgetTotalHint": "Used for tray menu progress (USD)",
         "budgetUsedAdjustment": "Manual used adjustment",

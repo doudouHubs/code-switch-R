@@ -65,30 +65,42 @@ func focusProjectManagerTerminalWindowWithProcesses(
 	session SessionSummary,
 	processes map[uint32]projectManagerProcessEntry,
 ) error {
-	if err := validateProjectManagerSessionRuntime(runtime, processes); err != nil {
-		return err
-	}
-
-	terminalPID, err := findProjectManagerTerminalPID(runtime.ShellPID, processes)
-	if err != nil {
-		return err
-	}
-
-	windowHandle, windowTitle, err := findProjectManagerMainWindow(terminalPID, buildProjectManagerWindowTitleHints(runtime, session))
+	windowHandle, windowTitle, err := findProjectManagerTerminalWindowWithProcesses(runtime, session, processes)
 	if err != nil {
 		return err
 	}
 
 	log.Printf(
-		"[ProjectManager] 激活 WT 窗口 session=%s shell_pid=%d terminal_pid=%d hwnd=%#x title=%q",
+		"[ProjectManager] 激活 WT 窗口 session=%s shell_pid=%d hwnd=%#x title=%q",
 		session.ID,
 		runtime.ShellPID,
-		terminalPID,
 		uintptr(windowHandle),
 		windowTitle,
 	)
 
 	return projectManagerActivateWindow(windowHandle)
+}
+
+func findProjectManagerTerminalWindowWithProcesses(
+	runtime projectManagerSessionRuntime,
+	session SessionSummary,
+	processes map[uint32]projectManagerProcessEntry,
+) (windows.HWND, string, error) {
+	if err := validateProjectManagerSessionRuntime(runtime, processes); err != nil {
+		return 0, "", err
+	}
+
+	terminalPID, err := findProjectManagerTerminalPID(runtime.ShellPID, processes)
+	if err != nil {
+		return 0, "", err
+	}
+
+	windowHandle, windowTitle, err := findProjectManagerMainWindow(terminalPID, buildProjectManagerWindowTitleHints(runtime, session))
+	if err != nil {
+		return 0, "", err
+	}
+
+	return windowHandle, windowTitle, nil
 }
 
 func buildProjectManagerWindowTitleHints(runtime projectManagerSessionRuntime, session SessionSummary) []string {

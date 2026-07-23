@@ -31,7 +31,6 @@ const getCachedString = (key: string, defaultValue: string): string => {
   return cached !== null ? cached : defaultValue
 }
 const heatmapEnabled = ref(getCachedValue('heatmap', true))
-const homeTitleVisible = ref(getCachedValue('homeTitle', true))
 const autoStartEnabled = ref(getCachedValue('autoStart', false))
 const switchNotifyEnabled = ref(getCachedValue('switchNotify', true)) // 切换通知开关
 const roundRobinEnabled = ref(getCachedValue('roundRobin', false))    // 同 Level 轮询开关
@@ -92,7 +91,6 @@ const loadAppSettings = async () => {
   try {
     const data = await fetchAppSettings()
     heatmapEnabled.value = data?.show_heatmap ?? true
-    homeTitleVisible.value = data?.show_home_title ?? true
     budgetTotal.value = Number(data?.budget_total ?? 0)
     budgetUsedAdjustment.value = Number(data?.budget_used_adjustment ?? 0)
     budgetForecastMethod.value = normalizeBudgetForecastMethod(data?.budget_forecast_method ?? 'cycle')
@@ -120,7 +118,6 @@ const loadAppSettings = async () => {
 
     // 缓存到 localStorage，下次打开时直接显示正确状态
     localStorage.setItem('app-settings-heatmap', String(heatmapEnabled.value))
-    localStorage.setItem('app-settings-homeTitle', String(homeTitleVisible.value))
     localStorage.setItem('app-settings-budgetTotal', String(budgetTotal.value))
     localStorage.setItem('app-settings-budgetUsedAdjustment', String(budgetUsedAdjustment.value))
     localStorage.setItem('app-settings-budgetForecastMethod', budgetForecastMethod.value)
@@ -148,7 +145,6 @@ const loadAppSettings = async () => {
   } catch (error) {
     console.error('failed to load app settings', error)
     heatmapEnabled.value = true
-    homeTitleVisible.value = true
     budgetTotal.value = 0
     budgetUsedAdjustment.value = 0
     budgetForecastMethod.value = 'cycle'
@@ -213,7 +209,8 @@ const persistAppSettings = async () => {
     budgetCycleModeCodex.value = normalizedBudgetCycleModeCodex
     const payload: AppSettings = {
       show_heatmap: heatmapEnabled.value,
-      show_home_title: homeTitleVisible.value,
+      // 首页大标题已经永久移除；继续写入 false 仅为兼容旧版设置文件与服务契约。
+      show_home_title: false,
       budget_total: normalizedBudgetTotal,
       budget_used_adjustment: normalizedBudgetUsedAdjustment,
       budget_forecast_method: normalizedBudgetForecastMethod,
@@ -243,7 +240,6 @@ const persistAppSettings = async () => {
 
     // 更新缓存
     localStorage.setItem('app-settings-heatmap', String(heatmapEnabled.value))
-    localStorage.setItem('app-settings-homeTitle', String(homeTitleVisible.value))
     localStorage.setItem('app-settings-budgetTotal', String(budgetTotal.value))
     localStorage.setItem('app-settings-budgetUsedAdjustment', String(budgetUsedAdjustment.value))
     localStorage.setItem('app-settings-budgetForecastMethod', budgetForecastMethod.value)
@@ -527,17 +523,6 @@ onMounted(async () => {
                 type="checkbox"
                 :disabled="settingsLoading || saveBusy"
                 v-model="heatmapEnabled"
-                @change="persistAppSettings"
-              />
-              <span></span>
-            </label>
-          </ListItem>
-          <ListItem :label="$t('components.general.label.homeTitle')">
-            <label class="mac-switch">
-              <input
-                type="checkbox"
-                :disabled="settingsLoading || saveBusy"
-                v-model="homeTitleVisible"
                 @change="persistAppSettings"
               />
               <span></span>

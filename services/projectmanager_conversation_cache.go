@@ -7,8 +7,8 @@ import (
 )
 
 type projectManagerConversationCacheEntry struct {
-	Signature projectManagerTrackedFile
-	Detail    SessionConversationDetail
+	Signatures map[string]projectManagerTrackedFile
+	Detail     SessionConversationDetail
 }
 
 type projectManagerConversationCacheService struct {
@@ -67,7 +67,7 @@ func (s *ProjectManagerService) loadProjectManagerConversationDetailCache(
 		return SessionConversationDetail{}, false, nil
 	}
 
-	info, err := os.Stat(file.Path)
+	signatures, err := s.projectManagerConversationDetailSignatures(file)
 	if err != nil {
 		if os.IsNotExist(err) {
 			s.invalidateProjectManagerConversationCache(sessionID)
@@ -76,8 +76,7 @@ func (s *ProjectManagerService) loadProjectManagerConversationDetailCache(
 		return SessionConversationDetail{}, false, err
 	}
 
-	signature := projectManagerFileSignature(info)
-	if !projectManagerFileSignatureEquals(cached.Signature, signature) {
+	if !projectManagerConversationSignaturesEqual(cached.Signatures, signatures) {
 		s.invalidateProjectManagerConversationCache(sessionID)
 		return SessionConversationDetail{}, false, nil
 	}
@@ -96,13 +95,58 @@ func (s *ProjectManagerService) saveProjectManagerConversationDetailCache(
 		return
 	}
 
-	info, err := os.Stat(file.Path)
+	signatures, err := s.projectManagerConversationDetailSignatures(file)
 	if err != nil {
 		return
 	}
 
 	s.detailCache.save(sessionID, projectManagerConversationCacheEntry{
-		Signature: projectManagerFileSignature(info),
-		Detail:    detail,
+		Signatures: signatures,
+		Detail:     detail,
 	})
+}
+
+func (s *ProjectManagerService) projectManagerConversationDetailSignatures(
+	file projectManagerConversationFile,
+) (map[string]projectManagerTrackedFile, error) {
+	paths := map[string]struct{}{
+		normalizeProjectManagerTrackedPath(file.Path): {},
+	}
+
+	// 主会话详情会从 rollout 回填 turn_id 和用量，因此 rollout 变化也必须使缓存失效。
+	if !file.IsRollout {
+		rolloutFiles, err := s.findProjectManagerRolloutFilesByID(file.SessionID)
+		if err != nil {
+			return nil, err
+		}
+		for _, rolloutFile := range rolloutFiles {
+			paths[normalizeProjectManagerTrackedPath(rolloutFile.Path)] = struct{}{}
+		}
+	}
+
+	signatures := make(map[string]projectManagerTrackedFile, len(paths))
+	for path := range paths {
+		info, err := os.Stat(path)
+		if err != nil {
+			return nil, err
+		}
+		signatures[path] = projectManagerFileSignature(info)
+	}
+	return signatures, nil
+}
+
+func projectManagerConversationSignaturesEqual(
+	left map[string]projectManagerTrackedFile,
+	right map[string]projectManagerTrackedFile,
+) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for path, leftSignature := range left {
+		rightSignature, ok := right[path]
+		if !ok || !projectManagerFileSignatureEquals(leftSignature, rightSignature) {
+			return false
+		}
+	}
+	return true
 }

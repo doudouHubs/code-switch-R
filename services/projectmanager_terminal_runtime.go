@@ -20,7 +20,7 @@ type projectManagerSessionRuntime struct {
 	LaunchSource   string `json:"launch_source"`
 	WindowID       string `json:"window_id"`
 	TabTitle       string `json:"tab_title"`
-	TabIndex       int    `json:"tab_index"`
+	TabRuntimeID   []int  `json:"tab_runtime_id,omitempty"`
 }
 
 func projectManagerSessionRuntimeRootPath() (string, error) {
@@ -104,4 +104,34 @@ func removeProjectManagerSessionRuntime(sessionID string) error {
 		return err
 	}
 	return nil
+}
+
+func updateProjectManagerSessionRuntimeTabRuntimeID(
+	sessionID string,
+	expectedShellPID uint32,
+	tabRuntimeID []int,
+) error {
+	if len(tabRuntimeID) == 0 {
+		return errors.New("Windows Terminal tab 身份不能为空")
+	}
+
+	runtimePath, err := projectManagerSessionRuntimePath(sessionID)
+	if err != nil {
+		return err
+	}
+
+	var runtime projectManagerSessionRuntime
+	if err := ReadJSONFile(runtimePath, &runtime); err != nil {
+		return err
+	}
+	if strings.TrimSpace(runtime.SessionID) != strings.TrimSpace(sessionID) {
+		return errors.New("运行态会话 ID 不匹配")
+	}
+	if expectedShellPID != 0 && runtime.ShellPID != expectedShellPID {
+		// 会话可能在绑定阶段被用户重新打开；不能把旧 tab 身份写进新 shell 的 runtime。
+		return errors.New("运行态 shell 已变化，放弃写入旧 tab 身份")
+	}
+
+	runtime.TabRuntimeID = append([]int(nil), tabRuntimeID...)
+	return AtomicWriteJSON(runtimePath, runtime)
 }

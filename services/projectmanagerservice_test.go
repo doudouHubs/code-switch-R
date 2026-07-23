@@ -815,6 +815,115 @@ func TestProjectManagerGetSessionConversationDetailRolloutItemsIncludeTurnID(t *
 	}
 }
 
+func TestProjectManagerGetSessionConversationDetailAggregatesRolloutTurnUsage(t *testing.T) {
+	home := setupProjectManagerTestHome(t)
+	service := NewProjectManagerService()
+
+	sessionID := "019ecab9-rollout-usage-case"
+	writeProjectManagerSessionIndex(t, home, sessionID, "Rollout Usage Session", "2026-06-16T10:01:14Z")
+	writeProjectManagerRolloutFixture(t, home, sessionID, "rollout-2026-06-16T10-00-00-"+sessionID+".jsonl", []string{
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:00Z","payload":{"type":"task_started","turn_id":"turn-usage-1"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:01Z","payload":{"type":"user_message","message":"统计这一轮"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:02Z","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":120},"last_token_usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":20,"reasoning_output_tokens":10,"total_tokens":120}}}}`,
+		// 同一累计快照重复写入时不能把一次模型调用翻倍。
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:03Z","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":120},"last_token_usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":20,"reasoning_output_tokens":10,"total_tokens":120}}}}`,
+		// 累计计数回退代表会话恢复后的新片段，必须继续累计本次调用。
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:05Z","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":40},"last_token_usage":{"input_tokens":30,"cached_input_tokens":5,"output_tokens":10,"reasoning_output_tokens":2,"total_tokens":40}}}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:08Z","payload":{"type":"agent_message","message":"统计完成"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:10Z","payload":{"type":"task_complete","turn_id":"turn-usage-1"}}`,
+	})
+
+	detail, err := service.GetSessionConversationDetail(sessionID)
+	if err != nil {
+		t.Fatalf("GetSessionConversationDetail 失败: %v", err)
+	}
+	usage := detail.Items[0].TurnUsage
+	if usage == nil {
+		t.Fatal("用户消息缺少逐轮用量")
+	}
+	if usage.InputTokens != 130 || usage.CachedInputTokens != 25 || usage.OutputTokens != 30 || usage.ReasoningOutputTokens != 12 {
+		t.Fatalf("Token 明细累计不对: %+v", usage)
+	}
+	if usage.TotalTokens != 160 || usage.ModelCalls != 2 {
+		t.Fatalf("总 Token 或模型调用数不对: %+v", usage)
+	}
+	if usage.DurationMS != 10_000 || !usage.Complete {
+		t.Fatalf("轮次结束状态或耗时不对: %+v", usage)
+	}
+	if detail.Items[1].TurnUsage != nil {
+		t.Fatalf("Agent 消息不应重复持有整轮用量: %+v", detail.Items[1])
+	}
+}
+
+func TestProjectManagerGetSessionConversationDetailMarksUnfinishedTurnUsagePartial(t *testing.T) {
+	home := setupProjectManagerTestHome(t)
+	service := NewProjectManagerService()
+
+	sessionID := "019ecab9-rollout-partial-usage-case"
+	writeProjectManagerSessionIndex(t, home, sessionID, "Partial Usage Session", "2026-06-16T10:01:14Z")
+	writeProjectManagerRolloutFixture(t, home, sessionID, "rollout-2026-06-16T10-00-00-"+sessionID+".jsonl", []string{
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:00Z","payload":{"type":"task_started","turn_id":"turn-partial-1"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:01Z","payload":{"type":"user_message","message":"还没结束"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:05Z","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":40},"last_token_usage":{"input_tokens":30,"output_tokens":10,"total_tokens":40}}}}`,
+	})
+
+	detail, err := service.GetSessionConversationDetail(sessionID)
+	if err != nil {
+		t.Fatalf("GetSessionConversationDetail 失败: %v", err)
+	}
+	usage := detail.Items[0].TurnUsage
+	if usage == nil {
+		t.Fatal("未完成轮次仍应返回已累计用量")
+	}
+	if usage.TotalTokens != 40 || usage.ModelCalls != 1 || usage.DurationMS != 5_000 || usage.Complete {
+		t.Fatalf("未完成轮次统计不对: %+v", usage)
+	}
+}
+
+func TestProjectManagerConversationDetailCacheTracksRolloutUsage(t *testing.T) {
+	home := setupProjectManagerTestHome(t)
+	service := NewProjectManagerService()
+
+	sessionID := "019ecab9-primary-usage-cache-case"
+	projectDir := filepath.Join(home, "workspace", "primary-usage-cache")
+	writeProjectManagerConversationFixture(t, home, sessionID, projectDir, []string{
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:01Z","payload":{"type":"user_message","message":"主会话问题"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:05Z","payload":{"type":"agent_message","message":"主会话回答"}}`,
+	})
+	rolloutName := "rollout-2026-06-16T10-00-00-" + sessionID + ".jsonl"
+	writeProjectManagerRolloutFixture(t, home, sessionID, rolloutName, []string{
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:00Z","payload":{"type":"task_started","turn_id":"turn-primary-usage"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:01Z","payload":{"type":"user_message","message":"主会话问题"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:02Z","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":10},"last_token_usage":{"input_tokens":8,"output_tokens":2,"total_tokens":10}}}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:05Z","payload":{"type":"task_complete","turn_id":"turn-primary-usage"}}`,
+	})
+	writeProjectManagerSessionIndex(t, home, sessionID, "Primary Usage Cache Session", "2026-06-16T10:02:14Z")
+
+	first, err := service.GetSessionConversationDetail(sessionID)
+	if err != nil {
+		t.Fatalf("首次 GetSessionConversationDetail 失败: %v", err)
+	}
+	if first.Items[0].TurnUsage == nil || first.Items[0].TurnUsage.TotalTokens != 10 {
+		t.Fatalf("首次 rollout 用量不对: %+v", first.Items[0])
+	}
+
+	writeProjectManagerRolloutFixture(t, home, sessionID, rolloutName, []string{
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:00Z","payload":{"type":"task_started","turn_id":"turn-primary-usage"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:01Z","payload":{"type":"user_message","message":"主会话问题"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:02Z","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":10},"last_token_usage":{"input_tokens":8,"output_tokens":2,"total_tokens":10}}}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:04Z","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":30},"last_token_usage":{"input_tokens":16,"output_tokens":4,"total_tokens":20}}}}`,
+		`{"type":"event_msg","timestamp":"2026-06-16T10:01:05Z","payload":{"type":"task_complete","turn_id":"turn-primary-usage"}}`,
+	})
+
+	second, err := service.GetSessionConversationDetail(sessionID)
+	if err != nil {
+		t.Fatalf("更新 rollout 后 GetSessionConversationDetail 失败: %v", err)
+	}
+	if second.Items[0].TurnUsage == nil || second.Items[0].TurnUsage.TotalTokens != 30 || second.Items[0].TurnUsage.ModelCalls != 2 {
+		t.Fatalf("rollout 变化后详情缓存没有刷新: %+v", second.Items[0])
+	}
+}
+
 func TestProjectManagerGetSessionConversationDetailHydratesPrimaryTurnIDsFromRollout(t *testing.T) {
 	home := setupProjectManagerTestHome(t)
 	service := NewProjectManagerService()

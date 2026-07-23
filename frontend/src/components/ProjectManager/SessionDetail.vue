@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useVirtualizer, type VirtualItem } from '@tanstack/vue-virtual'
@@ -36,6 +36,7 @@ const expandedIDs = ref<string[]>([])
 const selectedIDs = ref<string[]>([])
 const conversationViewport = ref<HTMLElement | null>(null)
 const searchInputRef = ref<HTMLInputElement | null>(null)
+const openTurnUsageID = ref<string | null>(null)
 
 const deleteState = reactive({
   open: false,
@@ -268,6 +269,51 @@ const formatUpdatedAt = (timestamp: number) => {
   return dateFormatter.value.format(new Date(timestamp))
 }
 
+const tokenFormatter = computed(() =>
+  new Intl.NumberFormat(locale.value === 'zh' ? 'zh-CN' : 'en-US'),
+)
+const compactTokenFormatter = computed(() =>
+  new Intl.NumberFormat(locale.value === 'zh' ? 'zh-CN' : 'en-US', {
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }),
+)
+
+const formatTokenNumber = (value: number) => tokenFormatter.value.format(Math.max(0, value || 0))
+
+const formatCompactTokenNumber = (value: number) => compactTokenFormatter.value.format(Math.max(0, value || 0))
+
+const formatTurnDuration = (durationMS: number) => {
+  const totalSeconds = Math.max(0, Math.round((durationMS || 0) / 1000))
+  if (totalSeconds < 60) {
+    return t('components.projectManager.detail.turnUsage.durationSeconds', { count: totalSeconds })
+  }
+
+  return t('components.projectManager.detail.turnUsage.durationMinutes', {
+    minutes: Math.floor(totalSeconds / 60),
+    seconds: totalSeconds % 60,
+  })
+}
+
+const isTurnUsageOpen = (itemID: string) => openTurnUsageID.value === itemID
+
+const toggleTurnUsage = (itemID: string) => {
+  openTurnUsageID.value = isTurnUsageOpen(itemID) ? null : itemID
+}
+
+const closeTurnUsage = () => {
+  openTurnUsageID.value = null
+}
+
+const handleDocumentPointerDown = (event: PointerEvent) => {
+  if (!openTurnUsageID.value || !(event.target instanceof Element)) {
+    return
+  }
+  if (!event.target.closest('.turn-usage')) {
+    closeTurnUsage()
+  }
+}
+
 const findRepliesForUser = (userID: string) =>
   items.value.filter(item => item.reply_for === userID)
 
@@ -310,7 +356,8 @@ const estimateMessageSize = (index: number) => {
     ? Math.min(estimateMessageUnits(item.content), 3)
     : estimateMessageUnits(item.content)
 
-  const baseHeight = compactAgent ? 72 : item.role === 'user' ? 92 : 104
+  // 用户行新增 Token 摘要；预估值略高一点能减少首次滚到底时虚拟列表反复纠偏。
+  const baseHeight = compactAgent ? 72 : item.role === 'user' ? 116 : 104
   return baseHeight + visibleUnits * 24 + (expandable && !compactAgent ? 24 : 0)
 }
 
@@ -604,6 +651,7 @@ const loadDetail = async () => {
   }
 
   loading.value = true
+  closeTurnUsage()
   let loaded = false
   try {
     detail.value = await fetchSessionConversationDetail(sessionID.value)
@@ -796,6 +844,7 @@ const confirmDelete = async () => {
 }
 
 watch(sessionID, () => {
+  closeTurnUsage()
   void loadDetail()
 })
 
@@ -820,7 +869,12 @@ watch(searchMatches, (matches) => {
 })
 
 onMounted(() => {
+  document.addEventListener('pointerdown', handleDocumentPointerDown)
   void loadDetail()
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', handleDocumentPointerDown)
 })
 </script>
 
@@ -1005,6 +1059,7 @@ onMounted(() => {
                     clickable: entry.entry.role === 'agent' && !userOnlyMode && !entry.entry.agentGroup,
                     selected: isEntrySelected(entry.entry),
                     compacted: entry.entry.agentGroup || (userOnlyMode && entry.entry.role === 'agent'),
+                    'has-turn-usage': entry.entry.role === 'user',
                   },
                 ]"
                 :role="!selecting && !userOnlyMode && !entry.entry.agentGroup && entry.entry.role === 'agent' ? 'button' : undefined"
@@ -1035,6 +1090,78 @@ onMounted(() => {
                 >
                   {{ isExpanded(entry.entry.item.id) ? t('components.projectManager.detail.showLess') : t('components.projectManager.detail.showMore') }}
                 </span>
+
+                <!-- 统计标签锚定用户气泡本身，才能和气泡右边缘严格对齐且不挤占元信息行。 -->
+                <div v-if="entry.entry.role === 'user'" class="turn-usage" @click.stop>
+                  <button
+                    v-if="entry.entry.item.turn_usage"
+                    class="turn-usage-trigger"
+                    :class="{ partial: !entry.entry.item.turn_usage.complete }"
+                    type="button"
+                    :aria-expanded="isTurnUsageOpen(entry.entry.item.id)"
+                    aria-haspopup="dialog"
+                    :aria-controls="`turn-usage-${entry.entry.item.id}`"
+                    :title="t('components.projectManager.detail.turnUsage.openDetails')"
+                    @click="toggleTurnUsage(entry.entry.item.id)"
+                    @keydown.escape.stop="closeTurnUsage"
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M5 19V9m5 10V5m5 14v-7m5 7V3" />
+                    </svg>
+                    <span>{{ formatCompactTokenNumber(entry.entry.item.turn_usage.total_tokens) }} {{ t('components.projectManager.detail.turnUsage.tokenUnit') }}</span>
+                    <span>{{ formatTurnDuration(entry.entry.item.turn_usage.duration_ms) }}</span>
+                    <span v-if="!entry.entry.item.turn_usage.complete" class="turn-usage-partial">
+                      {{ t('components.projectManager.detail.turnUsage.partial') }}
+                    </span>
+                  </button>
+                  <span v-else class="turn-usage-unavailable">
+                    {{ t('components.projectManager.detail.turnUsage.unavailable') }}
+                  </span>
+
+                  <div
+                    v-if="entry.entry.item.turn_usage && isTurnUsageOpen(entry.entry.item.id)"
+                    :id="`turn-usage-${entry.entry.item.id}`"
+                    class="turn-usage-popover"
+                    role="dialog"
+                    :aria-label="t('components.projectManager.detail.turnUsage.detailsLabel')"
+                    @click.stop
+                    @keydown.escape.stop="closeTurnUsage"
+                  >
+                    <div class="turn-usage-popover-header">
+                      <strong>{{ t('components.projectManager.detail.turnUsage.total') }}</strong>
+                      <span>{{ formatTokenNumber(entry.entry.item.turn_usage.total_tokens) }} {{ t('components.projectManager.detail.turnUsage.tokenUnit') }}</span>
+                    </div>
+                    <dl class="turn-usage-breakdown">
+                      <div>
+                        <dt>{{ t('components.projectManager.detail.turnUsage.input') }}</dt>
+                        <dd>{{ formatTokenNumber(entry.entry.item.turn_usage.input_tokens) }}</dd>
+                      </div>
+                      <div>
+                        <dt>{{ t('components.projectManager.detail.turnUsage.output') }}</dt>
+                        <dd>{{ formatTokenNumber(entry.entry.item.turn_usage.output_tokens) }}</dd>
+                      </div>
+                      <div>
+                        <dt>{{ t('components.projectManager.detail.turnUsage.cachedInput') }}</dt>
+                        <dd>{{ formatTokenNumber(entry.entry.item.turn_usage.cached_input_tokens) }}</dd>
+                      </div>
+                      <div>
+                        <dt>{{ t('components.projectManager.detail.turnUsage.reasoningOutput') }}</dt>
+                        <dd>{{ formatTokenNumber(entry.entry.item.turn_usage.reasoning_output_tokens) }}</dd>
+                      </div>
+                      <div>
+                        <dt>{{ t('components.projectManager.detail.turnUsage.modelCalls') }}</dt>
+                        <dd>{{ entry.entry.item.turn_usage.model_calls }}</dd>
+                      </div>
+                      <div>
+                        <dt>{{ t('components.projectManager.detail.turnUsage.duration') }}</dt>
+                        <dd>{{ formatTurnDuration(entry.entry.item.turn_usage.duration_ms) }}</dd>
+                      </div>
+                    </dl>
+                    <p v-if="!entry.entry.item.turn_usage.complete" class="turn-usage-partial-note">
+                      {{ t('components.projectManager.detail.turnUsage.partialNote') }}
+                    </p>
+                  </div>
+                </div>
               </div>
 
               <div

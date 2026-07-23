@@ -9,6 +9,7 @@ import type {
   CodexSessionRuntimeStatus,
   CodexStatusMonitorInfo,
   ProjectSummary,
+  SessionSummary,
 } from '../../services/projectManager'
 
 type ProjectManagerCardMenuAction = {
@@ -28,6 +29,9 @@ const props = defineProps<{
   codexMonitor: CodexStatusMonitorInfo
   resolveCodexProjectStatus: (projectPath: string) => CodexProjectRuntimeStatus | undefined
   resolveCodexSessionStatus: (sessionId: string) => CodexSessionRuntimeStatus | undefined
+  resolveProjectLoadedSessions: (project: ProjectSummary) => SessionSummary[]
+  isSessionOpening: (sessionId: string) => boolean
+  isSessionDeleting: (sessionId: string) => boolean
 }>()
 
 const emit = defineEmits<{
@@ -38,6 +42,7 @@ const emit = defineEmits<{
   'run-command': [project: ProjectSummary]
   'edit-run-command': [project: ProjectSummary]
   commit: [project: ProjectSummary]
+  'open-session': [session: SessionSummary]
 }>()
 
 const { t } = useI18n()
@@ -46,6 +51,9 @@ const resolveLatestSessionStatus = (projectPath: string) => {
   const sessionID = props.resolveCodexProjectStatus(projectPath)?.latest_session_id
   return sessionID ? props.resolveCodexSessionStatus(sessionID) : undefined
 }
+
+const resolveSessionTagLabel = (session: SessionSummary) =>
+  session.display_name.trim() || session.id
 
 const resolveProjectActions = (project: ProjectSummary): ProjectManagerCardMenuAction[] => [
   {
@@ -148,6 +156,32 @@ const handleProjectAction = (project: ProjectSummary, actionKey: string) => {
             }}
           </strong>
         </p>
+        <div
+          v-if="resolveProjectLoadedSessions(project).length"
+          class="project-session-tags"
+          @click.stop
+        >
+          <button
+            v-for="session in resolveProjectLoadedSessions(project)"
+            :key="session.id"
+            class="project-session-tag"
+            type="button"
+            :title="resolveSessionTagLabel(session)"
+            :aria-label="`${t('components.projectManager.card.openSession')}: ${resolveSessionTagLabel(session)}`"
+            :disabled="
+              isProjectDeleting(project.id) ||
+              isSessionOpening(session.id) ||
+              isSessionDeleting(session.id)
+            "
+            @click.stop="emit('open-session', session)"
+          >
+            <ProjectManagerCodexStatusLight
+              :monitor="codexMonitor"
+              :session-status="resolveCodexSessionStatus(session.id)"
+            />
+            <span class="project-session-tag-label">{{ resolveSessionTagLabel(session) }}</span>
+          </button>
+        </div>
       </div>
       <div class="card-footer">
         <span class="card-time">{{ formatUpdatedAt(project.updated_at) }}</span>

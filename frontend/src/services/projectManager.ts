@@ -39,8 +39,20 @@ export interface SessionConversationItem {
   timestamp: number;
   reply_for: string;
   turn_id: string;
+  turn_usage?: SessionConversationTurnUsage;
   source_file: string;
   source_line: number;
+}
+
+export interface SessionConversationTurnUsage {
+  input_tokens: number;
+  cached_input_tokens: number;
+  output_tokens: number;
+  reasoning_output_tokens: number;
+  total_tokens: number;
+  model_calls: number;
+  duration_ms: number;
+  complete: boolean;
 }
 
 export interface SessionConversationDetail {

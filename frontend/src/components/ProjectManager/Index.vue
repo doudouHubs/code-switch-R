@@ -175,6 +175,63 @@ const resolveCodexProjectStatus = (projectPath: string) =>
     normalizeCodexProjectPathKey(projectPath),
   );
 
+const sessionSummaryByID = computed(
+  () => new Map(snapshotSessions.value.map((session) => [session.id, session])),
+);
+
+const createRuntimeSessionSummary = (
+  project: ProjectSummary,
+  status: CodexSessionRuntimeStatus,
+): SessionSummary => ({
+  id: status.session_id,
+  project_id: project.id,
+  project_path: project.path,
+  project_name: project.display_name,
+  source_name: status.session_id,
+  display_name: status.session_id,
+  summary: "",
+  latest_user_message: "",
+  updated_at: status.updated_at,
+  window_id: "",
+  cwd: status.project_path || project.path,
+  last_capture_path: "",
+  project_source_hint: "runtime",
+});
+
+const loadedProjectSessionsByProjectID = computed(() => {
+  const projectsByPath = new Map(
+    snapshotProjects.value.map((project) => [
+      normalizeCodexProjectPathKey(project.path),
+      project,
+    ]),
+  );
+  const sessionsByProjectID = new Map<string, SessionSummary[]>();
+  codexRuntimeSnapshot.value.sessions.forEach((status) => {
+    if (status.state === "not_loaded") {
+      return;
+    }
+    const project = projectsByPath.get(
+      normalizeCodexProjectPathKey(status.project_path),
+    );
+    if (!project) {
+      return;
+    }
+    // Hook 状态先于项目扫描缓存到达时，也必须立即展示可恢复的会话标签。
+    const session =
+      sessionSummaryByID.value.get(status.session_id) ??
+      createRuntimeSessionSummary(project, status);
+    const sessions = sessionsByProjectID.get(project.id) ?? [];
+    sessions.push(session);
+    sessionsByProjectID.set(project.id, sessions);
+  });
+  return sessionsByProjectID;
+});
+
+const resolveProjectLoadedSessions = (project: ProjectSummary) => {
+  // 运行态是会话是否仍加载的唯一事实来源；not_loaded 会在 CLI 或终端退出后被监控器写入。
+  return loadedProjectSessionsByProjectID.value.get(project.id) ?? [];
+};
+
 type CodexCardStatusGroup = "running" | "idle" | "not_loaded";
 
 const resolveCodexCardStatusGroup = (
@@ -1076,6 +1133,9 @@ onBeforeUnmount(() => {
       :codex-monitor="codexRuntimeSnapshot.monitor"
       :resolve-codex-project-status="resolveCodexProjectStatus"
       :resolve-codex-session-status="resolveCodexSessionStatus"
+      :resolve-project-loaded-sessions="resolveProjectLoadedSessions"
+      :is-session-opening="isSessionOpening"
+      :is-session-deleting="isSessionDeleting"
       @enter="enterProject"
       @delete="openDeleteModal('project', $event)"
       @open-folder="handleOpenProjectFolder"
@@ -1083,6 +1143,7 @@ onBeforeUnmount(() => {
       @run-command="handleRunProjectCommand"
       @edit-run-command="openRunCommandModal"
       @commit="handleRunProjectAICommit"
+      @open-session="handleOpenSession"
     />
 
     <ProjectManagerSessionGrid

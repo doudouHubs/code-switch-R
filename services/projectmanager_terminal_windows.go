@@ -17,24 +17,23 @@ import (
 	"unicode/utf16"
 )
 
-const projectManagerWTFocusTimeout = 350 * time.Millisecond
 const projectManagerCodexDangerousBypassFlag = "--dangerously-bypass-approvals-and-sandbox"
 const projectManagerWTPowerShellProfile = "{61c54bbd-c2c6-5271-96e7-009a87ff44bf}"
 const projectManagerTerminalScriptDir = "project-manager-terminal-scripts"
 const projectManagerTerminalWrapperDir = "project-manager-terminal-wrappers"
-
-type projectManagerCommandRunner interface {
-	Start() error
-	Wait() error
-}
 
 var (
 	projectManagerWTExecutableOnce  sync.Once
 	projectManagerWTExecutablePath  string
 	projectManagerWTExecutableReady bool
 	projectManagerLookPath          = exec.LookPath
-	projectManagerExecCommand       = func(name string, args ...string) projectManagerCommandRunner {
-		return exec.Command(name, args...)
+	projectManagerSessionTerminalTabBinder = bindProjectManagerSessionTerminalTab
+	projectManagerProjectTerminalTabSnapshotter = func(
+		service *ProjectManagerService,
+		session SessionSummary,
+		runtimes map[string]projectManagerSessionRuntime,
+	) projectManagerTerminalTabBaseline {
+		return service.snapshotProjectManagerProjectTerminalTabs(session, runtimes)
 	}
 	projectManagerWTCommandStarter = startProjectManagerHiddenCommand
 )
@@ -115,31 +114,6 @@ func (s *ProjectManagerService) findProjectManagerProjectRuntime(
 	return projectManagerSessionRuntime{}, false
 }
 
-func (s *ProjectManagerService) countProjectManagerProjectRuntimes(
-	session SessionSummary,
-	runtimes map[string]projectManagerSessionRuntime,
-) int {
-	projectWindowID := projectManagerProjectWindowID(session.ProjectPath)
-	if projectWindowID == "" {
-		projectWindowID = projectManagerProjectWindowID(session.Cwd)
-	}
-	if projectWindowID == "" {
-		return 0
-	}
-
-	count := 0
-	for _, runtime := range runtimes {
-		if !strings.EqualFold(strings.TrimSpace(runtime.LaunchSource), projectManagerRuntimeLaunchSource) {
-			continue
-		}
-		if strings.TrimSpace(runtime.WindowID) != projectWindowID {
-			continue
-		}
-		count++
-	}
-	return count
-}
-
 func (s *ProjectManagerService) openProjectManagerSessionTerminal(session SessionSummary) error {
 	launchDir := projectManagerSessionLaunchDir(session)
 	projectWindowID := projectManagerProjectWindowID(launchDir)
@@ -163,18 +137,17 @@ func (s *ProjectManagerService) openProjectManagerSessionTerminal(session Sessio
 	if err != nil {
 		return fmt.Errorf("读取项目管理器运行态失败: %w", err)
 	}
-	tabIndex := s.countProjectManagerProjectRuntimes(session, activeRuntimes)
-
 	// 这里继续沿用已经验证可用的 wt 打开路径，只在 shell 启动命令最前面挂一层运行态标记。
 	// 这么做是为了准确判断“这个会话现在是否真的开着”，避免点卡片时反复新开重复终端。
 	if wtPath != "" {
+		tabBaseline := projectManagerProjectTerminalTabSnapshotter(s, session, activeRuntimes)
 		if _, ok := s.findProjectManagerProjectRuntime(session, activeRuntimes); ok {
 			log.Printf("[ProjectManager] 同项目窗口已存在，准备追加新 tab session=%s window=%s title=%q", session.ID, projectWindowID, tabTitle)
 		}
 
 		_, wrapperPath, err := createProjectManagerTerminalLaunchFiles(
 			"session-"+session.ID,
-			buildProjectManagerPowerShellLaunchCommand(session.ID, runtimePath, projectWindowID, tabTitle, tabIndex),
+			buildProjectManagerPowerShellLaunchCommand(session.ID, runtimePath, projectWindowID, tabTitle),
 		)
 		if err != nil {
 			return fmt.Errorf("创建项目管理器终端脚本失败: %w", err)
@@ -182,6 +155,9 @@ func (s *ProjectManagerService) openProjectManagerSessionTerminal(session Sessio
 
 		args := buildProjectManagerWTArgs(launchDir, wrapperPath, projectWindowID, tabTitle)
 		if err := startProjectManagerWTCommand(launchDir, wtPath, args); err == nil {
+			// Codex 会覆盖 WT tab 标题，不能等用户下次点击时再反推 tab。
+			// 启动前后的 RuntimeId 差集只在这里可靠，因此异步绑定并持久化稳定身份。
+			go projectManagerSessionTerminalTabBinder(session.ID, runtimePath, projectWindowID, tabTitle, tabBaseline)
 			log.Printf("[ProjectManager] 已启动 WT 会话 tab session=%s window=%s dir=%s title=%q", session.ID, projectWindowID, launchDir, tabTitle)
 			return nil
 		} else {
@@ -189,7 +165,7 @@ func (s *ProjectManagerService) openProjectManagerSessionTerminal(session Sessio
 		}
 	}
 
-	if err := startProjectManagerFallbackTerminal(launchDir, session.ID, runtimePath, projectWindowID, tabTitle, tabIndex); err != nil {
+	if err := startProjectManagerFallbackTerminal(launchDir, session.ID, runtimePath, projectWindowID, tabTitle); err != nil {
 		return fmt.Errorf("启动项目管理器终端失败: %w", err)
 	}
 	log.Printf("[ProjectManager] WT 不可用，已回退到 shell 启动 session=%s dir=%s", session.ID, launchDir)
@@ -317,26 +293,12 @@ func (s *ProjectManagerService) tryReuseProjectManagerSessionTerminal(session Se
 		return false, fmt.Errorf("预检项目管理器运行态失败: %w", err)
 	}
 
-	if wtPath := findProjectManagerWTExecutable(); wtPath != "" && strings.TrimSpace(runtime.WindowID) != "" {
-		if err := focusProjectManagerNamedWTTab(wtPath, runtime, session); err == nil {
-			log.Printf("[ProjectManager] 已通过 WT 项目窗口恢复会话 tab session=%s shell_pid=%d window=%s title=%q", session.ID, runtime.ShellPID, runtime.WindowID, runtime.TabTitle)
-			return true, nil
-		} else {
-			log.Printf("[ProjectManager] WT 命名窗口恢复失败，准备回退 Win32 激活 session=%s shell_pid=%d window=%s title=%q err=%v", session.ID, runtime.ShellPID, runtime.WindowID, runtime.TabTitle, err)
-		}
+	if err := focusProjectManagerBoundTerminalTab(runtime, session, processes); err != nil {
+		// 运行态有效却没有稳定 tab 身份时，不能回退到旧索引或只置顶窗口。
+		// 错 tab 比报错更糟，会让用户在错误会话里继续操作。
+		return false, fmt.Errorf("无法精确定位会话终端 tab: %w", err)
 	}
-
-	if err := focusProjectManagerTerminalWindowWithProcesses(runtime, session, processes); err != nil {
-		// 运行态文件只代表“上次是这个 shell 拉起的会话”，并不保证窗口还活着；
-		// 一旦 shell pid 已失效或 pid 被系统复用，必须先清理脏标记，避免之后每次点击都误判。
-		if errors.Is(err, errProjectManagerRuntimeInactive) {
-			log.Printf("[ProjectManager] runtime 已失效，清理后重新打开 session=%s shell_pid=%d window=%s", session.ID, runtime.ShellPID, runtime.WindowID)
-			_ = removeProjectManagerSessionRuntime(session.ID)
-			return false, nil
-		}
-		return false, fmt.Errorf("已识别到项目管理器终端实例，但恢复窗口失败: %w", err)
-	}
-	log.Printf("[ProjectManager] 已恢复现有终端窗口 session=%s shell_pid=%d window=%s", session.ID, runtime.ShellPID, runtime.WindowID)
+	log.Printf("[ProjectManager] 已精确恢复现有终端 tab session=%s shell_pid=%d window=%s", session.ID, runtime.ShellPID, runtime.WindowID)
 	return true, nil
 }
 
@@ -422,56 +384,12 @@ func resolveProjectManagerWTWindowName(windowID string) string {
 	return trimmed
 }
 
-func focusProjectManagerNamedWTTab(
-	wtPath string,
-	runtime projectManagerSessionRuntime,
-	session SessionSummary,
-) error {
-	windowID := strings.TrimSpace(runtime.WindowID)
-	tabTitle := strings.TrimSpace(runtime.TabTitle)
-	if strings.TrimSpace(wtPath) == "" || windowID == "" || tabTitle == "" {
-		return errors.New("缺少 WT 命名窗口恢复参数")
-	}
-
-	// 这里先让 WT 自己激活项目窗口，再交给 Win32 基于 tab 标题二次兜底定位。
-	// 不直接赌 tab index，是因为同项目下 tab 顺序会持续变化，靠索引早晚翻车。
-	tabIndex := runtime.TabIndex
-	if tabIndex < 0 {
-		tabIndex = 0
-	}
-
-	// 这里故意不再同步傻等 WT CLI 完整退出。
-	// 用户点击卡片最需要的是“窗口立刻有反应”，而 WT 在某些机器上 focus-tab 退出会慢几百毫秒到几秒。
-	// 只要命令已成功启动并进入 WT 处理阶段，就视为复用请求已被接管，后续由 WT/Win32 自己完成切前台。
-	cmd := projectManagerExecCommand(wtPath, "-w", windowID, "focus-tab", "-t", fmt.Sprintf("%d", tabIndex))
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("wt focus-tab 启动失败: %w", err)
-	}
-
-	waitDone := make(chan error, 1)
-	go func() {
-		waitDone <- cmd.Wait()
-	}()
-
-	select {
-	case err := <-waitDone:
-		if err != nil {
-			return fmt.Errorf("wt focus-tab 执行失败: %w", err)
-		}
-	case <-time.After(projectManagerWTFocusTimeout):
-	}
-
-	log.Printf("[ProjectManager] WT 项目窗口激活成功 session=%s window=%s title=%q", session.ID, windowID, tabTitle)
-	return nil
-}
-
 func startProjectManagerFallbackTerminal(
 	launchDir string,
 	sessionID string,
 	runtimePath string,
 	windowID string,
 	tabTitle string,
-	tabIndex int,
 ) error {
 	shellExecutable, err := projectManagerRequiredPwshExecutable()
 	if err != nil {
@@ -479,7 +397,7 @@ func startProjectManagerFallbackTerminal(
 	}
 	scriptPath, err := createProjectManagerTerminalScript(
 		"fallback-session-"+sessionID,
-		buildProjectManagerPowerShellLaunchCommand(sessionID, runtimePath, windowID, tabTitle, tabIndex),
+		buildProjectManagerPowerShellLaunchCommand(sessionID, runtimePath, windowID, tabTitle),
 	)
 	if err != nil {
 		return err
@@ -587,13 +505,12 @@ func buildProjectManagerPowerShellCommandArgs(
 	runtimePath string,
 	windowID string,
 	tabTitle string,
-	tabIndex int,
 ) []string {
 	return []string{
 		shell,
 		"-NoExit",
 		"-EncodedCommand",
-		encodeProjectManagerPowerShellCommand(buildProjectManagerPowerShellLaunchCommand(sessionID, runtimePath, windowID, tabTitle, tabIndex)),
+		encodeProjectManagerPowerShellCommand(buildProjectManagerPowerShellLaunchCommand(sessionID, runtimePath, windowID, tabTitle)),
 	}
 }
 
@@ -707,7 +624,6 @@ func buildProjectManagerPowerShellLaunchCommand(
 	runtimePath string,
 	windowID string,
 	tabTitle string,
-	tabIndex int,
 ) string {
 	resumeCommand := buildProjectManagerPowerShellResumeCommand(sessionID)
 	trimmedRuntimePath := strings.TrimSpace(runtimePath)
@@ -725,9 +641,8 @@ func buildProjectManagerPowerShellLaunchCommand(
 		fmt.Sprintf("$__codeSwitchRuntimePath = '%s'", escapedRuntimePath),
 		"$__codeSwitchRuntimeDir = [System.IO.Path]::GetDirectoryName($__codeSwitchRuntimePath)",
 		"if (-not [string]::IsNullOrWhiteSpace($__codeSwitchRuntimeDir)) { [System.IO.Directory]::CreateDirectory($__codeSwitchRuntimeDir) | Out-Null }",
-		// 这里把 window_id 固定成项目级窗口，把 tab_title 固定成会话级标题。
-		// 这样同项目多个会话会并入一个 WT 窗口，但仍然能靠唯一标题判断“这个会话 tab 是否已经打开”。
-		fmt.Sprintf("$__codeSwitchRuntime = @{ session_id = '%s'; shell_pid = $PID; shell_started_at = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o'); launch_source = '%s'; window_id = '%s'; tab_title = '%s'; tab_index = %d }", escapedSessionID, projectManagerRuntimeLaunchSource, escapedWindowID, escapedTabTitle, tabIndex),
+		// tab_title 只用于刚创建时辅助识别。Codex 会覆盖可见标题，真正稳定的 tab 身份由后端从 UI Automation RuntimeId 回写。
+		fmt.Sprintf("$__codeSwitchRuntime = @{ session_id = '%s'; shell_pid = $PID; shell_started_at = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o'); launch_source = '%s'; window_id = '%s'; tab_title = '%s' }", escapedSessionID, projectManagerRuntimeLaunchSource, escapedWindowID, escapedTabTitle),
 		"try { $__codeSwitchRuntime | ConvertTo-Json -Compress | Set-Content -LiteralPath $__codeSwitchRuntimePath -Encoding utf8 -ErrorAction Stop } catch {}",
 		fmt.Sprintf("try { %s } finally { Remove-Item -LiteralPath $__codeSwitchRuntimePath -Force -ErrorAction SilentlyContinue }", resumeCommand),
 	}

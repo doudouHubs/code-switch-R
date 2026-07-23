@@ -118,13 +118,6 @@
           </button>
         </div>
       </div>
-      <section class="contrib-hero">
-        <h1 v-if="showHomeTitle">{{ t('components.main.hero.title') }}</h1>
-        <!-- <p class="lead">
-          {{ t('components.main.hero.lead') }}
-        </p> -->
-      </section>
-
       <section
         v-if="showHeatmap"
         ref="heatmapContainerRef"
@@ -1138,7 +1131,6 @@ const providerStatsLoaded = reactive<Record<ProviderTab, boolean>>({
 })
 let providerStatsTimer: number | undefined
 const showHeatmap = ref(true)
-const showHomeTitle = ref(true)
 const appVersion = ref('')
 const importStatus = ref<ConfigImportStatus | null>(null)
 const importBusy = ref(false)
@@ -1377,11 +1369,9 @@ const loadAppSettings = async () => {
   try {
     const data: AppSettings = await fetchAppSettings()
     showHeatmap.value = data?.show_heatmap ?? true
-    showHomeTitle.value = data?.show_home_title ?? true
   } catch (error) {
     console.error('failed to load app settings', error)
     showHeatmap.value = true
-    showHomeTitle.value = true
     // 加载应用设置失败时提示用户
     showToast(t('components.main.errors.loadAppSettingsFailed'), 'warning')
   }

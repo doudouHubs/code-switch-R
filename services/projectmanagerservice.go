@@ -50,15 +50,30 @@ type ProjectManagerSnapshot struct {
 }
 
 type SessionConversationItem struct {
-	ID         string `json:"id"`
-	SessionID  string `json:"session_id"`
-	Role       string `json:"role"`
-	Content    string `json:"content"`
-	Timestamp  int64  `json:"timestamp"`
-	ReplyFor   string `json:"reply_for"`
-	TurnID     string `json:"turn_id"`
-	SourceFile string `json:"source_file"`
-	SourceLine int    `json:"source_line"`
+	ID         string                        `json:"id"`
+	SessionID  string                        `json:"session_id"`
+	Role       string                        `json:"role"`
+	Content    string                        `json:"content"`
+	Timestamp  int64                         `json:"timestamp"`
+	ReplyFor   string                        `json:"reply_for"`
+	TurnID     string                        `json:"turn_id"`
+	TurnUsage  *SessionConversationTurnUsage `json:"turn_usage,omitempty"`
+	SourceFile string                        `json:"source_file"`
+	SourceLine int                           `json:"source_line"`
+}
+
+// SessionConversationTurnUsage 表示一次用户提问从开始到结束的全部模型调用用量。
+// CachedInputTokens 已包含在 InputTokens 中，ReasoningOutputTokens 已包含在 OutputTokens 中，
+// 因此 TotalTokens 不能再把这两个明细重复相加。
+type SessionConversationTurnUsage struct {
+	InputTokens           int64 `json:"input_tokens"`
+	CachedInputTokens     int64 `json:"cached_input_tokens"`
+	OutputTokens          int64 `json:"output_tokens"`
+	ReasoningOutputTokens int64 `json:"reasoning_output_tokens"`
+	TotalTokens           int64 `json:"total_tokens"`
+	ModelCalls            int   `json:"model_calls"`
+	DurationMS            int64 `json:"duration_ms"`
+	Complete              bool  `json:"complete"`
 }
 
 type SessionConversationDetail struct {

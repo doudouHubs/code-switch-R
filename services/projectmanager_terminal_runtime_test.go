@@ -2,6 +2,7 @@ package services
 
 import (
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -13,7 +14,7 @@ func TestProjectManagerSessionRuntimeCarriesPrivateClosureMetadata(t *testing.T)
 		LaunchSource:   projectManagerRuntimeLaunchSource,
 		WindowID:       "codeswitch-project-session-001",
 		TabTitle:       "[PM]session-001 - Alpha",
-		TabIndex:       0,
+		TabRuntimeID:   []int{42, 7866700, 4, 3974},
 	}
 
 	if runtime.SessionID != "session-001" {
@@ -28,8 +29,8 @@ func TestProjectManagerSessionRuntimeCarriesPrivateClosureMetadata(t *testing.T)
 	if runtime.TabTitle != "[PM]session-001 - Alpha" {
 		t.Fatalf("tab title 不对: %+v", runtime)
 	}
-	if runtime.TabIndex != 0 {
-		t.Fatalf("tab index 不对: %+v", runtime)
+	if !reflect.DeepEqual(runtime.TabRuntimeID, []int{42, 7866700, 4, 3974}) {
+		t.Fatalf("tab runtime id 不对: %+v", runtime)
 	}
 }
 
@@ -49,7 +50,7 @@ func TestLoadProjectManagerSessionRuntimeIfExistsReturnsRuntimeWhenPresent(t *te
 	home := setupProjectManagerTestHome(t)
 	sessionID := "session-001"
 	runtimePath := filepath.Join(home, ".code-switch", "project-manager-runtime", "session-001.json")
-	content := `{"session_id":"session-001","shell_pid":321,"launch_source":"project-manager","window_id":"codeswitch-project-001","tab_title":"[PM]session-001 - Alpha","tab_index":2}`
+	content := `{"session_id":"session-001","shell_pid":321,"launch_source":"project-manager","window_id":"codeswitch-project-001","tab_title":"[PM]session-001 - Alpha","tab_runtime_id":[42,7866700,4,3975]}`
 
 	if err := AtomicWriteText(runtimePath, content); err != nil {
 		t.Fatalf("写入 runtime fixture 失败: %v", err)
@@ -62,8 +63,31 @@ func TestLoadProjectManagerSessionRuntimeIfExistsReturnsRuntimeWhenPresent(t *te
 	if !exists {
 		t.Fatalf("已存在 runtime 却返回 exists=false")
 	}
-	if runtime.SessionID != sessionID || runtime.ShellPID != 321 || runtime.TabIndex != 2 {
+	if runtime.SessionID != sessionID || runtime.ShellPID != 321 || !reflect.DeepEqual(runtime.TabRuntimeID, []int{42, 7866700, 4, 3975}) {
 		t.Fatalf("读取的 runtime 不对: %+v", runtime)
+	}
+}
+
+func TestUpdateProjectManagerSessionRuntimeTabRuntimeIDRejectsChangedShell(t *testing.T) {
+	home := setupProjectManagerTestHome(t)
+	sessionID := "session-001"
+	runtimePath := filepath.Join(home, ".code-switch", "project-manager-runtime", sessionID+".json")
+	content := `{"session_id":"session-001","shell_pid":321,"launch_source":"project-manager"}`
+	if err := AtomicWriteText(runtimePath, content); err != nil {
+		t.Fatalf("写入 runtime fixture 失败: %v", err)
+	}
+
+	err := updateProjectManagerSessionRuntimeTabRuntimeID(sessionID, 999, []int{42, 7866700, 4, 3975})
+	if err == nil {
+		t.Fatal("shell 已变化时不应覆盖 runtime")
+	}
+
+	runtime, _, err := loadProjectManagerSessionRuntimeIfExists(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runtime.TabRuntimeID) != 0 {
+		t.Fatalf("拒绝写入后不应产生 tab runtime id: %+v", runtime)
 	}
 }
 

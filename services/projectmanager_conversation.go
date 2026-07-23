@@ -48,7 +48,11 @@ type projectManagerRolloutTurn struct {
 	TurnID           string
 	StartLineIndex   int
 	EndLineIndex     int
+	StartedAt        int64
+	CompletedAt      int64
+	LastActivityAt   int64
 	UserMessage      string
+	Usage            *SessionConversationTurnUsage
 	AgentLineIndices []int
 	Records          []projectManagerRolloutRecord
 }
@@ -334,6 +338,11 @@ func readProjectManagerRolloutConversationItems(path string, sessionID string) (
 				TurnID:     strings.TrimSpace(turn.TurnID),
 			}
 			if record.PayloadType == "user_message" {
+				// 一轮用量属于用户发起的任务，不挂到可能有多条的 agent 回复上，
+				// 前端据此能稳定在每句提问下展示完整统计。
+				item.TurnUsage = projectManagerCloneTurnUsage(turn.Usage)
+			}
+			if record.PayloadType == "user_message" {
 				currentUserID = itemID
 			} else if currentUserID != "" {
 				item.ReplyFor = currentUserID
@@ -403,6 +412,7 @@ func applyProjectManagerConversationTurnIDsFromRollout(items []SessionConversati
 
 		if itemIndex, ok := itemIndexByID[conversationTurn.User.ID]; ok {
 			items[itemIndex].TurnID = turnID
+			items[itemIndex].TurnUsage = projectManagerCloneTurnUsage(rollout.Turns[matchIndex].Usage)
 			applied++
 		}
 		for _, agent := range conversationTurn.Agents {
@@ -679,6 +689,7 @@ func parseProjectManagerRolloutFile(path string, expectedSessionID string) (proj
 	}
 
 	currentTurnIndex := -1
+	usageAccumulator := newProjectManagerRolloutUsageAccumulator()
 	for lineIndex, rawLine := range lines {
 		trimmed := strings.TrimSpace(rawLine)
 		if trimmed == "" {
@@ -693,10 +704,13 @@ func parseProjectManagerRolloutFile(path string, expectedSessionID string) (proj
 
 		if lineType == "event_msg" && payloadType == "task_started" {
 			turnID := strings.TrimSpace(gjson.Get(trimmed, "payload.turn_id").String())
+			startedAt := parseProjectManagerConversationTimestamp(gjson.Get(trimmed, "timestamp").String())
 			result.Turns = append(result.Turns, projectManagerRolloutTurn{
 				TurnID:           turnID,
 				StartLineIndex:   lineIndex,
 				EndLineIndex:     len(lines) - 1,
+				StartedAt:        startedAt,
+				LastActivityAt:   startedAt,
 				AgentLineIndices: make([]int, 0, 4),
 				Records:          make([]projectManagerRolloutRecord, 0, 16),
 			})
@@ -717,6 +731,12 @@ func parseProjectManagerRolloutFile(path string, expectedSessionID string) (proj
 		}
 		turn := &result.Turns[currentTurnIndex]
 		turn.Records = append(turn.Records, record)
+		if record.Timestamp > turn.LastActivityAt {
+			turn.LastActivityAt = record.Timestamp
+		}
+		if lineType == "event_msg" && payloadType == "token_count" {
+			usageAccumulator.add(trimmed, turn)
+		}
 
 		if lineType == "event_msg" && payloadType == "user_message" && turn.UserMessage == "" {
 			turn.UserMessage = record.Message
@@ -726,8 +746,13 @@ func parseProjectManagerRolloutFile(path string, expectedSessionID string) (proj
 		}
 		if lineType == "event_msg" && payloadType == "task_complete" {
 			turn.EndLineIndex = lineIndex
+			turn.CompletedAt = record.Timestamp
 			currentTurnIndex = -1
 		}
+	}
+
+	for index := range result.Turns {
+		projectManagerFinalizeRolloutTurnUsage(&result.Turns[index])
 	}
 
 	if result.SessionID == "" {

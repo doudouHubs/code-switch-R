@@ -9,28 +9,10 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf16"
 )
-
-type fakeProjectManagerCommandRunner struct {
-	startErr error
-	waitErr  error
-	waitCh   <-chan struct{}
-}
-
-func (f fakeProjectManagerCommandRunner) Start() error {
-	return f.startErr
-}
-
-func (f fakeProjectManagerCommandRunner) Wait() error {
-	if f.waitCh != nil {
-		<-f.waitCh
-	}
-	return f.waitErr
-}
 
 func TestBuildProjectManagerWTArgs(t *testing.T) {
 	originalLookPath := projectManagerLookPath
@@ -140,9 +122,8 @@ func TestBuildProjectManagerPowerShellLaunchCommand(t *testing.T) {
 	runtimePath := `C:\Users\X1\.code-switch\project-manager-runtime\session-o1.json`
 	windowID := "codeswitch-project-deadbeef"
 	tabTitle := "[PM]session'o1 - Alpha"
-	tabIndex := 3
 
-	got := buildProjectManagerPowerShellLaunchCommand(sessionID, runtimePath, windowID, tabTitle, tabIndex)
+	got := buildProjectManagerPowerShellLaunchCommand(sessionID, runtimePath, windowID, tabTitle)
 	expectedParts := []string{
 		"$__codeSwitchRuntimePath = 'C:\\Users\\X1\\.code-switch\\project-manager-runtime\\session-o1.json'",
 		"shell_pid = $PID",
@@ -150,7 +131,6 @@ func TestBuildProjectManagerPowerShellLaunchCommand(t *testing.T) {
 		"launch_source = 'project-manager'",
 		"window_id = 'codeswitch-project-deadbeef'",
 		"tab_title = '[PM]session''o1 - Alpha'",
-		"tab_index = 3",
 		"$__codeSwitchCodexCommand = 'codex'",
 		"Volta\\bin\\codex.cmd",
 		"Set-Content -LiteralPath $__codeSwitchRuntimePath -Encoding utf8 -ErrorAction Stop",
@@ -189,16 +169,15 @@ func TestBuildProjectManagerPowerShellCommandArgs(t *testing.T) {
 	runtimePath := `C:\Users\X1\.code-switch\project-manager-runtime\session-encoded.json`
 	windowID := "codeswitch-project-encoded"
 	tabTitle := "[PM]session-encoded - Encoded"
-	tabIndex := 1
 
-	got := buildProjectManagerPowerShellCommandArgs("pwsh", sessionID, runtimePath, windowID, tabTitle, tabIndex)
+	got := buildProjectManagerPowerShellCommandArgs("pwsh", sessionID, runtimePath, windowID, tabTitle)
 	wantPrefix := []string{"pwsh", "-NoExit", "-EncodedCommand"}
 	if !reflect.DeepEqual(got[:3], wantPrefix) {
 		t.Fatalf("PowerShell 参数前缀不对，want=%v got=%v", wantPrefix, got[:3])
 	}
 
 	decoded := decodeProjectManagerPowerShellEncodedCommand(t, got[3])
-	wantCommand := buildProjectManagerPowerShellLaunchCommand(sessionID, runtimePath, windowID, tabTitle, tabIndex)
+	wantCommand := buildProjectManagerPowerShellLaunchCommand(sessionID, runtimePath, windowID, tabTitle)
 	if decoded != wantCommand {
 		t.Fatalf("EncodedCommand 解码后不对，want=%q got=%q", wantCommand, decoded)
 	}
@@ -728,121 +707,23 @@ func TestResolveProjectManagerWTWindowName(t *testing.T) {
 	}
 }
 
-func TestFocusProjectManagerNamedWTTabReturnsQuicklyAfterStart(t *testing.T) {
-	originalFactory := projectManagerExecCommand
-	t.Cleanup(func() {
-		projectManagerExecCommand = originalFactory
-	})
-
-	waitCh := make(chan struct{})
-	var started atomic.Int32
-	projectManagerExecCommand = func(name string, args ...string) projectManagerCommandRunner {
-		started.Add(1)
-		return fakeProjectManagerCommandRunner{
-			waitCh: waitCh,
-		}
-	}
-
-	runtime := projectManagerSessionRuntime{
-		WindowID: "codeswitch-project-001",
-		TabTitle: "[PM]session-001 - Alpha",
-		TabIndex: 1,
-	}
-	session := SessionSummary{
-		ID: "session-001",
-	}
-
-	startedAt := time.Now()
-	if err := focusProjectManagerNamedWTTab("wt.exe", runtime, session); err != nil {
-		t.Fatalf("期望快速返回成功，got err=%v", err)
-	}
-	if started.Load() != 1 {
-		t.Fatalf("期望仅启动一次 WT 命令，got=%d", started.Load())
-	}
-	if elapsed := time.Since(startedAt); elapsed > projectManagerWTFocusTimeout*2 {
-		t.Fatalf("focus-tab 返回太慢，elapsed=%s", elapsed)
-	}
-
-	close(waitCh)
-}
-
-func TestFocusProjectManagerNamedWTTabReturnsErrorWhenStartFails(t *testing.T) {
-	originalFactory := projectManagerExecCommand
-	t.Cleanup(func() {
-		projectManagerExecCommand = originalFactory
-	})
-
-	projectManagerExecCommand = func(name string, args ...string) projectManagerCommandRunner {
-		return fakeProjectManagerCommandRunner{
-			startErr: errors.New("boom"),
-		}
-	}
-
-	runtime := projectManagerSessionRuntime{
-		WindowID: "codeswitch-project-001",
-		TabTitle: "[PM]session-001 - Alpha",
-	}
-	session := SessionSummary{
-		ID: "session-001",
-	}
-
-	err := focusProjectManagerNamedWTTab("wt.exe", runtime, session)
-	if err == nil || !strings.Contains(err.Error(), "启动失败") {
-		t.Fatalf("期望启动失败错误，got=%v", err)
-	}
-}
-
-func TestFocusProjectManagerNamedWTTabReturnsErrorWhenWaitFailsImmediately(t *testing.T) {
-	originalFactory := projectManagerExecCommand
-	t.Cleanup(func() {
-		projectManagerExecCommand = originalFactory
-	})
-
-	projectManagerExecCommand = func(name string, args ...string) projectManagerCommandRunner {
-		return fakeProjectManagerCommandRunner{
-			waitErr: errors.New("wait boom"),
-		}
-	}
-
-	runtime := projectManagerSessionRuntime{
-		WindowID: "codeswitch-project-001",
-		TabTitle: "[PM]session-001 - Alpha",
-	}
-	session := SessionSummary{
-		ID: "session-001",
-	}
-
-	err := focusProjectManagerNamedWTTab("wt.exe", runtime, session)
-	if err == nil || !strings.Contains(err.Error(), "执行失败") {
-		t.Fatalf("期望执行失败错误，got=%v", err)
-	}
-}
-
 func TestTryReuseProjectManagerSessionTerminalSkipsInactiveRuntimeBeforeFocus(t *testing.T) {
 	home := setupProjectManagerTestHome(t)
 	service := NewProjectManagerService()
 	sessionID := "session-inactive"
 	runtimePath := filepath.Join(home, ".code-switch", "project-manager-runtime", sessionID+".json")
-	runtimeContent := `{"session_id":"session-inactive","shell_pid":45678,"shell_started_at":"2026-06-16T10:02:47.6262548Z","launch_source":"project-manager","window_id":"codeswitch-project-deadbeef","tab_title":"[PM]session-inactive - Dead","tab_index":0}`
+	runtimeContent := `{"session_id":"session-inactive","shell_pid":45678,"shell_started_at":"2026-06-16T10:02:47.6262548Z","launch_source":"project-manager","window_id":"codeswitch-project-deadbeef","tab_title":"[PM]session-inactive - Dead","tab_runtime_id":[42,7866700,4,3974]}`
 	if err := AtomicWriteText(runtimePath, runtimeContent); err != nil {
 		t.Fatalf("写入 runtime fixture 失败: %v", err)
 	}
 
 	originalSnapshot := projectManagerSnapshotProcesses
-	originalFactory := projectManagerExecCommand
 	t.Cleanup(func() {
 		projectManagerSnapshotProcesses = originalSnapshot
-		projectManagerExecCommand = originalFactory
 	})
 
 	projectManagerSnapshotProcesses = func() (map[uint32]projectManagerProcessEntry, error) {
 		return map[uint32]projectManagerProcessEntry{}, nil
-	}
-
-	focusAttempted := false
-	projectManagerExecCommand = func(name string, args ...string) projectManagerCommandRunner {
-		focusAttempted = true
-		return fakeProjectManagerCommandRunner{}
 	}
 
 	reused, err := service.tryReuseProjectManagerSessionTerminal(SessionSummary{
@@ -853,9 +734,6 @@ func TestTryReuseProjectManagerSessionTerminalSkipsInactiveRuntimeBeforeFocus(t 
 	}
 	if reused {
 		t.Fatalf("失效 runtime 不该被当成已复用")
-	}
-	if focusAttempted {
-		t.Fatalf("失效 runtime 不该继续尝试 focus-tab")
 	}
 	if _, statErr := os.Stat(runtimePath); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("失效 runtime 应被清理，statErr=%v", statErr)
