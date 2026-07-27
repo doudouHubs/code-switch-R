@@ -1730,7 +1730,7 @@
 }
 
 .project-manager-page .conversation-bubble.is-user.has-turn-usage {
-  /* 标签定位在气泡外侧仍需占据流式高度，否则会和上一条消息发生视觉重叠。 */
+  /* 标签最小高度 22px，加上 10px 间距后预留 32px，避免压住上一条消息。 */
   margin-top: 32px;
 }
 
@@ -1906,7 +1906,8 @@
 
 .project-manager-page .turn-usage {
   position: absolute;
-  top: -30px;
+  top: auto;
+  bottom: calc(100% + 10px);
   display: inline-flex;
   min-width: 0;
   right: 0;
@@ -2094,14 +2095,49 @@
   color: #fcd34d;
 }
 
+.project-manager-page .message-footer {
+  display: flex;
+  align-self: stretch;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  /* 短消息也必须容纳元信息与操作区，不能把同一行内容重新挤成上下两行。 */
+  min-width: max-content;
+  max-width: 100%;
+}
+
+.project-manager-page .message-footer .message-actions-row,
+.project-manager-page .message-footer .message-meta {
+  align-self: center;
+  flex: 0 0 auto;
+}
+
+.project-manager-page .message-footer.is-user .message-meta {
+  order: 2;
+  margin-left: auto;
+}
+
+.project-manager-page .message-footer.is-user .message-actions-row {
+  order: 1;
+}
+
+.project-manager-page .message-footer.is-agent .message-meta {
+  order: 1;
+}
+
+.project-manager-page .message-footer.is-agent .message-actions-row {
+  order: 2;
+  margin-left: auto;
+}
+
 .project-manager-page .message-meta-action {
   border: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex: 0 0 14px;
-  width: 14px;
-  height: 18px;
+  flex: 0 0 12px;
+  width: 12px;
+  height: 16px;
   padding: 0;
   border-radius: 999px;
   background: transparent;
@@ -2114,30 +2150,24 @@
   display: inline-flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 0;
-  width: fit-content;
-  max-width: max-content;
+  /* 12px 紧凑按钮加 18px 间隙，刚好形成 30px 的图标中心距离。 */
+  gap: 18px;
+  width: auto;
+  max-width: none;
   color: var(--mac-text-secondary);
 }
 
 .project-manager-page .message-actions-row.is-user {
-  /* 操作按钮独立成行，并按 stack 左边缘对齐；stack 的宽度由气泡撑开，所以这里就是气泡左边缘。 */
-  align-self: flex-start;
-  flex: 0 0 28px;
-  width: 28px;
-  max-width: 28px;
+  flex: 0 0 auto;
 }
 
 .project-manager-page .message-actions-row.is-agent {
-  align-self: flex-end;
-  flex: 0 0 14px;
-  width: 14px;
-  max-width: 14px;
+  flex: 0 0 auto;
 }
 
 .project-manager-page .message-meta-action svg {
-  width: 13px;
-  height: 13px;
+  width: 12px;
+  height: 12px;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.8;
@@ -2288,7 +2318,8 @@
 
   .project-manager-page .message-meta {
     gap: 7px;
-    flex-wrap: wrap;
+    /* 底栏已由 footer 保障最小内容宽度，移动端也不能让角色和时间自行换行。 */
+    flex-wrap: nowrap;
   }
 
   .project-manager-page .turn-usage-popover {

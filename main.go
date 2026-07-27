@@ -132,6 +132,7 @@ func main() {
 	consoleService := services.NewConsoleService()
 	customCliService := services.NewCustomCliService(providerRelay.Addr())
 	networkService := services.NewNetworkService(providerRelay.Addr(), claudeSettings, codexSettings, geminiService)
+	radarService := services.NewRadarService()
 	projectManagerService := services.NewProjectManagerService()
 
 	go func() {
@@ -190,6 +191,7 @@ func main() {
 			application.NewService(consoleService),
 			application.NewService(customCliService),
 			application.NewService(networkService),
+			application.NewService(radarService),
 			application.NewService(projectManagerService),
 		},
 		Assets: application.AssetOptions{

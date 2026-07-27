@@ -1167,42 +1167,44 @@ onBeforeUnmount(() => {
                 </div>
               </div>
 
-              <div
-                v-if="!selecting && !entry.entry.agentGroup"
-                :class="['message-actions-row', `is-${entry.entry.role}`]"
-              >
-                <button
-                  v-if="entry.entry.role === 'user'"
-                  class="message-meta-action"
-                  type="button"
-                  :disabled="forking || !entry.entry.item.turn_id"
-                  :title="entry.entry.item.turn_id ? t('components.projectManager.detail.forkConversationTitle') : t('components.projectManager.detail.forkUnavailable')"
-                  :aria-label="entry.entry.item.turn_id ? t('components.projectManager.detail.forkConversationTitle') : t('components.projectManager.detail.forkUnavailable')"
-                  @click.stop="handleForkFromUser(entry.entry.item)"
+              <div :class="['message-footer', `is-${entry.entry.role}`]">
+                <div
+                  v-if="!selecting && !entry.entry.agentGroup"
+                  :class="['message-actions-row', `is-${entry.entry.role}`]"
                 >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M7 5.75v5.5a4 4 0 0 0 4 4h6" />
-                    <path d="M14.25 11.5 18 15.25 14.25 19" />
-                    <path d="M7 5.75a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" />
-                  </svg>
-                </button>
-                <button
-                  class="message-meta-action"
-                  type="button"
-                  :title="t('components.projectManager.detail.copyConversationTitle')"
-                  :aria-label="t('components.projectManager.detail.copyConversationTitle')"
-                  @click.stop="copyConversationItem(entry.entry.item)"
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <rect x="8" y="8" width="10" height="10" rx="2" />
-                    <path d="M6 14H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v1" />
-                  </svg>
-                </button>
-              </div>
+                  <button
+                    v-if="entry.entry.role === 'user'"
+                    class="message-meta-action"
+                    type="button"
+                    :disabled="forking || !entry.entry.item.turn_id"
+                    :title="entry.entry.item.turn_id ? t('components.projectManager.detail.forkConversationTitle') : t('components.projectManager.detail.forkUnavailable')"
+                    :aria-label="entry.entry.item.turn_id ? t('components.projectManager.detail.forkConversationTitle') : t('components.projectManager.detail.forkUnavailable')"
+                    @click.stop="handleForkFromUser(entry.entry.item)"
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M7 5.75v5.5a4 4 0 0 0 4 4h6" />
+                      <path d="M14.25 11.5 18 15.25 14.25 19" />
+                      <path d="M7 5.75a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" />
+                    </svg>
+                  </button>
+                  <button
+                    class="message-meta-action"
+                    type="button"
+                    :title="t('components.projectManager.detail.copyConversationTitle')"
+                    :aria-label="t('components.projectManager.detail.copyConversationTitle')"
+                    @click.stop="copyConversationItem(entry.entry.item)"
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <rect x="8" y="8" width="10" height="10" rx="2" />
+                      <path d="M6 14H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v1" />
+                    </svg>
+                  </button>
+                </div>
 
-              <div :class="['message-meta', `is-${entry.entry.role}`]">
-                <span class="message-meta-role">{{ entry.entry.role === 'user' ? t('components.projectManager.detail.userLabel') : t('components.projectManager.detail.agentLabel') }}</span>
-                <span>{{ formatUpdatedAt(entry.entry.item.timestamp) }}</span>
+                <div :class="['message-meta', `is-${entry.entry.role}`]">
+                  <span class="message-meta-role">{{ entry.entry.role === 'user' ? t('components.projectManager.detail.userLabel') : t('components.projectManager.detail.agentLabel') }}</span>
+                  <span>{{ formatUpdatedAt(entry.entry.item.timestamp) }}</span>
+                </div>
               </div>
             </div>
           </div>

@@ -79,6 +79,7 @@ const navItems: NavItem[] = [
   { path: '/skill', icon: 'tool', labelKey: 'sidebar.skill' },
   { path: '/logs', icon: 'bar-chart', labelKey: 'sidebar.logs' },
   { path: '/console', icon: 'terminal', labelKey: 'sidebar.console' },
+  { path: '/radar', icon: 'activity', labelKey: 'sidebar.radar' },
   { path: '/settings', icon: 'settings', labelKey: 'sidebar.settings' },
 ]
 

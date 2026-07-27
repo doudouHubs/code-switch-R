@@ -8,6 +8,7 @@ import ConsolePage from '../components/Console/Index.vue'
 import TrayPage from '../components/Tray/Index.vue'
 import ProjectManagerPage from '../components/ProjectManager/Index.vue'
 import ProjectManagerSessionDetailPage from '../components/ProjectManager/SessionDetail.vue'
+import RadarPage from '../components/Radar/Index.vue'
 
 const routes = [
   { path: '/', component: MainPage },
@@ -17,6 +18,7 @@ const routes = [
   { path: '/console', component: ConsolePage },
   { path: '/projects', component: ProjectManagerPage },
   { path: '/projects/sessions/:sessionId', component: ProjectManagerSessionDetailPage },
+  { path: '/radar', component: RadarPage },
   { path: '/settings', component: GeneralPage },
   { path: '/tray', component: TrayPage },
 ]
