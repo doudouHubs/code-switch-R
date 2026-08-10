@@ -32,18 +32,21 @@ type projectManagerSessionMeta struct {
 }
 
 type projectManagerStoreService struct {
-	path string
-	mu   sync.Mutex
+	path    string
+	initErr error
+	mu      sync.Mutex
 }
 
 func newProjectManagerStoreService() *projectManagerStoreService {
+	service := &projectManagerStoreService{}
 	home, err := getUserHomeDir()
 	if err != nil {
-		home = "."
+		// 项目元数据是持久化事实源，不能在用户目录不可用时默默写到当前项目。
+		service.initErr = err
+		return service
 	}
-	return &projectManagerStoreService{
-		path: filepath.Join(home, appSettingsDir, projectManagerStoreFile),
-	}
+	service.path = filepath.Join(home, appSettingsDir, projectManagerStoreFile)
+	return service
 }
 
 func (s *projectManagerStoreService) load() (projectManagerStore, error) {
@@ -270,7 +273,13 @@ func (s *projectManagerStoreService) loadLocked() (projectManagerStore, error) {
 		Sessions: map[string]projectManagerSessionMeta{},
 	}
 
-	if s == nil || strings.TrimSpace(s.path) == "" {
+	if s == nil {
+		return store, nil
+	}
+	if s.initErr != nil {
+		return store, s.initErr
+	}
+	if strings.TrimSpace(s.path) == "" {
 		return store, nil
 	}
 
@@ -292,7 +301,13 @@ func (s *projectManagerStoreService) loadLocked() (projectManagerStore, error) {
 }
 
 func (s *projectManagerStoreService) saveLocked(store projectManagerStore) error {
-	if s == nil || strings.TrimSpace(s.path) == "" {
+	if s == nil {
+		return nil
+	}
+	if s.initErr != nil {
+		return s.initErr
+	}
+	if strings.TrimSpace(s.path) == "" {
 		return nil
 	}
 	if store.Projects == nil {

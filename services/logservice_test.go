@@ -38,17 +38,20 @@ func TestBuildPricingUsageCodexClampsInvalidInput(t *testing.T) {
 	}
 }
 
-// TestBuildPricingUsageLeavesOtherPlatformsUnchanged 锁定非 Codex 平台的既有 token 语义。
-func TestBuildPricingUsageLeavesOtherPlatformsUnchanged(t *testing.T) {
+// TestBuildPricingUsageLeavesIndependentCachePlatformsUnchanged 锁定缓存字段独立上报平台的 token 语义。
+func TestBuildPricingUsageLeavesIndependentCachePlatformsUnchanged(t *testing.T) {
 	raw := modelpricing.UsageSnapshot{
 		InputTokens:     1000,
 		OutputTokens:    100,
 		CacheReadTokens: 800,
 	}
-	for _, platform := range []string{"claude", "gemini", ""} {
+	for _, platform := range []string{"claude", ""} {
 		if got := buildPricingUsage(platform, raw); got != raw {
 			t.Fatalf("platform=%q 不应改变计价快照: got=%+v want=%+v", platform, got, raw)
 		}
+	}
+	if got := buildPricingUsage("gemini", raw); got.InputTokens != 200 || got.CacheReadTokens != raw.CacheReadTokens {
+		t.Fatalf("platform=gemini 应从普通输入中扣除缓存读取: got=%+v", got)
 	}
 }
 

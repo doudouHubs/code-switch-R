@@ -570,7 +570,7 @@ func TestProjectManagerGetSnapshotPrefersRolloutWorkspaceRoots(t *testing.T) {
 		home,
 		sessionID,
 		"rollout-2026-06-16T10-00-04-"+sessionID+".jsonl",
-		`C:\Users\X1`,
+		`C:\Users\TestUser`,
 		[]string{projectDir},
 		[]string{
 			`{"type":"event_msg","timestamp":"2026-06-16T10:01:01Z","payload":{"type":"user_message","message":"rollout 工作区根测试"}}`,
@@ -594,7 +594,7 @@ func TestProjectManagerGetSnapshotPrefersRolloutWorkspaceRoots(t *testing.T) {
 	if session.ProjectSourceHint != "workspace_roots" {
 		t.Fatalf("项目来源提示不对，want=%q got=%q", "workspace_roots", session.ProjectSourceHint)
 	}
-	if session.Cwd != `C:\Users\X1` {
+	if session.Cwd != `C:\Users\TestUser` {
 		t.Fatalf("cwd 应保留原始家目录，got=%q", session.Cwd)
 	}
 }
@@ -1603,8 +1603,18 @@ func TestBuildProjectManagerAICommitPowerShellCommandUsesDangerousBypassFlag(t *
 	projectPath := filepath.Join(t.TempDir(), "workspace", "commit-fast")
 	command := buildProjectManagerAICommitPowerShellCommand(projectPath)
 
-	if !strings.Contains(command, "& $__codeSwitchCodexCommand --dangerously-bypass-approvals-and-sandbox -p commit-fast exec --ephemeral '$commit commit本地文件'") {
+	if !strings.Contains(command, "& $__codeSwitchCodexCommand --dangerously-bypass-approvals-and-sandbox -p commit-fast exec --ephemeral '$commit 无人值守提交本地文件。") {
 		t.Fatalf("AI-Commit 命令未按预期附带危险权限参数，got=%q", command)
+	}
+	for _, expected := range []string{
+		"禁止询问用户或等待确认",
+		"用户已通过 AI-Commit 按钮明确授权",
+		"使用 -ForceIgnored 精确提交",
+		"跳过该 ignored 文件并继续提交其余可提交变更",
+	} {
+		if !strings.Contains(command, expected) {
+			t.Fatalf("AI-Commit 命令缺少无人值守约束 %q，got=%q", expected, command)
+		}
 	}
 	if strings.Contains(command, "codex exec -p commit-fast") {
 		t.Fatalf("profile 被错误地下沉到 exec 子命令层，got=%q", command)

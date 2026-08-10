@@ -63,13 +63,15 @@
         </div>
       </section>
 
-      <section class="radar-chart-panel" aria-label="综合成本乘以智力图表">
+      <section class="radar-chart-panel" :aria-label="`${activeMetricConfig.title} 图表`">
         <header class="radar-chart-head">
           <div class="radar-chart-title">
-            <h2>综合成本 × IQ</h2>
+            <h2>{{ activeMetricConfig.title }}</h2>
             <span>切换指标</span>
-            <select aria-label="当前图表指标" disabled>
-              <option>综合成本 × IQ</option>
+            <select v-model="activeMetric" aria-label="切换指标">
+              <option v-for="metric in RADAR_METRICS" :key="metric.key" :value="metric.key">
+                {{ metric.title }}
+              </option>
             </select>
             <time v-if="snapshot.source_updated_at" :datetime="snapshot.source_updated_at">
               {{ formatTimestamp(snapshot.source_updated_at) }} 更新
@@ -82,8 +84,8 @@
           </div>
         </header>
         <div class="radar-chart-canvas">
-          <Line v-if="chartPoints.length" :data="chartData" :options="chartOptions" />
-          <p v-else class="radar-chart-empty">当前没有可绘制的综合成本数据。</p>
+          <Line v-if="hasChartData" :data="chartData" :options="chartOptions" />
+          <p v-else class="radar-chart-empty">{{ activeMetricConfig.emptyText }}</p>
         </div>
       </section>
 
@@ -131,6 +133,18 @@ type RadarChartPoint = {
   point: RadarPoint
 }
 
+type RadarMetric = 'combined_cost_index' | 'average_minutes' | 'average_price_usd'
+
+type RadarMetricConfig = {
+  key: RadarMetric
+  title: string
+  axis: string
+  emptyText: string
+  value: (point: RadarPoint) => number | null
+  formatTick: (value: number) => string
+  formatDetail: (value: number) => string
+}
+
 const REFRESH_INTERVAL_MS = 10 * 60 * 1000
 const EFFORT_ORDER = ['ultra', 'max', 'xhigh', 'high', 'medium', 'low']
 const MODEL_META: RadarModelMeta[] = [
@@ -140,11 +154,44 @@ const MODEL_META: RadarModelMeta[] = [
   { model: 'gpt-5.5', label: 'GPT-5.5', tone: 'gpt55', color: '#0bd8e9', softColor: 'rgba(11, 216, 233, 0.15)' },
 ]
 
+// 三个选项与原站图表保持同一字段口径，避免仅替换标题而让曲线仍引用综合成本。
+const RADAR_METRICS: RadarMetricConfig[] = [
+  {
+    key: 'combined_cost_index',
+    title: '综合成本 × IQ',
+    axis: '相对综合成本指数',
+    emptyText: '当前没有可绘制的综合成本数据。',
+    value: (point) => point.combined_cost_index,
+    formatTick: formatChartCost,
+    formatDetail: (value) => value.toFixed(1),
+  },
+  {
+    key: 'average_minutes',
+    title: '时间成本 × IQ',
+    axis: '平均耗时（分钟）',
+    emptyText: '当前没有可绘制的耗时数据。',
+    value: (point) => point.average_minutes,
+    formatTick: (value) => (value >= 10 ? Math.round(value).toString() : value.toFixed(1)),
+    formatDetail: (value) => `${value.toFixed(1)}分钟`,
+  },
+  {
+    key: 'average_price_usd',
+    title: '费用成本 × IQ',
+    axis: '平均费用（USD）',
+    emptyText: '当前没有可绘制的费用数据。',
+    value: (point) => point.average_price_usd,
+    formatTick: (value) => formatCost(value),
+    formatDetail: (value) => `$${value.toFixed(2)}`,
+  },
+]
+
 const modelMetaByID = new Map(MODEL_META.map((item) => [item.model, item]))
+const radarMetricByKey = new Map(RADAR_METRICS.map((metric) => [metric.key, metric]))
 const snapshot = ref<RadarSnapshot | null>(null)
 const loading = ref(false)
 const loadError = ref('')
 const isStale = ref(false)
+const activeMetric = ref<RadarMetric>('combined_cost_index')
 let refreshTimer: number | undefined
 
 const modelLabel = (model: string) => modelMetaByID.get(model)?.label ?? model.replace(/^gpt-/i, 'GPT-')
@@ -183,29 +230,44 @@ const modelGroups = computed<RadarModelGroup[]>(() => {
   return [...knownGroups, ...unknownGroups]
 })
 
-const chartGroups = computed(() => modelGroups.value.filter((group) => group.points.some((point) => point.combined_cost_index && point.combined_cost_index > 0)))
-const chartPoints = computed(() => chartGroups.value.flatMap((group) => group.points))
+const activeMetricConfig = computed<RadarMetricConfig>(() => radarMetricByKey.get(activeMetric.value) ?? RADAR_METRICS[0])
 
-const chartData = computed<ChartData<'line', RadarChartPoint[]>>(() => ({
-  datasets: chartGroups.value.map((group) => ({
-    label: group.label,
-    data: group.points
-      .filter((point): point is RadarPoint & { combined_cost_index: number } => Number.isFinite(point.combined_cost_index) && (point.combined_cost_index ?? 0) > 0)
-      .sort((left, right) => (left.combined_cost_index ?? 0) - (right.combined_cost_index ?? 0))
-      .map((point) => ({ x: point.combined_cost_index, y: point.iq, effort: point.effort, point })),
-    parsing: false,
-    borderColor: group.color,
-    backgroundColor: group.color,
-    pointBackgroundColor: '#0b1422',
-    pointBorderColor: group.color,
-    pointBorderWidth: 2,
-    pointRadius: 5,
-    pointHoverRadius: 7,
-    borderWidth: 2,
-    tension: 0.22,
-    fill: false,
-  })),
-}))
+function isFinitePositiveMetricValue(value: number | null): value is number {
+  return value !== null && Number.isFinite(value) && value > 0
+}
+
+function hasMetricValue(point: RadarPoint): boolean {
+  return isFinitePositiveMetricValue(activeMetricConfig.value.value(point))
+}
+
+const chartGroups = computed(() => modelGroups.value.filter((group) => group.points.some(hasMetricValue)))
+const hasChartData = computed(() => chartGroups.value.length > 0)
+
+const chartData = computed<ChartData<'line', RadarChartPoint[]>>(() => {
+  const metric = activeMetricConfig.value
+
+  return {
+    datasets: chartGroups.value.map((group) => ({
+      label: group.label,
+      data: group.points
+        .map((point) => ({ point, value: metric.value(point) }))
+        .filter((entry): entry is { point: RadarPoint; value: number } => isFinitePositiveMetricValue(entry.value))
+        .sort((left, right) => left.value - right.value)
+        .map(({ point, value }) => ({ x: value, y: point.iq, effort: point.effort, point })),
+      parsing: false,
+      borderColor: group.color,
+      backgroundColor: group.color,
+      pointBackgroundColor: '#0b1422',
+      pointBorderColor: group.color,
+      pointBorderWidth: 2,
+      pointRadius: 5,
+      pointHoverRadius: 7,
+      borderWidth: 2,
+      tension: 0.22,
+      fill: false,
+    })),
+  }
+})
 
 const radarPointLabelPlugin: Plugin<'line'> = {
   id: 'radarPointLabel',
@@ -232,7 +294,7 @@ const radarPointLabelPlugin: Plugin<'line'> = {
 
 Chart.register(LogarithmicScale, LinearScale, PointElement, LineElement, Tooltip, Legend, radarPointLabelPlugin)
 
-const chartOptions: ChartOptions<'line'> = {
+const chartOptions = computed<ChartOptions<'line'>>(() => ({
   responsive: true,
   maintainAspectRatio: false,
   layout: { padding: { top: 18, right: 18, bottom: 8, left: 6 } },
@@ -258,8 +320,8 @@ const chartOptions: ChartOptions<'line'> = {
         afterLabel: (item) => {
           const raw = item.raw as RadarChartPoint
           return [
-            `综合成本 ${formatChartCost(raw.x)}`,
-            `成本 ${formatCost(raw.point.average_price_usd)} · 耗时 ${formatMinutes(raw.point.average_minutes)}`,
+            `${activeMetricConfig.value.title.replace(' × IQ', '')} ${activeMetricConfig.value.formatDetail(raw.x)}`,
+            formatMetricSecondaryLine(raw.point),
           ]
         },
       },
@@ -268,13 +330,13 @@ const chartOptions: ChartOptions<'line'> = {
   scales: {
     x: {
       type: 'logarithmic',
-      title: { display: true, text: '综合成本指数', color: '#91a1bb', font: { size: 11, weight: 600 } },
+      title: { display: true, text: activeMetricConfig.value.axis, color: '#91a1bb', font: { size: 11, weight: 600 } },
       grid: { color: 'rgba(113, 135, 171, 0.18)' },
       border: { color: 'rgba(135, 157, 194, 0.55)' },
       ticks: {
         color: '#9babc4',
         font: { size: 10 },
-        callback: (value) => formatChartCost(Number(value)),
+        callback: (value) => activeMetricConfig.value.formatTick(Number(value)),
       },
     },
     y: {
@@ -287,7 +349,7 @@ const chartOptions: ChartOptions<'line'> = {
       ticks: { color: '#9babc4', font: { size: 10 }, stepSize: 20 },
     },
   },
-}
+}))
 
 const statusText = computed(() => {
   if (loading.value && !snapshot.value) return '正在读取数据'
@@ -332,6 +394,16 @@ function formatChartCost(value: number): string {
   if (value >= 1) return value.toFixed(1)
   if (value >= 0.01) return value.toFixed(2)
   return value.toFixed(4)
+}
+
+function formatMetricSecondaryLine(point: RadarPoint): string {
+  const combined = `综合成本 ${formatChartCost(point.combined_cost_index ?? Number.NaN)}`
+  const price = `成本 ${formatCost(point.average_price_usd)}`
+  const duration = `耗时 ${formatMinutes(point.average_minutes)}`
+
+  if (activeMetric.value === 'average_minutes') return `${price} · ${combined}`
+  if (activeMetric.value === 'average_price_usd') return `${duration} · ${combined}`
+  return `${price} · ${duration}`
 }
 
 async function refreshRadar() {

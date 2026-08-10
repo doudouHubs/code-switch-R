@@ -51,18 +51,19 @@ func main() {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Printf("os.UserHomeDir() 错误: %v\n", err)
-	} else {
-		fmt.Printf("os.UserHomeDir() = %s\n", home)
+		return
 	}
-
-	// 检查环境变量
-	fmt.Printf("USERPROFILE = %s\n", os.Getenv("USERPROFILE"))
-	fmt.Printf("HOME = %s\n", os.Getenv("HOME"))
+	home = filepath.Clean(home)
+	if !filepath.IsAbs(home) {
+		fmt.Println("用户目录不是绝对路径，终止诊断以避免访问当前目录")
+		return
+	}
+	fmt.Println("用户目录: [resolved]")
 	fmt.Println()
 
 	// 2. 检查配置文件路径
 	configPath := filepath.Join(home, ".cc-switch", "config.json")
-	fmt.Printf("配置文件路径: %s\n", configPath)
+	fmt.Println("配置文件路径: ~/.cc-switch/config.json")
 
 	// 3. 检查文件是否存在
 	info, err := os.Stat(configPath)
@@ -89,13 +90,7 @@ func main() {
 	var cfg ccSwitchConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		fmt.Printf("JSON 解析错误: %v\n", err)
-		fmt.Println()
-		fmt.Println("原始内容（前 500 字符）:")
-		if len(data) > 500 {
-			fmt.Println(string(data[:500]))
-		} else {
-			fmt.Println(string(data))
-		}
+		fmt.Println("原始配置内容已省略，避免在诊断日志中泄露凭据")
 		return
 	}
 	fmt.Println("JSON 解析成功!")
@@ -123,10 +118,7 @@ func main() {
 		fmt.Printf("    Name: %s\n", entry.Name)
 		fmt.Printf("    OPENAI_API_KEY (env): %s\n", maskKey(entry.Settings.Env["OPENAI_API_KEY"]))
 		fmt.Printf("    OPENAI_API_KEY (auth): %s\n", maskKey(entry.Settings.Auth["OPENAI_API_KEY"]))
-		fmt.Printf("    Config (TOML): %d bytes\n", len(entry.Settings.Config))
-		if entry.Settings.Config != "" {
-			fmt.Printf("    Config 内容:\n%s\n", entry.Settings.Config)
-		}
+		fmt.Printf("    Config (TOML): %d bytes [content redacted]\n", len(entry.Settings.Config))
 	}
 	fmt.Println()
 
@@ -145,8 +137,8 @@ func main() {
 }
 
 func maskKey(key string) string {
-	if len(key) <= 8 {
-		return key
+	if key == "" {
+		return "(空)"
 	}
-	return key[:4] + "****" + key[len(key)-4:]
+	return "[redacted]"
 }

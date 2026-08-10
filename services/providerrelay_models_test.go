@@ -52,15 +52,15 @@ func TestModelsHandler(t *testing.T) {
 			"object": "list",
 			"data": []map[string]interface{}{
 				{
-					"id":      "claude-sonnet-4",
-					"object":  "model",
-					"created": 1234567890,
+					"id":       "claude-sonnet-4",
+					"object":   "model",
+					"created":  1234567890,
 					"owned_by": "anthropic",
 				},
 				{
-					"id":      "claude-opus-4",
-					"object":  "model",
-					"created": 1234567890,
+					"id":       "claude-opus-4",
+					"object":   "model",
+					"created":  1234567890,
 					"owned_by": "anthropic",
 				},
 			},
@@ -128,6 +128,157 @@ func TestModelsHandler(t *testing.T) {
 	// 验证响应包含 data 字段
 	if _, ok := response["data"]; !ok {
 		t.Error("响应缺少 'data' 字段")
+	}
+}
+
+func TestOpenCoWorkModelsHandlerUsesCodexProvider(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tmpHome := setupRenameTestEnv(t)
+	t.Setenv("USERPROFILE", tmpHome)
+
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("期望 GET 请求，收到 %s", r.Method)
+		}
+		if r.URL.Path != "/v1/models" {
+			t.Errorf("期望路径 /v1/models，收到 %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer codex-api-key" {
+			t.Errorf("Authorization 头不正确，期望 Bearer codex-api-key，收到 %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"gpt-5.6-sol","object":"model"}]}`))
+	}))
+	defer upstreamServer.Close()
+
+	providerService := NewProviderService()
+	if err := providerService.SaveProviders("codex", []Provider{{
+		ID:      1,
+		Name:    "CodexProvider",
+		APIURL:  upstreamServer.URL + "/v1",
+		APIKey:  "codex-api-key",
+		Enabled: true,
+		Level:   1,
+	}}); err != nil {
+		t.Fatalf("保存 Codex provider 配置失败: %v", err)
+	}
+
+	relayService := newTestRelayService(providerService)
+	router := gin.New()
+	relayService.registerRoutes(router)
+
+	req := httptest.NewRequest(http.MethodGet, "/models", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("OpenCoWork 模型发现应成功，got=%d body=%s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("响应体不是有效 JSON: %v", err)
+	}
+	if len(response.Data) != 1 || response.Data[0].ID != "gpt-5.6-sol" {
+		t.Fatalf("模型列表错误: %s", w.Body.String())
+	}
+}
+
+func TestOpenCoWorkModelsRouteDoesNotReplaceLegacyRoutes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tmpHome := setupRenameTestEnv(t)
+	t.Setenv("USERPROFILE", tmpHome)
+
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Header.Get("Authorization") {
+		case "Bearer claude-api-key":
+			if r.URL.Path != "/v1/models" {
+				t.Errorf("Claude 请求路径错误: %s", r.URL.Path)
+			}
+			_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"claude-legacy","object":"model"}]}`))
+		case "Bearer codex-api-key":
+			if r.URL.Path != "/v1/models" {
+				t.Errorf("Codex 请求路径错误: %s", r.URL.Path)
+			}
+			_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"gpt-5.6-sol","object":"model"}]}`))
+		default:
+			t.Errorf("未知 Authorization 头: %q", r.Header.Get("Authorization"))
+			w.WriteHeader(http.StatusUnauthorized)
+		}
+	}))
+	defer upstreamServer.Close()
+
+	providerService := NewProviderService()
+	if err := providerService.SaveProviders("claude", []Provider{{
+		ID:      1,
+		Name:    "ClaudeProvider",
+		APIURL:  upstreamServer.URL,
+		APIKey:  "claude-api-key",
+		Enabled: true,
+		Level:   1,
+	}}); err != nil {
+		t.Fatalf("保存 Claude provider 配置失败: %v", err)
+	}
+	if err := providerService.SaveProviders("codex", []Provider{{
+		ID:      2,
+		Name:    "CodexProvider",
+		APIURL:  upstreamServer.URL + "/v1",
+		APIKey:  "codex-api-key",
+		Enabled: true,
+		Level:   1,
+	}}); err != nil {
+		t.Fatalf("保存 Codex provider 配置失败: %v", err)
+	}
+
+	relayService := newTestRelayService(providerService)
+	router := gin.New()
+	relayService.registerRoutes(router)
+
+	for _, tt := range []struct {
+		path        string
+		expectedID  string
+		description string
+	}{
+		{path: "/v1/models", expectedID: "claude-legacy", description: "legacy Claude route"},
+		{path: "/models", expectedID: "gpt-5.6-sol", description: "OpenCoWork Codex route"},
+	} {
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, tt.path, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s 应成功，got=%d body=%s", tt.description, w.Code, w.Body.String())
+		}
+		var response struct {
+			Data []struct {
+				ID string `json:"id"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatalf("%s 响应体不是有效 JSON: %v", tt.description, err)
+		}
+		if len(response.Data) != 1 || response.Data[0].ID != tt.expectedID {
+			t.Fatalf("%s 返回错误模型列表: %s", tt.description, w.Body.String())
+		}
+	}
+}
+
+func TestModelsURL(t *testing.T) {
+	tests := []struct {
+		base string
+		want string
+	}{
+		{base: "https://api.example.com", want: "https://api.example.com/v1/models"},
+		{base: "https://api.example.com/", want: "https://api.example.com/v1/models"},
+		{base: "https://api.example.com/v1", want: "https://api.example.com/v1/models"},
+		{base: "https://api.example.com/v1/", want: "https://api.example.com/v1/models"},
+	}
+	for _, tt := range tests {
+		if got := modelsURL(tt.base); got != tt.want {
+			t.Errorf("modelsURL(%q) = %q，期望 %q", tt.base, got, tt.want)
+		}
 	}
 }
 

@@ -68,7 +68,7 @@ func (ps *ProviderService) Start() error { return nil }
 func (ps *ProviderService) Stop() error  { return nil }
 
 func providerFilePath(kind string) (string, error) {
-	home, err := os.UserHomeDir()
+	home, err := getUserHomeDir()
 	if err != nil {
 		return "", err
 	}

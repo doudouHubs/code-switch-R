@@ -402,36 +402,59 @@ func detectGeminiAuthType(provider *GeminiProvider) GeminiAuthType {
 	return GeminiAuthGeneric
 }
 
-// getConfigDir 获取 CodeSwitch 配置目录
-func getConfigDir() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".code-switch")
+// getConfigDir 获取 CodeSwitch 配置目录。
+// 用户目录不可用时必须返回错误，避免 filepath.Join("") 把配置落到当前工作目录。
+func getConfigDir() (string, error) {
+	home, err := getUserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("获取 CodeSwitch 配置目录失败: %w", err)
+	}
+	return filepath.Join(home, ".code-switch"), nil
 }
 
-// getGeminiDir 获取 Gemini 配置目录
-func getGeminiDir() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".gemini")
+// getGeminiDir 获取 Gemini 配置目录。
+// 不允许用空家目录拼接相对路径，否则启用代理会把 .env 写进仓库或启动目录。
+func getGeminiDir() (string, error) {
+	home, err := getUserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("获取 Gemini 配置目录失败: %w", err)
+	}
+	return filepath.Join(home, ".gemini"), nil
 }
 
 // getGeminiEnvPath 获取 .env 文件路径
-func getGeminiEnvPath() string {
-	return filepath.Join(getGeminiDir(), ".env")
+func getGeminiEnvPath() (string, error) {
+	dir, err := getGeminiDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, ".env"), nil
 }
 
 // getGeminiSettingsPath 获取 settings.json 路径
-func getGeminiSettingsPath() string {
-	return filepath.Join(getGeminiDir(), "settings.json")
+func getGeminiSettingsPath() (string, error) {
+	dir, err := getGeminiDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "settings.json"), nil
 }
 
 // getGeminiProvidersPath 获取供应商配置文件路径
-func getGeminiProvidersPath() string {
-	return filepath.Join(getConfigDir(), "gemini-providers.json")
+func getGeminiProvidersPath() (string, error) {
+	dir, err := getConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "gemini-providers.json"), nil
 }
 
 // readGeminiEnv 读取 .env 文件
 func readGeminiEnv() (map[string]string, error) {
-	path := getGeminiEnvPath()
+	path, err := getGeminiEnvPath()
+	if err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -508,7 +531,10 @@ func buildGeminiEnvContent(envConfig map[string]string) string {
 
 // writeGeminiEnv 写入 .env 文件（原子操作）
 func writeGeminiEnv(envConfig map[string]string) error {
-	dir := getGeminiDir()
+	dir, err := getGeminiDir()
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
@@ -537,7 +563,10 @@ func writeGeminiEnv(envConfig map[string]string) error {
 	}
 
 	// 原子写入
-	path := getGeminiEnvPath()
+	path, err := getGeminiEnvPath()
+	if err != nil {
+		return err
+	}
 	tmpPath := path + ".tmp"
 	if err := os.WriteFile(tmpPath, []byte(content), 0600); err != nil {
 		return err
@@ -547,7 +576,10 @@ func writeGeminiEnv(envConfig map[string]string) error {
 
 // readGeminiSettings 读取 settings.json
 func readGeminiSettings() (map[string]any, error) {
-	path := getGeminiSettingsPath()
+	path, err := getGeminiSettingsPath()
+	if err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -563,12 +595,18 @@ func readGeminiSettings() (map[string]any, error) {
 
 // writeGeminiSettings 写入 settings.json（智能合并）
 func writeGeminiSettings(newSettings map[string]any) error {
-	dir := getGeminiDir()
+	dir, err := getGeminiDir()
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
 
-	path := getGeminiSettingsPath()
+	path, err := getGeminiSettingsPath()
+	if err != nil {
+		return err
+	}
 
 	// 读取现有配置
 	existingSettings := make(map[string]any)
@@ -619,7 +657,10 @@ func deepMerge(dst, src map[string]any) map[string]any {
 
 // loadProviders 加载供应商配置
 func (s *GeminiService) loadProviders() error {
-	path := getGeminiProvidersPath()
+	path, err := getGeminiProvidersPath()
+	if err != nil {
+		return err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -634,7 +675,10 @@ func (s *GeminiService) loadProviders() error {
 
 // saveProviders 保存供应商配置
 func (s *GeminiService) saveProviders() error {
-	path := getGeminiProvidersPath()
+	path, err := getGeminiProvidersPath()
+	if err != nil {
+		return err
+	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
@@ -739,12 +783,18 @@ const (
 
 // EnableProxy 启用代理
 func (s *GeminiService) EnableProxy() error {
-	dir := getGeminiDir()
+	dir, err := getGeminiDir()
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
 
-	envPath := getGeminiEnvPath()
+	envPath, err := getGeminiEnvPath()
+	if err != nil {
+		return err
+	}
 	backupPath := envPath + ".code-switch.backup"
 
 	// 幂等化检查：状态文件存在则视为已启用，不覆盖基线
@@ -821,7 +871,10 @@ func (s *GeminiService) EnableProxy() error {
 
 // DisableProxy 禁用代理（手术式撤销：仅移除注入的代理配置，保留用户其他编辑）
 func (s *GeminiService) DisableProxy() error {
-	envPath := getGeminiEnvPath()
+	envPath, err := getGeminiEnvPath()
+	if err != nil {
+		return err
+	}
 
 	// 读取当前 .env（保留用户在代理期间的所有编辑）
 	envConfig, err := readGeminiEnv()

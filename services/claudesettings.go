@@ -250,7 +250,7 @@ func (css *ClaudeSettingsService) DisableProxy() error {
 }
 
 func (css *ClaudeSettingsService) paths() (settingsPath string, backupPath string, err error) {
-	home, err := os.UserHomeDir()
+	home, err := getUserHomeDir()
 	if err != nil {
 		return "", "", err
 	}

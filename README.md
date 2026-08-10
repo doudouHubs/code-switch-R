@@ -21,10 +21,10 @@
 
 | 系统 | 推荐下载 |
 |------|---------|
-| Windows | `CodeSwitch-amd64-installer.exe` |
-| macOS (M1/M2/M3) | `codeswitch-macos-arm64.zip` |
-| macOS (Intel) | `codeswitch-macos-amd64.zip` |
-| Linux | `CodeSwitch.AppImage` |
+| Windows | `CodeSwitch-v<version>-amd64-installer.exe` |
+| macOS (M1/M2/M3) | `CodeSwitch-v<version>-macos-arm64.zip` |
+| macOS (Intel) | `CodeSwitch-v<version>-macos-amd64.zip` |
+| Linux | `CodeSwitch-v<version>.AppImage` |
 
 ### 2. 添加供应商
 
@@ -179,7 +179,7 @@ Claude Code / Codex / Gemini CLI
 ### Windows
 
 **安装器方式（推荐）**：
-1. 下载 `CodeSwitch-amd64-installer.exe`
+1. 下载 `CodeSwitch-v<version>-amd64-installer.exe`
 2. 双击运行，按提示安装
 3. 从开始菜单启动
 
@@ -198,8 +198,8 @@ Claude Code / Codex / Gemini CLI
 
 **AppImage（推荐）**：
 ```bash
-chmod +x CodeSwitch.AppImage
-./CodeSwitch.AppImage
+chmod +x CodeSwitch-v<version>.AppImage
+./CodeSwitch-v<version>.AppImage
 ```
 
 **DEB 包（Ubuntu/Debian）**：
@@ -218,16 +218,30 @@ sudo rpm -i codeswitch-*.rpm
 ### 环境准备
 
 ```bash
-# 安装 Go 1.24+
-# 安装 Node.js 18+
+# 安装 Go 1.24.x
+# 安装 Node.js 20.19+ 或 22.12+（Vite 7 不支持 Node.js 18）
+# 安装 Git，并确保 $(go env GOPATH)/bin 在 PATH 中
 
-# 安装 Wails CLI
-go install github.com/wailsapp/wails/v3/cmd/wails3@latest
+# 安装与 go.mod 对齐的 Wails CLI
+go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.38
 ```
+
+不同平台还需要以下依赖：
+
+- Windows 构建需要 NSIS；项目管理功能需要 PowerShell 7、Windows Terminal 和 Codex CLI。
+- macOS 构建需要 Xcode Command Line Tools，以及 `lipo`、`codesign`、`ditto`。
+- Linux 构建需要 `build-essential`、`pkg-config`、GTK/WebKitGTK 开发包；AppImage 运行时仍可能依赖系统 GTK/WebKit。
+
+项目管理中的终端打开、项目运行和 AI-Commit 当前仅在 Windows 实现，macOS/Linux 会明确返回不支持。
+
+`go.mod` 中的 Wails `v3.0.0-alpha.38` 对应 `@wailsio/runtime@3.0.0-alpha.72`；两者已固定，勿单独执行 `npm update @wailsio/runtime`。
 
 ### 开发运行
 
 ```bash
+cd frontend
+npm ci
+cd ..
 wails3 task dev
 ```
 
@@ -252,7 +266,7 @@ wails3 task package
 
 ## 开源协议
 
-MIT License
+Apache License 2.0，详见 [LICENSE](LICENSE)。
 
 ---
 

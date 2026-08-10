@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -18,7 +19,13 @@ import (
 // Author: Half open flowers
 
 func main() {
-	// 用户配置（从截图/UI中获取）
+	// 凭据只能通过环境变量注入，避免诊断脚本把真实密钥带进公开仓库。
+	apiKey := strings.TrimSpace(os.Getenv("CODESWITCH_88CODE_API_KEY"))
+	if apiKey == "" {
+		fmt.Fprintln(os.Stderr, "请先设置 CODESWITCH_88CODE_API_KEY，再运行该诊断脚本")
+		os.Exit(2)
+	}
+
 	config := struct {
 		APIURL   string
 		APIKey   string
@@ -28,7 +35,7 @@ func main() {
 		Model    string
 	}{
 		APIURL:   "https://m.88code.org/api",
-		APIKey:   "88_784022b235595e84936fa42596b41bcad3dc24a79ced14a5d0d4489937ba36e8",
+		APIKey:   apiKey,
 		Platform: "claude",
 		Endpoint: "/v1/messages",        // 用户可能配置的端点
 		AuthType: "x-api-key",           // 用户可能配置的认证方式
@@ -40,7 +47,7 @@ func main() {
 	fmt.Println("==========================================================")
 	fmt.Printf("\n配置信息：\n")
 	fmt.Printf("  APIURL:   %s\n", config.APIURL)
-	fmt.Printf("  APIKey:   %s...%s\n", config.APIKey[:10], config.APIKey[len(config.APIKey)-4:])
+	fmt.Printf("  APIKey:   %s\n", redactAPIKey(config.APIKey))
 	fmt.Printf("  Platform: %s\n", config.Platform)
 	fmt.Printf("  Endpoint: %s\n", config.Endpoint)
 	fmt.Printf("  AuthType: %s\n", config.AuthType)
@@ -85,6 +92,21 @@ func main() {
 	for _, v := range urlVariants {
 		testURLVariant(client, v.baseURL, v.endpoint, config.APIKey, config.Model)
 	}
+}
+
+func redactAPIKey(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "(empty)"
+	}
+	return "[redacted]"
+}
+
+// 服务端可能在错误响应中回显请求头，输出前统一替换，避免诊断日志二次泄露密钥。
+func redactSensitiveResponse(value, apiKey string) string {
+	if apiKey == "" {
+		return value
+	}
+	return strings.ReplaceAll(value, apiKey, "[redacted]")
 }
 
 // 完全模拟 connectivitytestservice.go 的 TestProvider 逻辑
@@ -132,7 +154,7 @@ func testConnectivityServiceBehavior(client *http.Client, apiURL, apiKey, platfo
 	fmt.Printf("  请求头:\n")
 	for k, v := range req.Header {
 		if k == "X-Api-Key" || k == "Authorization" {
-			fmt.Printf("    %s: %s...%s\n", k, v[0][:15], v[0][len(v[0])-4:])
+			fmt.Printf("    %s: %s\n", k, redactAPIKey(v[0]))
 		} else {
 			fmt.Printf("    %s: %s\n", k, v[0])
 		}
@@ -155,7 +177,7 @@ func testConnectivityServiceBehavior(client *http.Client, apiURL, apiKey, platfo
 		fmt.Printf("  ✅ 成功\n")
 	} else {
 		fmt.Printf("  ❌ 失败\n")
-		fmt.Printf("  响应内容: %s\n", truncate(string(body), 300))
+		fmt.Printf("  响应内容: %s\n", truncate(redactSensitiveResponse(string(body), apiKey), 300))
 	}
 }
 
@@ -223,7 +245,7 @@ func testForceXAPIKey(client *http.Client, apiURL, apiKey, model string) {
 		fmt.Printf("  ✅ 成功 | HTTP %d | 耗时: %v\n", resp.StatusCode, latency.Round(time.Millisecond))
 	} else {
 		fmt.Printf("  ❌ 失败 | HTTP %d | 耗时: %v\n", resp.StatusCode, latency.Round(time.Millisecond))
-		fmt.Printf("  响应: %s\n", truncate(string(body), 200))
+		fmt.Printf("  响应: %s\n", truncate(redactSensitiveResponse(string(body), apiKey), 200))
 	}
 }
 
@@ -264,7 +286,7 @@ func testAuthTypeVariant(client *http.Client, apiURL, apiKey, model, authType, p
 		fmt.Printf(" → ✅ HTTP %d (%v)\n", resp.StatusCode, latency.Round(time.Millisecond))
 	} else {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 200))
-		fmt.Printf(" → ❌ HTTP %d | %s\n", resp.StatusCode, truncate(string(body), 80))
+		fmt.Printf(" → ❌ HTTP %d | %s\n", resp.StatusCode, truncate(redactSensitiveResponse(string(body), apiKey), 80))
 	}
 }
 

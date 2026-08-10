@@ -452,7 +452,7 @@ func (css *CodexSettingsService) readConfig() (*codexConfig, error) {
 }
 
 func (css *CodexSettingsService) paths() (settingsPath string, backupPath string, err error) {
-	home, err := os.UserHomeDir()
+	home, err := getUserHomeDir()
 	if err != nil {
 		return "", "", err
 	}
@@ -461,7 +461,7 @@ func (css *CodexSettingsService) paths() (settingsPath string, backupPath string
 }
 
 func (css *CodexSettingsService) authPaths() (string, string, error) {
-	home, err := os.UserHomeDir()
+	home, err := getUserHomeDir()
 	if err != nil {
 		return "", "", err
 	}

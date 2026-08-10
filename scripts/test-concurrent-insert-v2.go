@@ -15,8 +15,15 @@ import (
 )
 
 func main() {
-	home, _ := os.UserHomeDir()
-	dbPath := filepath.Join(home, ".code-switch", "app.db")
+	// 并发诊断必须与用户日志库隔离，避免测试记录污染真实请求历史。
+	tempDir, err := os.MkdirTemp("", "code-switch-concurrent-insert-v2-*")
+	if err != nil {
+		fmt.Printf("创建临时数据库目录失败: %v\n", err)
+		return
+	}
+	defer os.RemoveAll(tempDir)
+
+	dbPath := filepath.Join(tempDir, "test_concurrent.db")
 
 	fmt.Printf("测试数据库: %s\n\n", dbPath)
 
@@ -39,6 +46,28 @@ func main() {
 	_, err = db.Exec("PRAGMA journal_mode = WAL")
 	if err != nil {
 		fmt.Printf("设置WAL模式失败: %v\n", err)
+		return
+	}
+
+	// 临时库没有应用初始化过的表结构，脚本自行创建最小测试表以保证可独立运行。
+	_, err = db.Exec(`
+		CREATE TABLE request_log (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			platform TEXT,
+			model TEXT,
+			provider TEXT,
+			http_code INTEGER,
+			input_tokens INTEGER,
+			output_tokens INTEGER,
+			cache_create_tokens INTEGER,
+			cache_read_tokens INTEGER,
+			reasoning_tokens INTEGER,
+			is_stream INTEGER,
+			duration_sec REAL
+		)
+	`)
+	if err != nil {
+		fmt.Printf("创建测试表失败: %v\n", err)
 		return
 	}
 

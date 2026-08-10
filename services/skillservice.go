@@ -133,19 +133,30 @@ type SkillService struct {
 	httpClient *http.Client
 	storePath  string
 	installDir string
+	initErr    error
 	mu         sync.Mutex
 }
 
 func NewSkillService() *SkillService {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "."
-	}
-	return &SkillService{
+	service := &SkillService{
 		httpClient: &http.Client{Timeout: 60 * time.Second},
-		storePath:  filepath.Join(home, skillStoreDir, skillStoreFile),
-		installDir: filepath.Join(home, ".claude", "skills"),
 	}
+	home, err := getUserHomeDir()
+	if err != nil {
+		// 技能目录和状态文件属于用户数据；没有可靠家目录时拒绝操作，避免污染当前项目。
+		service.initErr = fmt.Errorf("初始化技能目录失败: %w", err)
+		return service
+	}
+	service.storePath = filepath.Join(home, skillStoreDir, skillStoreFile)
+	service.installDir = filepath.Join(home, ".claude", "skills")
+	return service
+}
+
+func (ss *SkillService) requireUserStorage() error {
+	if ss == nil {
+		return errors.New("skill service is not initialized")
+	}
+	return ss.initErr
 }
 
 // getInstallPath 根据平台和位置返回 skills 目录路径
@@ -168,7 +179,7 @@ func (ss *SkillService) getInstallPath(platform, location string) (string, error
 		fallthrough
 	default:
 		// 用户级: 使用 home 目录
-		home, err := os.UserHomeDir()
+		home, err := getUserHomeDir()
 		if err != nil {
 			return "", fmt.Errorf("获取用户目录失败: %w", err)
 		}
@@ -299,7 +310,7 @@ func (ss *SkillService) scanSkillsDirectory(dir, platform, location string, code
 }
 
 func (ss *SkillService) getCodexPluginCachePath() (string, error) {
-	home, err := os.UserHomeDir()
+	home, err := getUserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("获取用户目录失败: %w", err)
 	}
@@ -671,7 +682,7 @@ func (ss *SkillService) getCodexConfigPath(location string) (string, error) {
 		}
 		basePath = cwd
 	default:
-		home, err := os.UserHomeDir()
+		home, err := getUserHomeDir()
 		if err != nil {
 			return "", fmt.Errorf("获取用户目录失败: %w", err)
 		}
@@ -1071,6 +1082,9 @@ func (ss *SkillService) UninstallSkill(directory string) error {
 	directory = strings.TrimSpace(directory)
 	if directory == "" {
 		return errors.New("skill directory 不能为空")
+	}
+	if err := ss.requireUserStorage(); err != nil {
+		return err
 	}
 	target := filepath.Join(ss.installDir, directory)
 	if err := os.RemoveAll(target); err != nil && !os.IsNotExist(err) {
@@ -1566,6 +1580,9 @@ func (ss *SkillService) loadStore() (skillStore, error) {
 }
 
 func (ss *SkillService) loadStoreLocked() (skillStore, error) {
+	if err := ss.requireUserStorage(); err != nil {
+		return skillStore{Skills: make(map[string]skillState)}, err
+	}
 	data, err := os.ReadFile(ss.storePath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -1637,6 +1654,9 @@ func equalRepo(a, b skillRepoConfig) bool {
 }
 
 func (ss *SkillService) saveStoreLocked(store skillStore) error {
+	if err := ss.requireUserStorage(); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(ss.storePath), 0o755); err != nil {
 		return err
 	}
@@ -1775,6 +1795,9 @@ func unzipArchive(zipPath, dest string) (string, error) {
 }
 
 func (ss *SkillService) mergeLocalSkills(skills map[string]Skill) {
+	if ss.requireUserStorage() != nil {
+		return
+	}
 	entries, err := os.ReadDir(ss.installDir)
 	if err != nil {
 		return
@@ -1853,6 +1876,9 @@ func normalizeDirectoryKey(directory string) string {
 }
 
 func (ss *SkillService) isInstalled(directory string) bool {
+	if ss.requireUserStorage() != nil {
+		return false
+	}
 	info, err := os.Stat(filepath.Join(ss.installDir, directory))
 	return err == nil && info.IsDir()
 }

@@ -380,7 +380,7 @@ func loadProvidersFromSQLite(db *sql.DB, cfg *ccSwitchConfig) error {
 }
 
 func ccSwitchConfigPath() (string, error) {
-	home, err := os.UserHomeDir()
+	home, err := getUserHomeDir()
 	if err != nil {
 		return "", err
 	}
@@ -402,7 +402,7 @@ func ccSwitchConfigPath() (string, error) {
 }
 
 func firstRunMarkerPath() (string, error) {
-	home, err := os.UserHomeDir()
+	home, err := getUserHomeDir()
 	if err != nil {
 		return "", err
 	}

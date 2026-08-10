@@ -190,7 +190,7 @@ func TestRequestCaptureService_CaptureFallsBackToCodexSessionProject(t *testing.
 		tmpHome,
 		sessionID,
 		"rollout-2026-06-16T10-00-04-"+sessionID+".jsonl",
-		`C:\Users\X1`,
+		`C:\Users\TestUser`,
 		[]string{projectDir},
 		[]string{
 			`{"type":"event_msg","timestamp":"2026-06-16T10:01:01Z","payload":{"type":"user_message","message":"capture 回退测试"}}`,
@@ -242,7 +242,7 @@ func TestRequestCaptureService_CaptureMigratesUnknownProjectDirectory(t *testing
 		tmpHome,
 		sessionID,
 		"rollout-2026-06-16T10-00-05-"+sessionID+".jsonl",
-		`C:\Users\X1`,
+		`C:\Users\TestUser`,
 		[]string{projectDir},
 		[]string{
 			`{"type":"event_msg","timestamp":"2026-06-16T10:01:01Z","payload":{"type":"user_message","message":"capture 迁移测试"}}`,
@@ -333,11 +333,11 @@ func TestDetectCaptureScope_UsesCodexHeadersAndMetadata(t *testing.T) {
 		"Session-Id":            "sess-header",
 		"Thread-Id":             "thread-header",
 		"X-Client-Request-Id":   "client-request",
-		"X-Codex-Turn-Metadata": `{"session_id":"sess-meta","thread_id":"thread-meta","workspaces":{"F:\\GitlabProjects\\code-switch-R":{"has_changes":true}}}`,
+		"X-Codex-Turn-Metadata": `{"session_id":"sess-meta","thread_id":"thread-meta","workspaces":{"C:\\workspace\\code-switch-test":{"has_changes":true}}}`,
 	}, []byte(`{"model":"gpt-5-codex"}`))
 
-	if projectID != `F:\GitlabProjects\code-switch-R` {
-		t.Fatalf("project_id = %q，期望 F:\\GitlabProjects\\code-switch-R", projectID)
+	if projectID != `C:\workspace\code-switch-test` {
+		t.Fatalf("project_id = %q，期望 C:\\workspace\\code-switch-test", projectID)
 	}
 	if sessionID != "sess-header" {
 		t.Fatalf("session_id = %q，期望 sess-header", sessionID)
@@ -346,11 +346,11 @@ func TestDetectCaptureScope_UsesCodexHeadersAndMetadata(t *testing.T) {
 
 func TestDetectCaptureScope_UsesCodexMetadataSessionWhenHeadersMissing(t *testing.T) {
 	projectID, sessionID := DetectCaptureScope(map[string]string{
-		"X-Codex-Turn-Metadata": `{"session_id":"sess-meta","thread_id":"thread-meta","workspaces":{"F:\\GitlabProjects\\code-switch-R":{"has_changes":true}}}`,
+		"X-Codex-Turn-Metadata": `{"session_id":"sess-meta","thread_id":"thread-meta","workspaces":{"C:\\workspace\\code-switch-test":{"has_changes":true}}}`,
 	}, []byte(`{"model":"gpt-5-codex"}`))
 
-	if projectID != `F:\GitlabProjects\code-switch-R` {
-		t.Fatalf("project_id = %q，期望 F:\\GitlabProjects\\code-switch-R", projectID)
+	if projectID != `C:\workspace\code-switch-test` {
+		t.Fatalf("project_id = %q，期望 C:\\workspace\\code-switch-test", projectID)
 	}
 	if sessionID != "sess-meta" {
 		t.Fatalf("session_id = %q，期望 sess-meta", sessionID)
@@ -365,13 +365,13 @@ func TestDetectCaptureScope_UsesProjectRootPathAndWorkdir(t *testing.T) {
 	}{
 		{
 			name: "project_root_path",
-			body: `{"tool":{"arguments":{"project_root_path":"F:\\GitlabProjects\\code-switch-R"}}}`,
-			want: `F:\GitlabProjects\code-switch-R`,
+			body: `{"tool":{"arguments":{"project_root_path":"C:\\workspace\\code-switch-test"}}}`,
+			want: `C:\workspace\code-switch-test`,
 		},
 		{
 			name: "workdir",
-			body: `{"tool":{"arguments":"{\"workdir\":\"F:\\\\GitlabProjects\\\\code-switch-R\"}"}}`,
-			want: `F:\GitlabProjects\code-switch-R`,
+			body: `{"tool":{"arguments":"{\"workdir\":\"C:\\\\workspace\\\\code-switch-test\"}"}}`,
+			want: `C:\workspace\code-switch-test`,
 		},
 	}
 
@@ -379,7 +379,7 @@ func TestDetectCaptureScope_UsesProjectRootPathAndWorkdir(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			projectID, sessionID := DetectCaptureScope(nil, []byte(tt.body))
 			if projectID != tt.want {
-				t.Fatalf("project_id = %q，期望 %q", projectID, tt.want)
+			t.Fatalf("project_id = %q，期望 %q", projectID, tt.want)
 			}
 			if sessionID != unknownSessionCaptureID {
 				t.Fatalf("session_id = %q，期望 %q", sessionID, unknownSessionCaptureID)
@@ -389,11 +389,11 @@ func TestDetectCaptureScope_UsesProjectRootPathAndWorkdir(t *testing.T) {
 }
 
 func TestDetectCaptureScope_UsesEnvironmentContextTextFallback(t *testing.T) {
-	body := `{"input":[{"content":[{"type":"input_text","text":"<environment_context><cwd>F:\\GitlabProjects\\code-switch-R</cwd><workspace_roots><root>F:\\GitlabProjects\\code-switch-R</root></workspace_roots></environment_context>"}]}]}`
+	body := `{"input":[{"content":[{"type":"input_text","text":"<environment_context><cwd>C:\\workspace\\code-switch-test</cwd><workspace_roots><root>C:\\workspace\\code-switch-test</root></workspace_roots></environment_context>"}]}]}`
 	projectID, sessionID := DetectCaptureScope(nil, []byte(body))
 
-	if projectID != `F:\GitlabProjects\code-switch-R` {
-		t.Fatalf("project_id = %q，期望 F:\\GitlabProjects\\code-switch-R", projectID)
+	if projectID != `C:\workspace\code-switch-test` {
+		t.Fatalf("project_id = %q，期望 C:\\workspace\\code-switch-test", projectID)
 	}
 	if sessionID != unknownSessionCaptureID {
 		t.Fatalf("session_id = %q，期望 %q", sessionID, unknownSessionCaptureID)

@@ -251,6 +251,10 @@ export function useUpdateStore() {
       await checkUpdate()
       // 状态会通过事件更新
     } catch (e) {
+      // 初始化失败的更新服务会直接拒绝调用且不会发送状态事件，必须在此收敛，避免界面永久停留在 checking。
+      globalState.state = 'error'
+      globalState.error = e instanceof Error ? e.message : String(e)
+      globalState.error_op = 'check'
       console.error('Check update failed:', e)
     }
   }

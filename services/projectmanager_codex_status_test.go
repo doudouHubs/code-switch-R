@@ -66,7 +66,7 @@ func TestMergeProjectManagerCodexHooksPreservesUserHooksAndIsIdempotent(t *testi
 		t.Fatal(err)
 	}
 
-	command := `C:\Users\X1\.code-switch\project-manager-codex-hook\CodeSwitch.codex-hook.cmd --codex-hook-event`
+	command := `C:\Users\TestUser\.code-switch\project-manager-codex-hook\CodeSwitch.codex-hook.cmd --codex-hook-event`
 	if err := mergeProjectManagerCodexHooks(path, command, false); err != nil {
 		t.Fatalf("merge hooks: %v", err)
 	}

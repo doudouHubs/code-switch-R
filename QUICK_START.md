@@ -2,16 +2,24 @@
 
 ## 🚀 5分钟快速启动
 
+> 前置：先按 `README.md` 的“环境准备”完成 Go、Node.js 和 Wails CLI 安装。
+
 ### Step 1: 启动应用
 
 ```bash
-cd G:\claude-lit\cc-r
+# 在仓库根目录执行
+cd frontend
+npm ci
+cd ..
 wails3 task dev
 ```
 
 ### Step 2: 配置示例（手动编辑 JSON）
 
-打开配置文件：`~/.code-switch/claude-code.json`
+打开配置文件：
+
+- Windows：`%USERPROFILE%\.code-switch\claude-code.json`
+- macOS/Linux：`~/.code-switch/claude-code.json`
 
 ```json
 {

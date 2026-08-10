@@ -14,8 +14,26 @@ import (
 )
 
 func main() {
-	home, _ := os.UserHomeDir()
+	// 脚本会读取真实数据库，不能让空或相对家目录退化为当前工作目录。
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Printf("获取用户目录失败: %v\n", err)
+		return
+	}
+	if !filepath.IsAbs(home) {
+		fmt.Printf("获取用户目录失败: 用户目录必须是绝对路径，实际为 %q\n", home)
+		return
+	}
 	dbPath := filepath.Join(home, ".code-switch", "app.db")
+	// 诊断只读已有数据库；SQLite 打开不存在的路径会创建空库，反而污染用户配置目录。
+	if _, err := os.Stat(dbPath); err != nil {
+		if os.IsNotExist(err) {
+			fmt.Println("数据库不存在，无法执行黑名单诊断")
+		} else {
+			fmt.Printf("检查数据库失败: %v\n", err)
+		}
+		return
+	}
 
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {

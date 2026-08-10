@@ -18,7 +18,7 @@ import (
 // 4. 确保表结构存在
 // 5. 预热连接池
 func InitDatabase() error {
-	home, err := os.UserHomeDir()
+	home, err := getUserHomeDir()
 	if err != nil {
 		return fmt.Errorf("获取用户目录失败: %w", err)
 	}

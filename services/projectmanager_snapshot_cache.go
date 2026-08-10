@@ -57,13 +57,14 @@ type projectManagerSnapshotCacheService struct {
 }
 
 func newProjectManagerSnapshotCacheService() *projectManagerSnapshotCacheService {
+	service := &projectManagerSnapshotCacheService{}
 	home, err := getUserHomeDir()
 	if err != nil {
-		home = "."
+		// 快照缓存只承担性能职责，不是业务事实源；无家目录时禁用持久化比写入工作目录更安全。
+		return service
 	}
-	return &projectManagerSnapshotCacheService{
-		path: filepath.Join(home, appSettingsDir, projectManagerSnapshotCacheFile),
-	}
+	service.path = filepath.Join(home, appSettingsDir, projectManagerSnapshotCacheFile)
+	return service
 }
 
 func (s *projectManagerSnapshotCacheService) load() (projectManagerSnapshotCache, error) {

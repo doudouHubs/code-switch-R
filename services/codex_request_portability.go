@@ -23,6 +23,7 @@ func (prs *ProviderRelayService) forwardRequest(
 	bodyBytes []byte,
 	isStream bool,
 	model string,
+	requestedModel string,
 ) (bool, error) {
 	attemptBody := bodyBytes
 	if codexPortableModeEnabled(c, kind) {
@@ -46,6 +47,7 @@ func (prs *ProviderRelayService) forwardRequest(
 		attemptBody,
 		isStream,
 		model,
+		requestedModel,
 	)
 	if ok || !shouldRetryCodexRequestWithoutProviderState(c, kind, err) {
 		return ok, err
@@ -73,6 +75,7 @@ func (prs *ProviderRelayService) forwardRequest(
 		portableBody,
 		isStream,
 		model,
+		requestedModel,
 	)
 }
 

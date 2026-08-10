@@ -56,23 +56,43 @@ func TestOverlayAliases(t *testing.T) {
 	}
 }
 
-// TestGPT56SolUsesGPT55Pricing 锁定临时模型名的全局估算口径,
-// 避免上游模型名先于基础价格表发布时整批请求被错误计为 0 元。
-func TestGPT56SolUsesGPT55Pricing(t *testing.T) {
+// TestGPT56ModelPricesMatchOpenCowork 锁定 OpenCowork 已定义的 GPT-5.6 独立价格。
+// 三个模型不是同价别名；把 terra/luna 复用 sol 的价格会让高用量统计显著失真。
+func TestGPT56ModelPricesMatchOpenCowork(t *testing.T) {
 	svc := newTestService(t)
-	usage := UsageSnapshot{
-		InputTokens:     1000,
-		OutputTokens:    100,
-		CacheReadTokens: 800,
+	cases := []struct {
+		model       string
+		inputPrice  float64
+		outputPrice float64
+		cachePrice  float64
+		createPrice float64
+	}{
+		{model: "gpt-5.6-sol", inputPrice: 5e-6, outputPrice: 30e-6, cachePrice: 0.5e-6},
+		{model: "gpt-5.6-terra", inputPrice: 2.5e-6, outputPrice: 15e-6, cachePrice: 0.25e-6, createPrice: 3.125e-6},
+		{model: "gpt-5.6-luna", inputPrice: 1e-6, outputPrice: 6e-6, cachePrice: 0.1e-6, createPrice: 1.25e-6},
 	}
+	usage := UsageSnapshot{InputTokens: 1000, OutputTokens: 1000, CacheReadTokens: 1000}
 
-	got := svc.CalculateCost("gpt-5.6-sol", usage)
-	want := svc.CalculateCost("gpt-5.5", usage)
-	if !got.HasPricing || got.TotalCost <= 0 {
-		t.Fatalf("gpt-5.6-sol 应命中非零定价,实际 %+v", got)
-	}
-	if got != want {
-		t.Fatalf("gpt-5.6-sol 应完全复用 gpt-5.5 定价: got=%+v want=%+v", got, want)
+	for _, tt := range cases {
+		entry, ok := svc.getPricing(tt.model)
+		if !ok || entry == nil {
+			t.Fatalf("%s 应命中定价", tt.model)
+		}
+		if entry.InputCostPerToken != tt.inputPrice || entry.OutputCostPerToken != tt.outputPrice || entry.CacheReadInputTokenCost != tt.cachePrice {
+			t.Fatalf("%s 价格错误: entry=%+v", tt.model, entry)
+		}
+		if tt.createPrice > 0 && entry.CacheCreationInputTokenCost != tt.createPrice {
+			t.Fatalf("%s 缓存创建价错误: got=%g want=%g", tt.model, entry.CacheCreationInputTokenCost, tt.createPrice)
+		}
+
+		got := svc.CalculateCost(tt.model, usage)
+		if !got.HasPricing || got.TotalCost <= 0 {
+			t.Fatalf("%s 应命中非零定价,实际 %+v", tt.model, got)
+		}
+		wantTotal := float64(usage.InputTokens)*tt.inputPrice + float64(usage.OutputTokens)*tt.outputPrice + float64(usage.CacheReadTokens)*tt.cachePrice
+		if got.TotalCost != wantTotal {
+			t.Fatalf("%s 总价错误: got=%g want=%g", tt.model, got.TotalCost, wantTotal)
+		}
 	}
 }
 
@@ -382,16 +402,21 @@ func TestCache1hFromJSONFirst(t *testing.T) {
 	}
 }
 
-// TestOverlayMissingTargetFailFast 验证 overlay 里 target 不存在时启动失败。
-// 用替换 overlayFile 的方式模拟错误配置(恢复原值避免影响其他测试)。
-func TestOverlayMissingTargetFailFast(t *testing.T) {
+// TestInvalidOverlayFailsFast 验证错误的 alias 或临时模型价格会在启动时失败。
+// 费用统计不能容忍不完整配置，否则高用量请求会在页面上静默显示为 0 元。
+func TestInvalidOverlayFailsFast(t *testing.T) {
 	original := overlayFile
 	defer func() { overlayFile = original }()
 
-	overlayFile = []byte(`{"aliases": {"fake-model": "this-target-does-not-exist-xyz"}}`)
-	// 需要绕过 sync.Once,直接调用 NewService
-	if _, err := NewService(); err == nil {
-		t.Error("overlay 映射到不存在的 target,NewService 应返回 error")
+	for name, content := range map[string]string{
+		"missing alias target": `{"aliases": {"fake-model": "this-target-does-not-exist-xyz"}}`,
+		"missing model output price": `{"models": {"gpt-5.6-invalid": {"input_cost_per_token": 0.000001}}}`,
+	} {
+		overlayFile = []byte(content)
+		// 需要绕过 sync.Once，直接调用 NewService。
+		if _, err := NewService(); err == nil {
+			t.Errorf("%s 的 overlay 配置应启动失败", name)
+		}
 	}
 }
 

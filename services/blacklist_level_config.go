@@ -9,7 +9,7 @@ import (
 
 // GetBlacklistLevelConfigPath 获取等级拉黑配置文件路径
 func GetBlacklistLevelConfigPath() (string, error) {
-	home, err := os.UserHomeDir()
+	home, err := getUserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("获取用户目录失败: %w", err)
 	}

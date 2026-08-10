@@ -49,7 +49,7 @@ func TestProjectManagerCodexHookCmdPathIsSafe(t *testing.T) {
 		path string
 		want bool
 	}{
-		{path: `C:\Users\X1\.code-switch\CodeSwitch.codex-hook.cmd`, want: true},
+		{path: `C:\Users\TestUser\.code-switch\CodeSwitch.codex-hook.cmd`, want: true},
 		{path: `C:\Users\Jane Doe\.code-switch\CodeSwitch.codex-hook.cmd`, want: false},
 		{path: `C:\work&unsafe\CodeSwitch.codex-hook.cmd`, want: false},
 		{path: ``, want: false},

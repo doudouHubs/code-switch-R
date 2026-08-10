@@ -31,7 +31,17 @@ type Config struct {
 }
 
 func main() {
-	home, _ := os.UserHomeDir()
+	// 诊断脚本读取本机配置前先校验家目录，避免异常环境把路径退化到当前目录。
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "获取用户目录失败: %v\n", err)
+		return
+	}
+	home = filepath.Clean(home)
+	if !filepath.IsAbs(home) {
+		fmt.Fprintln(os.Stderr, "用户目录必须是绝对路径")
+		return
+	}
 	configPath := filepath.Join(home, ".code-switch", "claude-code.json")
 
 	data, err := os.ReadFile(configPath)
@@ -41,7 +51,10 @@ func main() {
 	}
 
 	var config Config
-	json.Unmarshal(data, &config)
+	if err := json.Unmarshal(data, &config); err != nil {
+		fmt.Printf("解析配置失败: %v\n", err)
+		return
+	}
 
 	fmt.Println("================================================================")
 	fmt.Println("多供应商对比测试")
@@ -61,7 +74,7 @@ func main() {
 		url := strings.TrimSuffix(p.APIURL, "/") + "/v1/messages"
 		fmt.Printf("--- %s ---\n", p.Name)
 		fmt.Printf("URL: %s\n", url)
-		fmt.Printf("Key: %s...%s\n", p.APIKey[:min(8, len(p.APIKey))], p.APIKey[max(0, len(p.APIKey)-4):])
+		fmt.Println("Key: [redacted]")
 
 		req, _ := http.NewRequest("POST", url, bytes.NewBufferString(body))
 		req.Header.Set("Content-Type", "application/json")
@@ -80,6 +93,7 @@ func main() {
 
 		respBody, _ := io.ReadAll(resp.Body)
 		respStr := string(respBody)
+		respStr = strings.ReplaceAll(respStr, p.APIKey, "[redacted]")
 
 		// 判断是否成功
 		isSuccess := resp.StatusCode == 200 &&
@@ -106,18 +120,4 @@ func main() {
 	fmt.Println()
 	fmt.Println("如果所有供应商都失败:")
 	fmt.Println("  → 请求格式或网络有问题")
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

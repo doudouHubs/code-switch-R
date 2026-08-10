@@ -10,7 +10,7 @@ import (
 // providerFilePathNoCreate 返回 provider 配置文件路径（不创建目录）
 // 用于只读操作场景，避免副作用
 func providerFilePathNoCreate(kind string) (string, error) {
-	home, err := os.UserHomeDir()
+	home, err := getUserHomeDir()
 	if err != nil {
 		return "", err
 	}

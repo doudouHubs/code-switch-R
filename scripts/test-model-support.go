@@ -35,7 +35,16 @@ func (p *Provider) IsModelSupported(modelName string) bool {
 }
 
 func main() {
-	home, _ := os.UserHomeDir()
+	// 配置只能从明确的绝对家目录读取，避免相对路径误读仓库内文件。
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Printf("获取用户目录失败: %v\n", err)
+		return
+	}
+	if !filepath.IsAbs(home) {
+		fmt.Printf("获取用户目录失败: 用户目录必须是绝对路径，实际为 %q\n", home)
+		return
+	}
 	filePath := filepath.Join(home, ".code-switch", "claude-code.json")
 
 	fmt.Printf("读取配置文件: %s\n", filePath)

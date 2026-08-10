@@ -3,8 +3,8 @@ Gemini 实现问题汇总 (cc-r vs cc-switch)
 ========================================
 
 分析对象：
-- 参考项目：G:\claude-lit\cc-sw\cc-switch (Rust/Tauri)
-- 当前项目：G:\claude-lit\cc-r (Go/Wails3)
+- 参考项目：cc-switch (Rust/Tauri)
+- 当前项目：code-switch-R (Go/Wails3)
 
 分析日期：2025-11-29
 

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -21,7 +22,11 @@ func main() {
 	// 模拟前端传递的参数（直接从配置文件读取的值）
 	platform := "claude"
 	apiURL := "https://m.88code.org/api"
-	apiKey := "88_784022b235595e84936fa42596b41bcad3dc24a79ced14a5d0d4489937ba36e8"
+	apiKey := os.Getenv("CODESWITCH_88CODE_API_KEY")
+	if apiKey == "" {
+		fmt.Fprintln(os.Stderr, "CODESWITCH_88CODE_API_KEY is required")
+		os.Exit(2)
+	}
 	model := ""                // 用户可能没有配置 connectivityTestModel
 	endpoint := "/v1/messages" // 从配置文件读取
 	authType := "x-api-key"    // 从配置文件读取
@@ -32,7 +37,7 @@ func main() {
 	fmt.Printf("参数：\n")
 	fmt.Printf("  platform: %q\n", platform)
 	fmt.Printf("  apiURL:   %q\n", apiURL)
-	fmt.Printf("  apiKey:   %q (len=%d)\n", apiKey[:15]+"...", len(apiKey))
+	fmt.Printf("  apiKey:   [redacted] (len=%d)\n", len(apiKey))
 	fmt.Printf("  model:    %q (空=使用默认值)\n", model)
 	fmt.Printf("  endpoint: %q\n", endpoint)
 	fmt.Printf("  authType: %q\n", authType)
@@ -107,7 +112,7 @@ func main() {
 	fmt.Println("\n所有请求头:")
 	for k, v := range req.Header {
 		if k == "X-Api-Key" || k == "Authorization" {
-			fmt.Printf("  %s: %s...%s\n", k, v[0][:20], v[0][len(v[0])-4:])
+			fmt.Printf("  %s: [redacted] (len=%d)\n", k, len(v[0]))
 		} else {
 			fmt.Printf("  %s: %s\n", k, v[0])
 		}

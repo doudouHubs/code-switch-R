@@ -6,12 +6,10 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -19,46 +17,22 @@ import (
 // 测试 88code 的各种请求变体
 // Author: Half open flowers
 
-type ProviderConfig struct {
-	Providers []struct {
-		Name   string `json:"name"`
-		APIURL string `json:"apiUrl"`
-		APIKey string `json:"apiKey"`
-	} `json:"providers"`
-}
-
 func main() {
-	home, _ := os.UserHomeDir()
-	configPath := filepath.Join(home, ".code-switch", "claude-code.json")
-
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		fmt.Printf("读取配置失败: %v\n", err)
-		return
-	}
-
-	var config ProviderConfig
-	json.Unmarshal(data, &config)
-
-	var apiKey, apiURL string
-	for _, p := range config.Providers {
-		if strings.Contains(strings.ToLower(p.Name), "88code") {
-			apiKey = strings.TrimSpace(p.APIKey)
-			apiURL = strings.TrimSpace(p.APIURL)
-			break
-		}
-	}
-
+	// 诊断脚本不读取用户配置文件，避免把本机路径和密钥带入开源复现日志。
+	apiKey := strings.TrimSpace(os.Getenv("CODESWITCH_88CODE_API_KEY"))
 	if apiKey == "" {
-		fmt.Println("未找到 88code")
+		fmt.Fprintln(os.Stderr, "CODESWITCH_88CODE_API_KEY is required")
 		return
+	}
+	apiURL := strings.TrimSpace(os.Getenv("CODESWITCH_88CODE_API_URL"))
+	if apiURL == "" {
+		apiURL = "https://m.88code.org"
 	}
 
 	fmt.Println("================================================================")
 	fmt.Println("88code 请求变体测试")
 	fmt.Println("================================================================")
-	fmt.Printf("API Key 长度: %d\n", len(apiKey))
-	fmt.Printf("API Key 前缀: %s\n", apiKey[:6])
+	fmt.Println("API Key: [redacted]")
 	fmt.Println()
 
 	client := &http.Client{Timeout: 30 * time.Second}
@@ -118,6 +92,7 @@ func main() {
 
 		respBody, _ := io.ReadAll(resp.Body)
 		respStr := string(respBody)
+		respStr = redactSecrets(respStr, apiKey)
 
 		if len(respStr) > 200 {
 			respStr = respStr[:200] + "..."
@@ -153,6 +128,7 @@ func main() {
 
 		respBody, _ := io.ReadAll(resp.Body)
 		respStr := string(respBody)
+		respStr = redactSecrets(respStr, apiKey)
 
 		if len(respStr) > 200 {
 			respStr = respStr[:200] + "..."
@@ -177,7 +153,7 @@ func main() {
 
 	for _, kv := range keyVariants {
 		fmt.Printf("\n--- %s ---\n", kv.name)
-		fmt.Printf("Key: %s...%s\n", kv.key[:min(10, len(kv.key))], kv.key[max(0, len(kv.key)-4):])
+		fmt.Println("Key: [redacted]")
 
 		req, _ := http.NewRequest("POST", urls[0], bytes.NewBufferString(body))
 		req.Header.Set("Content-Type", "application/json")
@@ -196,6 +172,7 @@ func main() {
 
 		respBody, _ := io.ReadAll(resp.Body)
 		respStr := string(respBody)
+		respStr = redactSecrets(respStr, apiKey, kv.key)
 
 		if len(respStr) > 200 {
 			respStr = respStr[:200] + "..."
@@ -205,16 +182,12 @@ func main() {
 	}
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
+// 服务端错误响应可能回显认证头，写入控制台前必须替换所有本轮使用的密钥变体。
+func redactSecrets(value string, secrets ...string) string {
+	for _, secret := range secrets {
+		if secret != "" {
+			value = strings.ReplaceAll(value, secret, "[redacted]")
+		}
 	}
-	return b
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
+	return value
 }

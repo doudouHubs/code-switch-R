@@ -58,6 +58,7 @@ type ConfigureResult struct {
 type NetworkService struct {
 	mu            sync.Mutex
 	settingsPath  string
+	initErr       error
 	relayAddr     string
 	claudeService *ClaudeSettingsService
 	codexService  *CodexSettingsService
@@ -71,18 +72,22 @@ func NewNetworkService(
 	codexService *CodexSettingsService,
 	geminiService *GeminiService,
 ) *NetworkService {
-	home, err := getUserHomeDir()
-	if err != nil {
-		home = "."
-	}
-
-	return &NetworkService{
-		settingsPath:  filepath.Join(home, appSettingsDir, networkSettingsFile),
+	service := &NetworkService{
 		relayAddr:     relayAddr,
 		claudeService: claudeService,
 		codexService:  codexService,
 		geminiService: geminiService,
 	}
+
+	home, err := getUserHomeDir()
+	if err != nil {
+		// 网络设置属于用户配置，目录不可用时必须报错，不能写进启动目录或仓库根目录。
+		service.initErr = fmt.Errorf("初始化网络配置目录失败: %w", err)
+		return service
+	}
+
+	service.settingsPath = filepath.Join(home, appSettingsDir, networkSettingsFile)
+	return service
 }
 
 // defaultSettings 默认网络设置
@@ -102,6 +107,9 @@ func (ns *NetworkService) defaultSettings() NetworkSettings {
 
 // GetNetworkSettings 获取网络设置
 func (ns *NetworkService) GetNetworkSettings() (NetworkSettings, error) {
+	if ns.initErr != nil {
+		return ns.defaultSettings(), ns.initErr
+	}
 	ns.mu.Lock()
 	defer ns.mu.Unlock()
 
@@ -130,6 +138,9 @@ func (ns *NetworkService) GetNetworkSettings() (NetworkSettings, error) {
 
 // SaveNetworkSettings 保存网络设置
 func (ns *NetworkService) SaveNetworkSettings(settings NetworkSettings) error {
+	if ns.initErr != nil {
+		return ns.initErr
+	}
 	ns.mu.Lock()
 	defer ns.mu.Unlock()
 

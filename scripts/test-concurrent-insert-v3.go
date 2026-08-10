@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -14,11 +15,15 @@ import (
 )
 
 func main() {
-	// 使用临时测试数据库
-	dbPath := "./test_concurrent.db"
+	// 并发诊断不能污染调用目录；目录级清理可同时覆盖 SQLite 的 WAL/SHM 旁文件。
+	tempDir, err := os.MkdirTemp("", "code-switch-concurrent-insert-*")
+	if err != nil {
+		fmt.Printf("创建临时数据库目录失败: %v\n", err)
+		return
+	}
+	defer os.RemoveAll(tempDir)
 
-	// 删除旧的测试数据库
-	os.Remove(dbPath)
+	dbPath := filepath.Join(tempDir, "test_concurrent.db")
 
 	fmt.Printf("测试数据库: %s\n\n", dbPath)
 
@@ -29,7 +34,6 @@ func main() {
 		return
 	}
 	defer db.Close()
-	defer os.Remove(dbPath) // 清理测试数据库
 
 	// 设置busy_timeout（10秒）
 	_, err = db.Exec("PRAGMA busy_timeout = 10000")

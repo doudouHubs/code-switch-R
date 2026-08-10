@@ -14,11 +14,18 @@ import (
 )
 
 func main() {
-	// 初始化数据库连接
-	home, _ := os.UserHomeDir()
-	dbPath := filepath.Join(home, ".code-switch", "app.db?cache=shared&mode=rwc&_busy_timeout=10000&_journal_mode=WAL")
+	// 并发实验不应写入用户的请求日志库，使用独立临时目录并在结束后清理所有 SQLite 旁文件。
+	tempDir, err := os.MkdirTemp("", "code-switch-concurrent-insert-*")
+	if err != nil {
+		fmt.Printf("创建临时数据库目录失败: %v\n", err)
+		return
+	}
+	defer os.RemoveAll(tempDir)
 
-	fmt.Printf("测试数据库: %s\n\n", filepath.Join(home, ".code-switch", "app.db"))
+	databasePath := filepath.Join(tempDir, "test_concurrent.db")
+	dbPath := databasePath + "?cache=shared&mode=rwc&_busy_timeout=10000&_journal_mode=WAL"
+
+	fmt.Printf("测试数据库: %s\n\n", databasePath)
 
 	if err := xdb.Inits([]xdb.Config{
 		{
@@ -28,6 +35,34 @@ func main() {
 		},
 	}); err != nil {
 		fmt.Printf("初始化数据库失败: %v\n", err)
+		return
+	}
+
+	db, err := xdb.DB("default")
+	if err != nil {
+		fmt.Printf("获取数据库连接失败: %v\n", err)
+		return
+	}
+	defer db.Close()
+
+	// 临时库不具备应用表结构，先创建本脚本所需的最小表，避免依赖用户真实数据库。
+	if _, err := db.Exec(`
+		CREATE TABLE request_log (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			platform TEXT,
+			model TEXT,
+			provider TEXT,
+			http_code INTEGER,
+			input_tokens INTEGER,
+			output_tokens INTEGER,
+			cache_create_tokens INTEGER,
+			cache_read_tokens INTEGER,
+			reasoning_tokens INTEGER,
+			is_stream INTEGER,
+			duration_sec REAL
+		)
+	`); err != nil {
+		fmt.Printf("创建测试表失败: %v\n", err)
 		return
 	}
 

@@ -56,7 +56,7 @@ func (ns *NotificationService) SetApp(app *application.App) {
 // @author sm
 func (ns *NotificationService) ensureIconFile() string {
 	// 获取用户配置目录
-	homeDir, err := os.UserHomeDir()
+	homeDir, err := getUserHomeDir()
 	if err != nil {
 		log.Printf("[Notification] 获取用户目录失败: %v", err)
 		return ""

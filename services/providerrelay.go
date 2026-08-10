@@ -346,8 +346,10 @@ func (prs *ProviderRelayService) registerRoutes(router gin.IRouter) {
 	router.POST("/v1/messages", prs.proxyHandler("claude", "/v1/messages"))
 	router.POST("/responses", prs.proxyHandler("codex", "/responses"))
 
-	// /v1/models 端点（OpenAI-compatible API）
-	// 支持 Claude 和 Codex 平台
+	// OpenCoWork discovers OpenAI-compatible models at GET {baseUrl}/models.
+	router.GET("/models", prs.modelsHandler("codex"))
+
+	// Legacy OpenAI-compatible models endpoint for Claude providers.
 	router.GET("/v1/models", prs.modelsHandler("claude"))
 
 	// Gemini API 端点（使用专门的路径前缀避免与 Claude 冲突）
@@ -587,7 +589,7 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 							provider.Name, level, retryCount+1, maxRetryPerProvider, effectiveModel)
 
 						startTime := time.Now()
-						ok, err := prs.forwardRequest(c, kind, provider, effectiveEndpoint, query, clientHeaders, currentBodyBytes, isStream, effectiveModel)
+						ok, err := prs.forwardRequest(c, kind, provider, effectiveEndpoint, query, clientHeaders, currentBodyBytes, isStream, effectiveModel, requestedModel)
 						duration := time.Since(startTime)
 
 						if ok {
@@ -714,7 +716,7 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 				// 获取有效的端点（用户配置优先）
 				effectiveEndpoint := provider.GetEffectiveEndpoint(endpoint)
 				startTime := time.Now()
-				ok, err := prs.forwardRequest(c, kind, provider, effectiveEndpoint, query, clientHeaders, currentBodyBytes, isStream, effectiveModel)
+				ok, err := prs.forwardRequest(c, kind, provider, effectiveEndpoint, query, clientHeaders, currentBodyBytes, isStream, effectiveModel, requestedModel)
 				duration := time.Since(startTime)
 
 				if ok {
@@ -849,6 +851,7 @@ func (prs *ProviderRelayService) retryProjectPreferredProviderUntilRequestEnds(
 			currentBodyBytes,
 			isStream,
 			effectiveModel,
+			requestedModel,
 		)
 		if ok {
 			if recordErr := prs.blacklistService.RecordSuccess(kind, provider.Name); recordErr != nil {
@@ -899,6 +902,7 @@ func (prs *ProviderRelayService) forwardRequestOnce(
 	bodyBytes []byte,
 	isStream bool,
 	model string,
+	requestedModel string,
 ) (bool, error) {
 	targetURL := joinURL(provider.APIURL, endpoint)
 	headers := cloneMap(clientHeaders)
@@ -976,16 +980,18 @@ func (prs *ProviderRelayService) forwardRequestOnce(
 	}
 
 	requestLog := &ReqeustLog{
-		Platform: kind,
-		Provider: provider.Name,
-		Model:    model,
-		IsStream: isStream,
+		Platform:       kind,
+		Provider:       provider.Name,
+		Model:          model,
+		RequestedModel: firstNonEmptyString(requestedModel, model),
+		IsStream:       isStream,
 	}
 	start := time.Now()
 	defer func() {
 		requestLog.DurationSec = time.Since(start).Seconds()
 		// 若请求过程中发生 rename,把旧名兑换成新名再落库
 		requestLog.Provider = ResolveProviderAlias(requestLog.Platform, requestLog.Provider)
+		finalizeRequestLogUsage(requestLog)
 
 		// 【修复】判空保护：避免队列未初始化时 panic
 		if GlobalDBQueueLogs == nil {
@@ -1005,8 +1011,9 @@ func (prs *ProviderRelayService) forwardRequestOnce(
 				platform, model, provider, http_code,
 				input_tokens, output_tokens, cache_create_tokens, cache_read_tokens,
 				reasoning_tokens, is_stream, duration_sec,
-				ephemeral_5m_tokens, ephemeral_1h_tokens, service_tier
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				ephemeral_5m_tokens, ephemeral_1h_tokens, service_tier,
+				requested_model, billable_input_tokens, usage_accounting_version, usage_raw_json
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 			requestLog.Platform,
 			requestLog.Model,
@@ -1022,6 +1029,10 @@ func (prs *ProviderRelayService) forwardRequestOnce(
 			requestLog.Ephemeral5mTokens,
 			requestLog.Ephemeral1hTokens,
 			requestLog.ServiceTier,
+			requestLog.RequestedModel,
+			requestLog.BillableInputTokens,
+			requestLog.UsageAccountingVersion,
+			requestLog.UsageRawJSON,
 		)
 
 		if err != nil {
@@ -1204,6 +1215,14 @@ func joinURL(base string, endpoint string) string {
 	return base + endpoint
 }
 
+func modelsURL(base string) string {
+	base = strings.TrimSuffix(base, "/")
+	if strings.HasSuffix(strings.ToLower(base), "/v1") {
+		return base + "/models"
+	}
+	return joinURL(base, "/v1/models")
+}
+
 func (prs *ProviderRelayService) captureRequest(ctx RequestCaptureContext) {
 	if prs == nil || prs.requestCapture == nil {
 		return
@@ -1275,6 +1294,10 @@ func ensureRequestLogTableWithDB(db *sql.DB) error {
 		{"ephemeral_5m_tokens", "INTEGER DEFAULT 0"},
 		{"ephemeral_1h_tokens", "INTEGER DEFAULT 0"},
 		{"service_tier", "TEXT DEFAULT ''"},
+		{"requested_model", "TEXT DEFAULT ''"},
+		{"billable_input_tokens", "INTEGER DEFAULT 0"},
+		{"usage_accounting_version", "INTEGER DEFAULT 0"},
+		{"usage_raw_json", "TEXT DEFAULT ''"},
 	}
 	for _, m := range migrations {
 		if err := ensureRequestLogColumn(db, m.column, m.definition); err != nil {
@@ -1345,6 +1368,7 @@ type ReqeustLog struct {
 	ID                int64  `json:"id"`
 	Platform          string `json:"platform"` // claude、codex 或 gemini
 	Model             string `json:"model"`
+	RequestedModel    string `json:"requested_model"`
 	Provider          string `json:"provider"` // provider name
 	HttpCode          int    `json:"http_code"`
 	InputTokens       int    `json:"input_tokens"`
@@ -1360,16 +1384,20 @@ type ReqeustLog struct {
 	DurationSec       float64 `json:"duration_sec"`
 	CreatedAt         string  `json:"created_at"`
 	// ServiceTier 上游实际分配的档位(default/priority/flex 等),空=未区分。
-	ServiceTier     string  `json:"service_tier"`
-	InputCost       float64 `json:"input_cost"`
-	OutputCost      float64 `json:"output_cost"`
-	ReasoningCost   float64 `json:"reasoning_cost"`
-	CacheCreateCost float64 `json:"cache_create_cost"`
-	CacheReadCost   float64 `json:"cache_read_cost"`
-	Ephemeral5mCost float64 `json:"ephemeral_5m_cost"`
-	Ephemeral1hCost float64 `json:"ephemeral_1h_cost"`
-	TotalCost       float64 `json:"total_cost"`
-	HasPricing      bool    `json:"has_pricing"`
+	ServiceTier string `json:"service_tier"`
+	// BillableInputTokens 只表示普通输入价对应的 Token；原始输入和缓存 Token 分列保留。
+	BillableInputTokens    int     `json:"billable_input_tokens"`
+	UsageAccountingVersion int     `json:"usage_accounting_version"`
+	UsageRawJSON           string  `json:"usage_raw_json,omitempty"`
+	InputCost              float64 `json:"input_cost"`
+	OutputCost             float64 `json:"output_cost"`
+	ReasoningCost          float64 `json:"reasoning_cost"`
+	CacheCreateCost        float64 `json:"cache_create_cost"`
+	CacheReadCost          float64 `json:"cache_read_cost"`
+	Ephemeral5mCost        float64 `json:"ephemeral_5m_cost"`
+	Ephemeral1hCost        float64 `json:"ephemeral_1h_cost"`
+	TotalCost              float64 `json:"total_cost"`
+	HasPricing             bool    `json:"has_pricing"`
 }
 
 // claude code usage parser
@@ -1383,6 +1411,7 @@ type ReqeustLog struct {
 func ClaudeCodeParseTokenUsageFromResponse(data string, usage *ReqeustLog) {
 	collectAnthropicUsage(data, "message.usage", usage)
 	collectAnthropicUsage(data, "usage", usage)
+	observedModelFromResponse(usage, gjson.Get(data, "message.model").String(), gjson.Get(data, "model").String())
 	clampCacheEphemerals(usage)
 }
 
@@ -1408,17 +1437,26 @@ func maxIntInto(dst *int, candidate int) {
 
 // codex usage parser(OpenAI Responses API)
 func CodexParseTokenUsageFromResponse(data string, usage *ReqeustLog) {
-	usage.InputTokens += int(gjson.Get(data, "response.usage.input_tokens").Int())
-	usage.OutputTokens += int(gjson.Get(data, "response.usage.output_tokens").Int())
-	usage.CacheReadTokens += int(gjson.Get(data, "response.usage.input_tokens_details.cached_tokens").Int())
-	usage.ReasoningTokens += int(gjson.Get(data, "response.usage.output_tokens_details.reasoning_tokens").Int())
+	// Responses API 的流式事件与非流响应分别把 usage 放在 response.usage / usage。
+	// 二者都是一次请求的累计快照，取 max 可避免 response.completed 被中转重复发送时翻倍。
+	collectCodexUsage(data, "response.usage", usage)
+	collectCodexUsage(data, "usage", usage)
+	observedModelFromResponse(usage, gjson.Get(data, "response.model").String(), gjson.Get(data, "model").String())
 	// service_tier 可能在 response.service_tier 或 response.usage.service_tier,两路径都尝试
-	for _, path := range []string{"response.service_tier", "response.usage.service_tier"} {
+	for _, path := range []string{"response.service_tier", "response.usage.service_tier", "service_tier", "usage.service_tier"} {
 		if rawTier := gjson.Get(data, path).String(); strings.TrimSpace(rawTier) != "" {
 			usage.ServiceTier = string(modelpricing.NormalizeObservedServiceTier(rawTier, warnUnknownTier))
 			break
 		}
 	}
+}
+
+func collectCodexUsage(data string, prefix string, usage *ReqeustLog) {
+	maxIntInto(&usage.InputTokens, int(gjson.Get(data, prefix+".input_tokens").Int()))
+	maxIntInto(&usage.OutputTokens, int(gjson.Get(data, prefix+".output_tokens").Int()))
+	maxIntInto(&usage.CacheCreateTokens, int(gjson.Get(data, prefix+".input_tokens_details.cache_write_tokens").Int()))
+	maxIntInto(&usage.CacheReadTokens, int(gjson.Get(data, prefix+".input_tokens_details.cached_tokens").Int()))
+	maxIntInto(&usage.ReasoningTokens, int(gjson.Get(data, prefix+".output_tokens_details.reasoning_tokens").Int()))
 }
 
 // clampCacheEphemerals 兜底 Anthropic ephemeral 拆分的异常情况:
@@ -1463,6 +1501,7 @@ func GeminiParseTokenUsageFromResponse(data string, usage *ReqeustLog) {
 		return
 	}
 	mergeGeminiUsageMetadata(usageResult, usage)
+	observedModelFromResponse(usage, gjson.Get(data, "modelVersion").String(), gjson.Get(data, "model").String())
 }
 
 // mergeGeminiUsageMetadata 合并 Gemini usageMetadata 到 ReqeustLog（取最大值去重）
@@ -1691,10 +1730,11 @@ func (prs *ProviderRelayService) geminiProxyHandler(apiVersion string) gin.Handl
 
 		// 请求日志
 		requestLog := &ReqeustLog{
-			Platform:     "gemini",
-			IsStream:     isStream,
-			InputTokens:  0,
-			OutputTokens: 0,
+			Platform:       "gemini",
+			RequestedModel: extractGeminiModelFromEndpoint(endpoint),
+			IsStream:       isStream,
+			InputTokens:    0,
+			OutputTokens:   0,
 		}
 		start := time.Now()
 
@@ -1703,6 +1743,7 @@ func (prs *ProviderRelayService) geminiProxyHandler(apiVersion string) gin.Handl
 			requestLog.DurationSec = time.Since(start).Seconds()
 			// 若请求过程中发生 rename,把旧名兑换成新名再落库
 			requestLog.Provider = ResolveProviderAlias(requestLog.Platform, requestLog.Provider)
+			finalizeRequestLogUsage(requestLog)
 			if GlobalDBQueueLogs == nil {
 				return
 			}
@@ -1713,14 +1754,17 @@ func (prs *ProviderRelayService) geminiProxyHandler(apiVersion string) gin.Handl
 					platform, model, provider, http_code,
 					input_tokens, output_tokens, cache_create_tokens, cache_read_tokens,
 					reasoning_tokens, is_stream, duration_sec,
-					ephemeral_5m_tokens, ephemeral_1h_tokens, service_tier
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					ephemeral_5m_tokens, ephemeral_1h_tokens, service_tier,
+					requested_model, billable_input_tokens, usage_accounting_version, usage_raw_json
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			`,
 				requestLog.Platform, requestLog.Model, requestLog.Provider, requestLog.HttpCode,
 				requestLog.InputTokens, requestLog.OutputTokens, requestLog.CacheCreateTokens,
 				requestLog.CacheReadTokens, requestLog.ReasoningTokens,
 				boolToInt(requestLog.IsStream), requestLog.DurationSec,
 				requestLog.Ephemeral5mTokens, requestLog.Ephemeral1hTokens, requestLog.ServiceTier,
+				requestLog.RequestedModel, requestLog.BillableInputTokens,
+				requestLog.UsageAccountingVersion, requestLog.UsageRawJSON,
 			)
 		}()
 
@@ -2239,7 +2283,7 @@ func (prs *ProviderRelayService) customCliProxyHandler() gin.HandlerFunc {
 							provider.Name, level, retryCount+1, maxRetryPerProvider, effectiveModel)
 
 						startTime := time.Now()
-						ok, err := prs.forwardRequest(c, kind, provider, effectiveEndpoint, query, clientHeaders, currentBodyBytes, isStream, effectiveModel)
+						ok, err := prs.forwardRequest(c, kind, provider, effectiveEndpoint, query, clientHeaders, currentBodyBytes, isStream, effectiveModel, requestedModel)
 						duration := time.Since(startTime)
 
 						if ok {
@@ -2349,7 +2393,7 @@ func (prs *ProviderRelayService) customCliProxyHandler() gin.HandlerFunc {
 				effectiveEndpoint := provider.GetEffectiveEndpoint(endpoint)
 
 				startTime := time.Now()
-				ok, err := prs.forwardRequest(c, kind, provider, effectiveEndpoint, query, clientHeaders, currentBodyBytes, isStream, effectiveModel)
+				ok, err := prs.forwardRequest(c, kind, provider, effectiveEndpoint, query, clientHeaders, currentBodyBytes, isStream, effectiveModel, requestedModel)
 				duration := time.Since(startTime)
 
 				if ok {
@@ -2492,8 +2536,11 @@ func (prs *ProviderRelayService) forwardModelsRequest(
 
 	fmt.Printf("[%s] 使用 Provider: %s | URL: %s\n", logPrefix, selectedProvider.Name, selectedProvider.APIURL)
 
-	// 构建目标 URL（拼接 provider 的 APIURL 和 /v1/models）
 	targetURL := joinURL(selectedProvider.APIURL, "/v1/models")
+	if kind == "codex" {
+		// Codex providers commonly store an API base ending in /v1.
+		targetURL = modelsURL(selectedProvider.APIURL)
+	}
 
 	// 创建 HTTP 请求
 	req, err := http.NewRequest("GET", targetURL, nil)

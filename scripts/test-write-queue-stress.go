@@ -10,7 +10,8 @@ import (
 	"codeswitch/services"
 	"context"
 	"fmt"
-	"log"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"time"
 
@@ -22,22 +23,36 @@ func main() {
 	fmt.Println("目标：500 req/s 持续 60 秒，验证 100% 写入成功")
 	fmt.Println()
 
+	// 压力测试必须使用独立临时数据库，不能在启动目录遗留 app.db 或污染应用数据。
+	tempDir, err := os.MkdirTemp("", "code-switch-write-queue-stress-*")
+	if err != nil {
+		fmt.Printf("创建临时数据库目录失败: %v\n", err)
+		return
+	}
+	defer os.RemoveAll(tempDir)
+
+	databasePath := filepath.Join(tempDir, "write_queue_stress.db")
+	fmt.Printf("测试数据库: %s\n\n", databasePath)
+
 	// 1. 初始化数据库连接
-	err := xdb.Inits([]xdb.Config{
+	err = xdb.Inits([]xdb.Config{
 		{
 			Name:   "default",
 			Driver: "sqlite",
-			DSN:    "app.db?cache=shared&mode=rwc&_journal_mode=WAL",
+			DSN:    databasePath + "?cache=shared&mode=rwc&_journal_mode=WAL",
 		},
 	})
 	if err != nil {
-		log.Fatalf("初始化数据库失败: %v", err)
+		fmt.Printf("初始化数据库失败: %v\n", err)
+		return
 	}
 
 	db, err := xdb.DB("default")
 	if err != nil {
-		log.Fatalf("获取数据库连接失败: %v", err)
+		fmt.Printf("获取数据库连接失败: %v\n", err)
+		return
 	}
+	defer db.Close()
 
 	// 2. 创建测试表（如果不存在）
 	_, err = db.Exec(`
@@ -58,7 +73,8 @@ func main() {
 		)
 	`)
 	if err != nil {
-		log.Fatalf("创建测试表失败: %v", err)
+		fmt.Printf("创建测试表失败: %v\n", err)
+		return
 	}
 
 	// 3. 创建批量队列（对齐生产环境：request_log 使用批量模式）

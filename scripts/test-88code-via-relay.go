@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -23,7 +24,11 @@ func main() {
 	// 直接测试 88code
 	directURL := "https://m.88code.org/api/v1/messages"
 
-	apiKey := "88_01f315e7e8ea55846f8088e713a9226f693551df66f535288e613934cb918f4a"
+	apiKey := os.Getenv("CODESWITCH_88CODE_API_KEY")
+	if apiKey == "" {
+		fmt.Fprintln(os.Stderr, "CODESWITCH_88CODE_API_KEY is required")
+		os.Exit(2)
+	}
 	body := `{"model":"claude-haiku-4-5-20251001","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`
 
 	fmt.Println("================================================================")

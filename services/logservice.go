@@ -26,11 +26,12 @@ func (ls *LogService) CostSince(start string, platform string) (float64, error) 
 	}
 	model := xdb.New("request_log")
 	options := []xdb.Option{
-		xdb.WhereGte("created_at", startTime.Format(timeLayout)),
+		xdb.WhereGte("created_at", formatRequestLogQueryBoundary(startTime)),
 		xdb.Field(
 			"platform",
 			"model",
 			"input_tokens",
+			"billable_input_tokens",
 			"output_tokens",
 			"reasoning_tokens",
 			"cache_create_tokens",
@@ -38,6 +39,7 @@ func (ls *LogService) CostSince(start string, platform string) (float64, error) 
 			"ephemeral_5m_tokens",
 			"ephemeral_1h_tokens",
 			"service_tier",
+			"usage_accounting_version",
 		),
 	}
 	if platform != "" {
@@ -52,11 +54,44 @@ func (ls *LogService) CostSince(start string, platform string) (float64, error) 
 	}
 	total := 0.0
 	for _, record := range records {
-		usage := buildSnapshotFromRecord(record)
-		cost := ls.calculateCost(record.GetString("platform"), record.GetString("model"), usage)
+		usage := buildPricingSnapshotFromRecord(record)
+		cost := ls.calculateCostForPricingUsage(record.GetString("model"), usage)
 		total += cost.TotalCost
 	}
 	return total, nil
+}
+
+// buildPricingSnapshotFromRecord 优先使用请求完成时保存的普通计费输入。
+// 旧记录没有该快照时才按当前协议规则推导，从而保持旧数据可查、同时避免新记录被二次扣缓存。
+func buildPricingSnapshotFromRecord(record xdb.Record) modelpricing.UsageSnapshot {
+	raw := buildSnapshotFromRecord(record)
+	if record.GetInt("usage_accounting_version") >= requestLogUsageAccountingVersion {
+		raw.InputTokens = maxTokenCount(record.GetInt("billable_input_tokens"))
+		return raw
+	}
+	return buildPricingUsage(record.GetString("platform"), raw)
+}
+
+func buildPricingSnapshotFromLog(logEntry *ReqeustLog) modelpricing.UsageSnapshot {
+	raw := modelpricing.UsageSnapshot{
+		InputTokens:       logEntry.InputTokens,
+		OutputTokens:      logEntry.OutputTokens,
+		ReasoningTokens:   logEntry.ReasoningTokens,
+		CacheCreateTokens: logEntry.CacheCreateTokens,
+		CacheReadTokens:   logEntry.CacheReadTokens,
+		ServiceTier:       modelpricing.ServiceTier(strings.ToLower(strings.TrimSpace(logEntry.ServiceTier))),
+	}
+	if logEntry.Ephemeral5mTokens > 0 || logEntry.Ephemeral1hTokens > 0 {
+		raw.CacheCreation = &modelpricing.CacheCreationDetail{
+			Ephemeral5mTokens: logEntry.Ephemeral5mTokens,
+			Ephemeral1hTokens: logEntry.Ephemeral1hTokens,
+		}
+	}
+	if logEntry.UsageAccountingVersion >= requestLogUsageAccountingVersion {
+		raw.InputTokens = maxTokenCount(logEntry.BillableInputTokens)
+		return raw
+	}
+	return buildPricingUsage(logEntry.Platform, raw)
 }
 
 // buildSnapshotFromRecord 从 request_log 记录构造定价输入,统一处理 ephemeral 拆分 + service_tier。
@@ -114,22 +149,26 @@ func (ls *LogService) ListRequestLogs(platform string, provider string, limit in
 	logs := make([]ReqeustLog, 0, len(records))
 	for _, record := range records {
 		logEntry := ReqeustLog{
-			ID:                record.GetInt64("id"),
-			Platform:          record.GetString("platform"),
-			Model:             record.GetString("model"),
-			Provider:          record.GetString("provider"),
-			HttpCode:          record.GetInt("http_code"),
-			InputTokens:       record.GetInt("input_tokens"),
-			OutputTokens:      record.GetInt("output_tokens"),
-			CacheCreateTokens: record.GetInt("cache_create_tokens"),
-			Ephemeral5mTokens: record.GetInt("ephemeral_5m_tokens"),
-			Ephemeral1hTokens: record.GetInt("ephemeral_1h_tokens"),
-			CacheReadTokens:   record.GetInt("cache_read_tokens"),
-			ReasoningTokens:   record.GetInt("reasoning_tokens"),
-			CreatedAt:         record.GetString("created_at"),
-			IsStream:          record.GetBool("is_stream"),
-			DurationSec:       record.GetFloat64("duration_sec"),
-			ServiceTier:       record.GetString("service_tier"),
+			ID:                     record.GetInt64("id"),
+			Platform:               record.GetString("platform"),
+			Model:                  record.GetString("model"),
+			RequestedModel:         record.GetString("requested_model"),
+			Provider:               record.GetString("provider"),
+			HttpCode:               record.GetInt("http_code"),
+			InputTokens:            record.GetInt("input_tokens"),
+			OutputTokens:           record.GetInt("output_tokens"),
+			CacheCreateTokens:      record.GetInt("cache_create_tokens"),
+			Ephemeral5mTokens:      record.GetInt("ephemeral_5m_tokens"),
+			Ephemeral1hTokens:      record.GetInt("ephemeral_1h_tokens"),
+			CacheReadTokens:        record.GetInt("cache_read_tokens"),
+			ReasoningTokens:        record.GetInt("reasoning_tokens"),
+			CreatedAt:              record.GetString("created_at"),
+			IsStream:               record.GetBool("is_stream"),
+			DurationSec:            record.GetFloat64("duration_sec"),
+			ServiceTier:            record.GetString("service_tier"),
+			BillableInputTokens:    record.GetInt("billable_input_tokens"),
+			UsageAccountingVersion: record.GetInt("usage_accounting_version"),
+			UsageRawJSON:           record.GetString("usage_raw_json"),
 		}
 		ls.decorateCost(&logEntry)
 		logs = append(logs, logEntry)
@@ -175,11 +214,12 @@ func (ls *LogService) HeatmapStats(days int) ([]HeatmapStat, error) {
 	}
 	model := xdb.New("request_log")
 	options := []xdb.Option{
-		xdb.WhereGe("created_at", rangeStart.Format(timeLayout)),
+		xdb.WhereGe("created_at", formatRequestLogQueryBoundary(rangeStart)),
 		xdb.Field(
 			"platform",
 			"model",
 			"input_tokens",
+			"billable_input_tokens",
 			"output_tokens",
 			"reasoning_tokens",
 			"cache_create_tokens",
@@ -187,6 +227,7 @@ func (ls *LogService) HeatmapStats(days int) ([]HeatmapStat, error) {
 			"ephemeral_5m_tokens",
 			"ephemeral_1h_tokens",
 			"service_tier",
+			"usage_accounting_version",
 			"created_at",
 		),
 		xdb.OrderByDesc("created_at"),
@@ -213,10 +254,12 @@ func (ls *LogService) HeatmapStats(days int) ([]HeatmapStat, error) {
 		}
 		bucket.TotalRequests++
 		usage := buildSnapshotFromRecord(record)
+		pricingUsage := buildPricingSnapshotFromRecord(record)
 		bucket.InputTokens += int64(usage.InputTokens)
+		bucket.BillableInputTokens += int64(pricingUsage.InputTokens)
 		bucket.OutputTokens += int64(usage.OutputTokens)
 		bucket.ReasoningTokens += int64(usage.ReasoningTokens)
-		cost := ls.calculateCost(record.GetString("platform"), record.GetString("model"), usage)
+		cost := ls.calculateCostForPricingUsage(record.GetString("model"), pricingUsage)
 		bucket.TotalCost += cost.TotalCost
 	}
 	if len(hourBuckets) == 0 {
@@ -246,14 +289,15 @@ func (ls *LogService) StatsSince(platform string) (LogStats, error) {
 	model := xdb.New("request_log")
 	seriesStart := startOfDay(now)
 	seriesEnd := seriesStart.Add(seriesHours * time.Hour)
-	queryStart := seriesStart.Add(-24 * time.Hour)
+	queryStart := seriesStart
 	summaryStart := seriesStart
 	options := []xdb.Option{
-		xdb.WhereGte("created_at", queryStart.Format(timeLayout)),
+		xdb.WhereGte("created_at", formatRequestLogQueryBoundary(queryStart)),
 		xdb.Field(
 			"platform",
 			"model",
 			"input_tokens",
+			"billable_input_tokens",
 			"output_tokens",
 			"reasoning_tokens",
 			"cache_create_tokens",
@@ -261,6 +305,7 @@ func (ls *LogService) StatsSince(platform string) (LogStats, error) {
 			"ephemeral_5m_tokens",
 			"ephemeral_1h_tokens",
 			"service_tier",
+			"usage_accounting_version",
 			"created_at",
 		),
 		xdb.OrderByAsc("created_at"),
@@ -312,10 +357,18 @@ func (ls *LogService) StatsSince(platform string) (LogStats, error) {
 		}
 		bucket := seriesBuckets[bucketIndex]
 		usage := buildSnapshotFromRecord(record)
-		cost := ls.calculateCost(record.GetString("platform"), record.GetString("model"), usage)
+		pricingUsage := buildPricingSnapshotFromRecord(record)
+		cost := ls.calculateCostForPricingUsage(record.GetString("model"), pricingUsage)
+		cacheHitDenominator := deriveCacheHitDenominatorTokens(
+			record.GetString("platform"),
+			usage.InputTokens,
+			usage.CacheReadTokens,
+			usage.CacheCreateTokens,
+		)
 
 		bucket.TotalRequests++
 		bucket.InputTokens += int64(usage.InputTokens)
+		bucket.BillableInputTokens += int64(pricingUsage.InputTokens)
 		bucket.OutputTokens += int64(usage.OutputTokens)
 		bucket.ReasoningTokens += int64(usage.ReasoningTokens)
 		bucket.CacheCreateTokens += int64(usage.CacheCreateTokens)
@@ -327,10 +380,12 @@ func (ls *LogService) StatsSince(platform string) (LogStats, error) {
 		}
 		stats.TotalRequests++
 		stats.InputTokens += int64(usage.InputTokens)
+		stats.BillableInputTokens += int64(pricingUsage.InputTokens)
 		stats.OutputTokens += int64(usage.OutputTokens)
 		stats.ReasoningTokens += int64(usage.ReasoningTokens)
 		stats.CacheCreateTokens += int64(usage.CacheCreateTokens)
 		stats.CacheReadTokens += int64(usage.CacheReadTokens)
+		stats.CacheHitDenominatorTokens += int64(cacheHitDenominator)
 		stats.CostInput += cost.InputCost
 		stats.CostOutput += cost.OutputCost
 		stats.CostCacheCreate += cost.CacheCreateCost
@@ -355,16 +410,17 @@ func (ls *LogService) StatsSince(platform string) (LogStats, error) {
 func (ls *LogService) ProviderDailyStats(platform string) ([]ProviderDailyStat, error) {
 	start := startOfDay(time.Now())
 	end := start.Add(24 * time.Hour)
-	queryStart := start.Add(-24 * time.Hour)
+	queryStart := start
 	model := xdb.New("request_log")
 	options := []xdb.Option{
-		xdb.WhereGte("created_at", queryStart.Format(timeLayout)),
+		xdb.WhereGte("created_at", formatRequestLogQueryBoundary(queryStart)),
 		xdb.Field(
 			"platform",
 			"provider",
 			"model",
 			"http_code",
 			"input_tokens",
+			"billable_input_tokens",
 			"output_tokens",
 			"reasoning_tokens",
 			"cache_create_tokens",
@@ -372,6 +428,7 @@ func (ls *LogService) ProviderDailyStats(platform string) ([]ProviderDailyStat, 
 			"ephemeral_5m_tokens",
 			"ephemeral_1h_tokens",
 			"service_tier",
+			"usage_accounting_version",
 			"created_at",
 		),
 	}
@@ -409,7 +466,8 @@ func (ls *LogService) ProviderDailyStats(platform string) ([]ProviderDailyStat, 
 		}
 		httpCode := record.GetInt("http_code")
 		usage := buildSnapshotFromRecord(record)
-		cost := ls.calculateCost(record.GetString("platform"), record.GetString("model"), usage)
+		pricingUsage := buildPricingSnapshotFromRecord(record)
+		cost := ls.calculateCostForPricingUsage(record.GetString("model"), pricingUsage)
 		stat.TotalRequests++
 		// 只有 HTTP 200-299 才算成功，其他（包括 0）都算失败
 		if httpCode >= 200 && httpCode < 300 {
@@ -418,6 +476,7 @@ func (ls *LogService) ProviderDailyStats(platform string) ([]ProviderDailyStat, 
 			stat.FailedRequests++
 		}
 		stat.InputTokens += int64(usage.InputTokens)
+		stat.BillableInputTokens += int64(pricingUsage.InputTokens)
 		stat.OutputTokens += int64(usage.OutputTokens)
 		stat.ReasoningTokens += int64(usage.ReasoningTokens)
 		stat.CacheCreateTokens += int64(usage.CacheCreateTokens)
@@ -444,21 +503,8 @@ func (ls *LogService) decorateCost(logEntry *ReqeustLog) {
 	if ls == nil || ls.pricing == nil || logEntry == nil {
 		return
 	}
-	usage := modelpricing.UsageSnapshot{
-		InputTokens:       logEntry.InputTokens,
-		OutputTokens:      logEntry.OutputTokens,
-		ReasoningTokens:   logEntry.ReasoningTokens,
-		CacheCreateTokens: logEntry.CacheCreateTokens,
-		CacheReadTokens:   logEntry.CacheReadTokens,
-		ServiceTier:       modelpricing.ServiceTier(strings.ToLower(strings.TrimSpace(logEntry.ServiceTier))),
-	}
-	if logEntry.Ephemeral5mTokens > 0 || logEntry.Ephemeral1hTokens > 0 {
-		usage.CacheCreation = &modelpricing.CacheCreationDetail{
-			Ephemeral5mTokens: logEntry.Ephemeral5mTokens,
-			Ephemeral1hTokens: logEntry.Ephemeral1hTokens,
-		}
-	}
-	cost := ls.calculateCost(logEntry.Platform, logEntry.Model, usage)
+	usage := buildPricingSnapshotFromLog(logEntry)
+	cost := ls.calculateCostForPricingUsage(logEntry.Model, usage)
 	logEntry.HasPricing = cost.HasPricing
 	logEntry.InputCost = cost.InputCost
 	logEntry.OutputCost = cost.OutputCost
@@ -474,65 +520,35 @@ func (ls *LogService) calculateCost(platform string, model string, usage modelpr
 	if ls == nil || ls.pricing == nil {
 		return modelpricing.CostBreakdown{}
 	}
-	return ls.pricing.CalculateCost(model, buildPricingUsage(platform, usage))
+	return ls.calculateCostForPricingUsage(model, buildPricingUsage(platform, usage))
+}
+
+func (ls *LogService) calculateCostForPricingUsage(model string, usage modelpricing.UsageSnapshot) modelpricing.CostBreakdown {
+	if ls == nil || ls.pricing == nil {
+		return modelpricing.CostBreakdown{}
+	}
+	return ls.pricing.CalculateCost(model, usage)
 }
 
 // buildPricingUsage 只转换计价口径,不修改日志保存和页面展示使用的原始 token 快照。
-// OpenAI Responses API 的 input_tokens 已包含 cached_tokens,因此 Codex 计价前必须扣除缓存命中部分,
-// 否则同一批缓存 token 会同时按普通输入价和缓存价收费。
+// Codex 和 Gemini 的原始 input 计数包含缓存命中，计费前必须扣除缓存读取部分；
+// Anthropic 的缓存字段独立上报，不能重复扣减。
 func buildPricingUsage(platform string, usage modelpricing.UsageSnapshot) modelpricing.UsageSnapshot {
 	pricingUsage := usage
-	if !strings.EqualFold(strings.TrimSpace(platform), "codex") {
-		return pricingUsage
-	}
-
-	pricingUsage.InputTokens -= pricingUsage.CacheReadTokens
-	// 异常或旧数据可能出现 cache_read > input,此时普通输入只能按 0 计费,不能产生负费用。
-	if pricingUsage.InputTokens < 0 {
-		pricingUsage.InputTokens = 0
-	}
+	pricingUsage.InputTokens = deriveBillableInputTokens(platform, usage.InputTokens, usage.CacheReadTokens, usage.CacheCreateTokens)
 	return pricingUsage
 }
 
 func parseCreatedAt(record xdb.Record) (time.Time, bool) {
+	raw := strings.TrimSpace(record.GetString("created_at"))
+	if raw != "" {
+		if parsed, hasTime := parseStoredRequestLogTimestamp(raw); !parsed.IsZero() {
+			return parsed, hasTime
+		}
+	}
 	if t := record.GetTime("created_at"); t != nil {
 		return t.In(time.Local), true
 	}
-	raw := strings.TrimSpace(record.GetString("created_at"))
-	if raw == "" {
-		return time.Time{}, false
-	}
-
-	layouts := []string{
-		timeLayout,
-		time.RFC3339,
-		"2006-01-02T15:04:05",
-		"2006-01-02 15:04:05 -0700",
-		"2006-01-02 15:04:05 -0700 MST",
-		"2006-01-02 15:04:05 MST",
-		"2006-01-02T15:04:05-0700",
-	}
-	for _, layout := range layouts {
-		if parsed, err := time.Parse(layout, raw); err == nil {
-			return parsed.In(time.Local), true
-		}
-		if parsed, err := time.ParseInLocation(layout, raw, time.Local); err == nil {
-			return parsed.In(time.Local), true
-		}
-	}
-
-	if normalized := strings.Replace(raw, " ", "T", 1); normalized != raw {
-		if parsed, err := time.Parse(time.RFC3339, normalized); err == nil {
-			return parsed.In(time.Local), true
-		}
-	}
-
-	if len(raw) >= len("2006-01-02") {
-		if parsed, err := time.ParseInLocation("2006-01-02", raw[:10], time.Local); err == nil {
-			return parsed, false
-		}
-	}
-
 	return time.Time{}, false
 }
 
@@ -541,44 +557,68 @@ func parseTimeInput(value string) (time.Time, error) {
 	if raw == "" {
 		return startOfDay(time.Now()), nil
 	}
-	layouts := []string{
-		time.RFC3339,
-		timeLayout,
-		"2006-01-02T15:04:05",
-		"2006-01-02 15:04:05 -0700",
-		"2006-01-02 15:04:05 -0700 MST",
-		"2006-01-02 15:04:05 MST",
-		"2006-01-02T15:04:05-0700",
-	}
-	for _, layout := range layouts {
-		if parsed, err := time.Parse(layout, raw); err == nil {
-			return parsed.In(time.Local), nil
-		}
-		if parsed, err := time.ParseInLocation(layout, raw, time.Local); err == nil {
-			return parsed.In(time.Local), nil
-		}
-	}
-	if normalized := strings.Replace(raw, " ", "T", 1); normalized != raw {
-		if parsed, err := time.Parse(time.RFC3339, normalized); err == nil {
-			return parsed.In(time.Local), nil
-		}
-	}
-	if len(raw) >= len("2006-01-02") {
-		if parsed, err := time.ParseInLocation("2006-01-02", raw[:10], time.Local); err == nil {
-			return parsed, nil
-		}
+	parsed, _ := parseLocalTimeInput(raw)
+	if !parsed.IsZero() {
+		return parsed, nil
 	}
 	return time.Time{}, fmt.Errorf("invalid time format: %s", raw)
 }
 
-func dayFromTimestamp(value string) string {
-	if len(value) >= len("2006-01-02") {
-		if t, err := time.ParseInLocation(timeLayout, value, time.Local); err == nil {
-			return t.Format("2006-01-02")
+// parseStoredRequestLogTimestamp 解释 request_log 的存储时间。
+// SQLite DEFAULT CURRENT_TIMESTAMP 固定以 UTC 写入；解析后再转换本地时区，才能让日报、热力图按用户日历日归桶。
+func parseStoredRequestLogTimestamp(raw string) (time.Time, bool) {
+	return parseTimestampInLocation(raw, time.UTC)
+}
+
+// parseLocalTimeInput 解释页面传入的预算起点。无时区值由用户在本地界面输入，必须按本地时区理解。
+func parseLocalTimeInput(raw string) (time.Time, bool) {
+	return parseTimestampInLocation(raw, time.Local)
+}
+
+// parseTimestampInLocation 只为无时区字符串指定默认时区；带偏移量的输入始终以自身偏移量为准。
+// 这样数据库 UTC 时间与用户本地输入共用格式兼容逻辑，却不会再次混淆各自的时间语义。
+func parseTimestampInLocation(raw string, naiveLocation *time.Location) (time.Time, bool) {
+	for _, layout := range []string{
+		time.RFC3339,
+		"2006-01-02 15:04:05 -0700",
+		"2006-01-02 15:04:05 -0700 MST",
+		"2006-01-02 15:04:05 MST",
+		"2006-01-02T15:04:05-0700",
+	} {
+		if parsed, err := time.Parse(layout, raw); err == nil {
+			return parsed.In(time.Local), true
 		}
+	}
+
+	for _, layout := range []string{timeLayout, "2006-01-02T15:04:05"} {
+		if parsed, err := time.ParseInLocation(layout, raw, naiveLocation); err == nil {
+			return parsed.In(time.Local), true
+		}
+	}
+
+	if len(raw) >= len("2006-01-02") {
+		if parsed, err := time.ParseInLocation("2006-01-02", raw[:10], naiveLocation); err == nil {
+			return parsed.In(time.Local), false
+		}
+	}
+	return time.Time{}, false
+}
+
+func dayFromTimestamp(value string) string {
+	parsed, hasTime := parseStoredRequestLogTimestamp(value)
+	if hasTime {
+		return parsed.Format("2006-01-02")
+	}
+	if len(value) >= len("2006-01-02") {
 		return value[:10]
 	}
 	return value
+}
+
+// formatRequestLogQueryBoundary 把本地统计边界转换为 SQLite CURRENT_TIMESTAMP 的 UTC 文本格式。
+// 直接用本地格式比较会漏掉本地日界线与 UTC 日界线之间的历史记录。
+func formatRequestLogQueryBoundary(t time.Time) string {
+	return t.UTC().Format(timeLayout)
 }
 
 func startOfDay(t time.Time) time.Time {
@@ -606,50 +646,55 @@ func isNoSuchTableErr(err error) bool {
 }
 
 type HeatmapStat struct {
-	Day             string  `json:"day"`
-	TotalRequests   int64   `json:"total_requests"`
-	InputTokens     int64   `json:"input_tokens"`
-	OutputTokens    int64   `json:"output_tokens"`
-	ReasoningTokens int64   `json:"reasoning_tokens"`
-	TotalCost       float64 `json:"total_cost"`
+	Day                 string  `json:"day"`
+	TotalRequests       int64   `json:"total_requests"`
+	InputTokens         int64   `json:"input_tokens"`
+	BillableInputTokens int64   `json:"billable_input_tokens"`
+	OutputTokens        int64   `json:"output_tokens"`
+	ReasoningTokens     int64   `json:"reasoning_tokens"`
+	TotalCost           float64 `json:"total_cost"`
 }
 
 type LogStats struct {
-	TotalRequests     int64            `json:"total_requests"`
-	InputTokens       int64            `json:"input_tokens"`
-	OutputTokens      int64            `json:"output_tokens"`
-	ReasoningTokens   int64            `json:"reasoning_tokens"`
-	CacheCreateTokens int64            `json:"cache_create_tokens"`
-	CacheReadTokens   int64            `json:"cache_read_tokens"`
-	CostTotal         float64          `json:"cost_total"`
-	CostInput         float64          `json:"cost_input"`
-	CostOutput        float64          `json:"cost_output"`
-	CostCacheCreate   float64          `json:"cost_cache_create"`
-	CostCacheRead     float64          `json:"cost_cache_read"`
-	Series            []LogStatsSeries `json:"series"`
+	TotalRequests             int64            `json:"total_requests"`
+	InputTokens               int64            `json:"input_tokens"`
+	BillableInputTokens       int64            `json:"billable_input_tokens"`
+	OutputTokens              int64            `json:"output_tokens"`
+	ReasoningTokens           int64            `json:"reasoning_tokens"`
+	CacheCreateTokens         int64            `json:"cache_create_tokens"`
+	CacheReadTokens           int64            `json:"cache_read_tokens"`
+	CacheHitDenominatorTokens int64            `json:"cache_hit_denominator_tokens"`
+	CostTotal                 float64          `json:"cost_total"`
+	CostInput                 float64          `json:"cost_input"`
+	CostOutput                float64          `json:"cost_output"`
+	CostCacheCreate           float64          `json:"cost_cache_create"`
+	CostCacheRead             float64          `json:"cost_cache_read"`
+	Series                    []LogStatsSeries `json:"series"`
 }
 
 type ProviderDailyStat struct {
-	Provider           string  `json:"provider"`
-	TotalRequests      int64   `json:"total_requests"`
-	SuccessfulRequests int64   `json:"successful_requests"`
-	FailedRequests     int64   `json:"failed_requests"`
-	SuccessRate        float64 `json:"success_rate"`
-	InputTokens        int64   `json:"input_tokens"`
-	OutputTokens       int64   `json:"output_tokens"`
-	ReasoningTokens    int64   `json:"reasoning_tokens"`
-	CacheCreateTokens  int64   `json:"cache_create_tokens"`
-	CacheReadTokens    int64   `json:"cache_read_tokens"`
-	CostTotal          float64 `json:"cost_total"`
+	Provider            string  `json:"provider"`
+	TotalRequests       int64   `json:"total_requests"`
+	SuccessfulRequests  int64   `json:"successful_requests"`
+	FailedRequests      int64   `json:"failed_requests"`
+	SuccessRate         float64 `json:"success_rate"`
+	InputTokens         int64   `json:"input_tokens"`
+	BillableInputTokens int64   `json:"billable_input_tokens"`
+	OutputTokens        int64   `json:"output_tokens"`
+	ReasoningTokens     int64   `json:"reasoning_tokens"`
+	CacheCreateTokens   int64   `json:"cache_create_tokens"`
+	CacheReadTokens     int64   `json:"cache_read_tokens"`
+	CostTotal           float64 `json:"cost_total"`
 }
 
 type LogStatsSeries struct {
-	Day               string  `json:"day"`
-	TotalRequests     int64   `json:"total_requests"`
-	InputTokens       int64   `json:"input_tokens"`
-	OutputTokens      int64   `json:"output_tokens"`
-	ReasoningTokens   int64   `json:"reasoning_tokens"`
-	CacheCreateTokens int64   `json:"cache_create_tokens"`
-	CacheReadTokens   int64   `json:"cache_read_tokens"`
-	TotalCost         float64 `json:"total_cost"`
+	Day                 string  `json:"day"`
+	TotalRequests       int64   `json:"total_requests"`
+	InputTokens         int64   `json:"input_tokens"`
+	BillableInputTokens int64   `json:"billable_input_tokens"`
+	OutputTokens        int64   `json:"output_tokens"`
+	ReasoningTokens     int64   `json:"reasoning_tokens"`
+	CacheCreateTokens   int64   `json:"cache_create_tokens"`
+	CacheReadTokens     int64   `json:"cache_read_tokens"`
+	TotalCost           float64 `json:"total_cost"`
 }

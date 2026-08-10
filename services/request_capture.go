@@ -186,7 +186,10 @@ func (s *RequestCaptureService) BaseDir() string {
 }
 
 func (s *RequestCaptureService) resolveBaseDir() (string, error) {
-	defaultDir := defaultRequestCaptureBaseDir()
+	defaultDir, err := defaultRequestCaptureBaseDir()
+	if err != nil {
+		return "", err
+	}
 	if s == nil || s.appSettings == nil {
 		return defaultDir, nil
 	}
@@ -206,12 +209,12 @@ func (s *RequestCaptureService) resolveBaseDir() (string, error) {
 	return defaultDir, nil
 }
 
-func defaultRequestCaptureBaseDir() string {
+func defaultRequestCaptureBaseDir() (string, error) {
 	home, err := getUserHomeDir()
 	if err != nil {
-		home = "."
+		return "", err
 	}
-	return filepath.Join(home, appSettingsDir, requestCaptureDirName)
+	return filepath.Join(home, appSettingsDir, requestCaptureDirName), nil
 }
 
 func normalizeRequestCaptureDir(value string) (string, error) {

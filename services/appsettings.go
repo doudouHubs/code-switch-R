@@ -48,14 +48,19 @@ type AppSettings struct {
 
 type AppSettingsService struct {
 	path             string
+	initErr          error
 	mu               sync.Mutex
 	autoStartService *AutoStartService
 }
 
 func NewAppSettingsService(autoStartService *AutoStartService) *AppSettingsService {
-	home, err := os.UserHomeDir()
+	home, err := getUserHomeDir()
 	if err != nil {
-		home = "."
+		// 用户目录不可用时不能回退到工作目录，否则便携版或开发命令会把配置写进仓库。
+		return &AppSettingsService{
+			autoStartService: autoStartService,
+			initErr:          err,
+		}
 	}
 
 	newDir := filepath.Join(home, appSettingsDir)
@@ -187,6 +192,9 @@ func (as *AppSettingsService) defaultSettings() AppSettings {
 
 // GetAppSettings returns the persisted app settings or defaults if the file does not exist.
 func (as *AppSettingsService) GetAppSettings() (AppSettings, error) {
+	if err := as.requirePath(); err != nil {
+		return AppSettings{}, err
+	}
 	as.mu.Lock()
 	defer as.mu.Unlock()
 	return as.loadLocked()
@@ -194,6 +202,9 @@ func (as *AppSettingsService) GetAppSettings() (AppSettings, error) {
 
 // SaveAppSettings persists the provided settings to disk.
 func (as *AppSettingsService) SaveAppSettings(settings AppSettings) (AppSettings, error) {
+	if err := as.requirePath(); err != nil {
+		return settings, err
+	}
 	as.mu.Lock()
 	defer as.mu.Unlock()
 
@@ -220,6 +231,19 @@ func (as *AppSettingsService) SaveAppSettings(settings AppSettings) (AppSettings
 		return settings, err
 	}
 	return settings, nil
+}
+
+func (as *AppSettingsService) requirePath() error {
+	if as == nil {
+		return fmt.Errorf("应用设置服务未初始化")
+	}
+	if as.initErr != nil {
+		return fmt.Errorf("应用设置目录不可用: %w", as.initErr)
+	}
+	if as.path == "" || !filepath.IsAbs(as.path) {
+		return fmt.Errorf("应用设置路径无效: %q", as.path)
+	}
+	return nil
 }
 
 func (as *AppSettingsService) loadLocked() (AppSettings, error) {

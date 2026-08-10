@@ -141,6 +141,7 @@ type UpdateService struct {
 
 	// 配置
 	dataDir      string // 数据目录，用于存储临时文件和状态
+	initErr      error
 	cachedPolicy string // 缓存的更新策略，避免重复检测
 }
 
@@ -162,16 +163,27 @@ var allowedURLPrefixes = []string{
 
 // NewUpdateService 创建更新服务
 func NewUpdateService(currentVersion string) *UpdateService {
-	dataDir := getUpdateDataDir()
-
-	// 确保数据目录存在
-	os.MkdirAll(dataDir, 0755)
-
 	us := &UpdateService{
 		state:          StateIdle,
 		currentVersion: currentVersion,
-		dataDir:        dataDir,
 	}
+	dataDir, err := getUpdateDataDir()
+	if err != nil {
+		// 更新文件可能替换可执行程序；家目录不可用时绝不能把临时产物落到当前工作目录。
+		us.initErr = fmt.Errorf("初始化更新目录失败: %w", err)
+		us.state = StateError
+		us.lastError = us.initErr.Error()
+		us.errorOp = "check"
+		return us
+	}
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		us.initErr = fmt.Errorf("创建更新目录失败: %w", err)
+		us.state = StateError
+		us.lastError = us.initErr.Error()
+		us.errorOp = "check"
+		return us
+	}
+	us.dataDir = dataDir
 
 	// 读取已忽略的版本
 	dismissPath := filepath.Join(dataDir, "dismissed_version.txt")
@@ -193,11 +205,21 @@ func (us *UpdateService) SetApp(app *application.App) {
 	us.app = app
 }
 
+func (us *UpdateService) requireDataDir() error {
+	if us == nil {
+		return fmt.Errorf("update service is not initialized")
+	}
+	return us.initErr
+}
+
 // ==================== 公开 API ====================
 
 // CheckUpdate 检查更新
 // 返回更新信息，如果无更新则返回 nil
 func (us *UpdateService) CheckUpdate() (*UpdateInfo, error) {
+	if err := us.requireDataDir(); err != nil {
+		return nil, err
+	}
 	us.mu.Lock()
 	// 如果已在下载/准备/应用状态，不覆盖当前目标
 	if us.state == StateDownloading || us.state == StateReady || us.state == StateApplying {
@@ -255,6 +277,9 @@ func (us *UpdateService) CheckUpdate() (*UpdateInfo, error) {
 
 // DownloadUpdate 下载更新
 func (us *UpdateService) DownloadUpdate() error {
+	if err := us.requireDataDir(); err != nil {
+		return err
+	}
 	us.mu.Lock()
 
 	switch us.state {
@@ -341,6 +366,9 @@ func (us *UpdateService) CancelDownload() error {
 
 // RequestRestart 请求重启并更新
 func (us *UpdateService) RequestRestart() error {
+	if err := us.requireDataDir(); err != nil {
+		return err
+	}
 	us.mu.Lock()
 
 	if us.state != StateReady {
@@ -452,6 +480,9 @@ func (us *UpdateService) GetState() *UpdateStateSnapshot {
 
 // DismissUpdate 忽略指定版本
 func (us *UpdateService) DismissUpdate(version string) error {
+	if err := us.requireDataDir(); err != nil {
+		return err
+	}
 	us.mu.Lock()
 
 	if us.state == StateDownloading || us.state == StateReady || us.state == StateApplying {
@@ -1148,6 +1179,9 @@ rm -f "$NEW_APP"
 
 // checkPendingApply 启动时检查待应用的更新
 func (us *UpdateService) checkPendingApply() {
+	if us.initErr != nil {
+		return
+	}
 	pendingPath := filepath.Join(us.dataDir, "pending_apply.json")
 	data, err := os.ReadFile(pendingPath)
 	if err != nil {
@@ -1471,12 +1505,12 @@ func isURLAllowed(url string) bool {
 }
 
 // getUpdateDataDir 获取更新数据目录
-func getUpdateDataDir() string {
-	homeDir, err := os.UserHomeDir()
+func getUpdateDataDir() (string, error) {
+	homeDir, err := getUserHomeDir()
 	if err != nil {
-		return filepath.Join(".", ".code-switch-update")
+		return "", err
 	}
-	return filepath.Join(homeDir, ".code-switch", "update")
+	return filepath.Join(homeDir, ".code-switch", "update"), nil
 }
 
 // computeSHA256 计算文件 SHA256

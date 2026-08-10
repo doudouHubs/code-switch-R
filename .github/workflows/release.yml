@@ -25,6 +25,9 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "Updating version to: $VERSION"
           sed -i '' "s/const AppVersion = \"v[^\"]*\"/const AppVersion = \"v$VERSION\"/" version_service.go
+          sed -i '' "s/version: \"[^\"]*\" # The application version/version: \"$VERSION\" # The application version/" build/config.yml
+          sed -i '' '/<key>CFBundleVersion<\/key>/{n;s#<string>[^<]*</string>#<string>'"$VERSION"'</string>#;}' build/darwin/Info.plist
+          sed -i '' '/<key>CFBundleShortVersionString<\/key>/{n;s#<string>[^<]*</string>#<string>'"$VERSION"'</string>#;}' build/darwin/Info.plist
           echo "Updated version_service.go:"
           grep "AppVersion" version_service.go
 
@@ -37,10 +40,10 @@ jobs:
           node-version: '22'
 
       - name: Install Wails
-        run: go install github.com/wailsapp/wails/v3/cmd/wails3@latest
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.38
 
       - name: Install frontend dependencies
-        run: cd frontend && npm install
+        run: cd frontend && npm ci
 
       - name: Update build assets
         run: wails3 task common:update:build-assets
@@ -91,7 +94,7 @@ jobs:
           # Update version_service.go
           $content = Get-Content version_service.go -Raw
           $content = $content -replace 'const AppVersion = "v[^"]*"', "const AppVersion = `"v$VERSION`""
-          Set-Content version_service.go $content
+          Set-Content -Encoding utf8 version_service.go $content
           Write-Host "Updated version_service.go:"
           Select-String "AppVersion" version_service.go
 
@@ -99,7 +102,11 @@ jobs:
           $json = Get-Content build/windows/info.json -Raw | ConvertFrom-Json
           $json.fixed.file_version = $VERSION
           $json.info.'0000'.ProductVersion = $VERSION
-          $json | ConvertTo-Json -Depth 10 | Set-Content build/windows/info.json
+          $config = Get-Content build/config.yml -Raw
+          $config = $config -replace 'version: "[^"]+" # The application version', "version: `"$VERSION`" # The application version"
+          Set-Content -Encoding utf8 build/config.yml $config
+
+          $json | ConvertTo-Json -Depth 10 | Set-Content -Encoding utf8 build/windows/info.json
           Write-Host "Updated build/windows/info.json:"
           Get-Content build/windows/info.json
 
@@ -112,10 +119,10 @@ jobs:
           node-version: '22'
 
       - name: Install Wails
-        run: go install github.com/wailsapp/wails/v3/cmd/wails3@latest
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.38
 
       - name: Install frontend dependencies
-        run: cd frontend && npm install
+        run: cd frontend && npm ci
 
       - name: Install NSIS
         run: choco install nsis -y
@@ -203,6 +210,7 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "Updating version to: $VERSION"
           sed -i "s/const AppVersion = \"v[^\"]*\"/const AppVersion = \"v$VERSION\"/" version_service.go
+          sed -i "s/version: \"[^\"]*\" # The application version/version: \"$VERSION\" # The application version/" build/config.yml
           echo "Updated version_service.go:"
           grep "AppVersion" version_service.go
 
@@ -226,10 +234,10 @@ jobs:
             libwebkit2gtk-4.1-dev
 
       - name: Install Wails
-        run: go install github.com/wailsapp/wails/v3/cmd/wails3@latest
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.38
 
       - name: Install frontend dependencies
-        run: cd frontend && npm install
+        run: cd frontend && npm ci
 
       - name: Update build assets
         run: wails3 task common:update:build-assets

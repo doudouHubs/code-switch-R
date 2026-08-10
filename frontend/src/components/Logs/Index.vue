@@ -91,6 +91,10 @@
                 <span class="token-value">{{ formatTokenNumber(item.input_tokens) }}</span>
               </div>
               <div>
+                <span class="token-label">{{ t('components.logs.tokenLabels.billableInput') }}</span>
+                <span class="token-value">{{ formatTokenNumber(item.billable_input_tokens ?? item.input_tokens) }}</span>
+              </div>
+              <div>
                 <span class="token-label">{{ t('components.logs.tokenLabels.output') }}</span>
                 <span class="token-value">{{ formatTokenNumber(item.output_tokens) }}</span>
               </div>
@@ -163,8 +167,24 @@
             <span class="token-detail-item__value">{{ formatTokenNumber(stats?.input_tokens) }}</span>
           </div>
           <div class="token-detail-item">
+            <span class="token-detail-item__name">{{ t('components.logs.tokenLabels.billableInput') }}</span>
+            <span class="token-detail-item__value">{{ formatTokenNumber(stats?.billable_input_tokens ?? stats?.input_tokens) }}</span>
+          </div>
+          <div class="token-detail-item">
             <span class="token-detail-item__name">{{ t('components.logs.tokenLabels.output') }}</span>
             <span class="token-detail-item__value">{{ formatTokenNumber(stats?.output_tokens) }}</span>
+          </div>
+          <div class="token-detail-item">
+            <span class="token-detail-item__name">{{ t('components.logs.tokenLabels.reasoning') }}</span>
+            <span class="token-detail-item__value">{{ formatTokenNumber(stats?.reasoning_tokens) }}</span>
+          </div>
+          <div class="token-detail-item">
+            <span class="token-detail-item__name">{{ t('components.logs.tokenLabels.cacheWrite') }}</span>
+            <span class="token-detail-item__value">{{ formatTokenNumber(stats?.cache_create_tokens) }}</span>
+          </div>
+          <div class="token-detail-item">
+            <span class="token-detail-item__name">{{ t('components.logs.tokenLabels.cacheRead') }}</span>
+            <span class="token-detail-item__value">{{ formatTokenNumber(stats?.cache_read_tokens) }}</span>
           </div>
         </div>
       </div>
@@ -586,18 +606,18 @@ const formatTokenNumber = (value?: number) => {
 /**
  * 计算缓存命中率
  * @param cacheRead 缓存读取 token 数
- * @param inputTokens 输入 token 数
+ * @param denominatorTokens 归一化后的完整输入 token 数
  * @returns 命中率百分比字符串
  * @author sm
  */
-const formatCacheHitRate = (cacheRead?: number, inputTokens?: number) => {
-  const read = cacheRead ?? 0
-  const input = inputTokens ?? 0
-  const total = read + input
+const formatCacheHitRate = (cacheRead?: number, denominatorTokens?: number) => {
+  const read = Math.max(cacheRead ?? 0, 0)
+  // 分母由后端按协议逐请求归一化；再做下限保护，避免异常历史数据把比例显示成 100% 以上。
+  const total = Math.max(denominatorTokens ?? 0, read)
 
-  if (total === 0) return '0%'
+  if (total <= 0) return '0%'
 
-  const rate = (read / total) * 100
+  const rate = Math.min((read / total) * 100, 100)
   return `${rate.toFixed(1)}%`
 }
 
@@ -623,8 +643,9 @@ const startOfTodayLocal = () => {
 const statsCards = computed(() => {
   const data = stats.value
   const summaryDate = summaryDateLabel.value
-  const totalTokens =
-    (data?.input_tokens ?? 0) + (data?.output_tokens ?? 0) + (data?.reasoning_tokens ?? 0)
+  // reasoning_tokens 是部分供应商 output_tokens 的细分字段；统计卡按输入+输出展示，
+  // 不再把同一批推理 Token 加第二遍。
+  const totalTokens = (data?.input_tokens ?? 0) + (data?.output_tokens ?? 0)
   return [
     {
       key: 'requests',
@@ -643,7 +664,7 @@ const statsCards = computed(() => {
       label: t('components.logs.summary.cache'),
       hint: t('components.logs.summary.cacheHint'),
       value: data ? formatTokenNumber(data.cache_read_tokens) : '—',
-      subValue: data ? formatCacheHitRate(data.cache_read_tokens, data.input_tokens) : '',
+      subValue: data ? formatCacheHitRate(data.cache_read_tokens, data.cache_hit_denominator_tokens) : '',
     },
     {
       key: 'cost',

@@ -21,6 +21,7 @@ const projectManagerCodexDangerousBypassFlag = "--dangerously-bypass-approvals-a
 const projectManagerWTPowerShellProfile = "{61c54bbd-c2c6-5271-96e7-009a87ff44bf}"
 const projectManagerTerminalScriptDir = "project-manager-terminal-scripts"
 const projectManagerTerminalWrapperDir = "project-manager-terminal-wrappers"
+const projectManagerAICommitPrompt = `$commit 无人值守提交本地文件。禁止询问用户或等待确认。用户已通过 AI-Commit 按钮明确授权：自行检查 ignored 文件；仅当自行判断它属于本次变更且不是敏感信息、依赖产物或生成物时，使用 -ForceIgnored 精确提交；无法安全判断时跳过该 ignored 文件并继续提交其余可提交变更。不得因 ignored 文件停止或向用户提问。`
 
 var (
 	projectManagerWTExecutableOnce              sync.Once
@@ -596,9 +597,11 @@ func startProjectManagerHiddenCommand(workingDir string, executable string, args
 
 func buildProjectManagerAICommitPowerShellCommand(projectPath string) string {
 	escapedProjectPath := escapeProjectManagerPowerShellSingleQuoted(projectPath)
-	commitPrompt := escapeProjectManagerPowerShellSingleQuoted(`$commit commit本地文件`)
+	commitPrompt := escapeProjectManagerPowerShellSingleQuoted(projectManagerAICommitPrompt)
 	failureMessage := escapeProjectManagerPowerShellSingleQuoted("AI-Commit 执行失败，按 Enter 关闭窗口")
 
+	// AI-Commit 是按钮触发的一次性任务，不能沿用交互式 $commit 在 ignored 文件上的确认流程。
+	// prompt 在任务入口一次性给出有限授权：安全源码可精确强制暂存，敏感或生成物必须跳过并继续，避免自动化停在无人值守窗口里。
 	// 这里必须把 -p/--profile 放在 codex 根命令层，而不是 exec 子命令层。
 	// 当前用户机器上的 codex-cli 0.122.0 存在实测差异：
 	// `codex exec -p commit-fast ...` 会报 profile not found，

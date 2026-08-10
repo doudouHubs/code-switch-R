@@ -602,9 +602,9 @@
         "errors": "失败次数",
         "errorHint": "数量与失败率",
         "tokens": "Token 流量",
-        "tokenHint": "输入 + 输出 Tokens",
+        "tokenHint": "输入 + 输出 Tokens（推理已包含在部分模型的输出中）",
         "cache": "缓存命中",
-        "cacheHint": "响应中的读取命中数",
+        "cacheHint": "缓存读取 Token / 总输入 Token",
         "costHint": "近 24 小时总花费",
         "todayScope": "今日 · {date}"
       },
@@ -621,6 +621,7 @@
       },
       "tokenLabels": {
         "input": "输入",
+        "billableInput": "计费输入",
         "output": "输出",
         "reasoning": "推理",
         "cacheWrite": "缓存写入",

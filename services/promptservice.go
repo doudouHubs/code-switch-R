@@ -353,7 +353,7 @@ func (s *PromptService) getPromptsForPlatform(platform string) (*map[string]Prom
 
 // getPromptFilePathReadOnly 获取提示词文件路径（只读，不创建目录）
 func (s *PromptService) getPromptFilePathReadOnly(platform string) (string, error) {
-	home, err := os.UserHomeDir()
+	home, err := getUserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("无法获取用户主目录: %w", err)
 	}
@@ -516,7 +516,7 @@ func (s *PromptService) syncFromFile(platform, filePath string, fileModTime time
 
 // load 加载配置
 func (s *PromptService) load() error {
-	home, err := os.UserHomeDir()
+	home, err := getUserHomeDir()
 	if err != nil {
 		return err
 	}
@@ -536,7 +536,7 @@ func (s *PromptService) load() error {
 
 // save 保存配置
 func (s *PromptService) save() error {
-	home, err := os.UserHomeDir()
+	home, err := getUserHomeDir()
 	if err != nil {
 		return err
 	}

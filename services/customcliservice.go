@@ -126,10 +126,10 @@ func (s *CustomCliService) CreateTool(tool CustomCliTool) (*CustomCliTool, error
 		tool.ConfigFiles[0].IsPrimary = true
 	}
 
-	// 加载并追加
+	// 加载并追加。读取失败时直接返回，不能用空存储覆盖用户现有配置。
 	store, err := s.loadStore()
 	if err != nil {
-		store = &customCliStore{Tools: []CustomCliTool{}}
+		return nil, err
 	}
 	store.Tools = append(store.Tools, tool)
 
@@ -203,7 +203,10 @@ func (s *CustomCliService) DeleteTool(id string) error {
 	}
 
 	// 删除对应的供应商文件
-	providersPath := s.getProvidersPath(id)
+	providersPath, err := s.getProvidersPath(id)
+	if err != nil {
+		return err
+	}
 	_ = os.Remove(providersPath) // 忽略错误（文件可能不存在）
 
 	return nil
@@ -247,7 +250,10 @@ func (s *CustomCliService) ProxyStatus(toolId string) (*CustomCliProxyStatus, er
 		}
 
 		// 读取并检查配置
-		configPath := s.expandPath(targetFile.Path)
+		configPath, err := s.expandPath(targetFile.Path)
+		if err != nil {
+			return status, err
+		}
 		content, err := os.ReadFile(configPath)
 		if err != nil {
 			allEnabled = false
@@ -309,7 +315,10 @@ func (s *CustomCliService) EnableProxy(toolId string) error {
 			return fmt.Errorf("找不到目标文件: %s", injection.TargetFileID)
 		}
 
-		configPath := s.expandPath(targetFile.Path)
+		configPath, err := s.expandPath(targetFile.Path)
+		if err != nil {
+			return err
+		}
 
 		// 创建备份
 		if FileExists(configPath) {
@@ -355,7 +364,10 @@ func (s *CustomCliService) DisableProxy(toolId string) error {
 			continue
 		}
 
-		configPath := s.expandPath(targetFile.Path)
+		configPath, err := s.expandPath(targetFile.Path)
+		if err != nil {
+			return err
+		}
 		backupPath := configPath + ".code-switch.backup"
 
 		// 尝试从备份恢复
@@ -399,7 +411,10 @@ func (s *CustomCliService) GetConfigContent(toolId, fileId string) (string, erro
 		return "", fmt.Errorf("找不到文件: %s", fileId)
 	}
 
-	configPath := s.expandPath(targetFile.Path)
+	configPath, err := s.expandPath(targetFile.Path)
+	if err != nil {
+		return "", err
+	}
 	content, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -432,7 +447,10 @@ func (s *CustomCliService) SaveConfigContent(toolId, fileId, content string) err
 		return fmt.Errorf("找不到文件: %s", fileId)
 	}
 
-	configPath := s.expandPath(targetFile.Path)
+	configPath, err := s.expandPath(targetFile.Path)
+	if err != nil {
+		return err
+	}
 
 	// 验证格式
 	if err := s.validateFormat(content, targetFile.Format); err != nil {
@@ -481,26 +499,43 @@ func (s *CustomCliService) GetLockedFields(toolId string) ([]string, error) {
 
 // ========== 内部方法 ==========
 
-func (s *CustomCliService) getStorePath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".code-switch", "custom-cli.json")
+func (s *CustomCliService) getStorePath() (string, error) {
+	home, err := getUserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("获取自定义 CLI 存储目录失败: %w", err)
+	}
+	return filepath.Join(home, ".code-switch", "custom-cli.json"), nil
 }
 
-func (s *CustomCliService) getProvidersDir() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".code-switch", "providers")
+func (s *CustomCliService) getProvidersDir() (string, error) {
+	home, err := getUserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("获取自定义 CLI 供应商目录失败: %w", err)
+	}
+	return filepath.Join(home, ".code-switch", "providers"), nil
 }
 
-func (s *CustomCliService) getProvidersPath(toolId string) string {
-	return filepath.Join(s.getProvidersDir(), toolId+".json")
+func (s *CustomCliService) getProvidersPath(toolId string) (string, error) {
+	dir, err := s.getProvidersDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, toolId+".json"), nil
 }
 
 func (s *CustomCliService) ensureProvidersDir() error {
-	return EnsureDir(s.getProvidersDir())
+	dir, err := s.getProvidersDir()
+	if err != nil {
+		return err
+	}
+	return EnsureDir(dir)
 }
 
 func (s *CustomCliService) loadStore() (*customCliStore, error) {
-	path := s.getStorePath()
+	path, err := s.getStorePath()
+	if err != nil {
+		return nil, err
+	}
 	var store customCliStore
 
 	if err := ReadJSONFile(path, &store); err != nil {
@@ -514,7 +549,10 @@ func (s *CustomCliService) loadStore() (*customCliStore, error) {
 }
 
 func (s *CustomCliService) saveStore(store *customCliStore) error {
-	path := s.getStorePath()
+	path, err := s.getStorePath()
+	if err != nil {
+		return err
+	}
 	if err := EnsureDir(filepath.Dir(path)); err != nil {
 		return err
 	}
@@ -562,23 +600,32 @@ func (s *CustomCliService) baseURLWithToolPath(toolId string) string {
 	return base + "/custom/" + toolId
 }
 
-func (s *CustomCliService) expandPath(path string) string {
+func (s *CustomCliService) expandPath(path string) (string, error) {
 	// 处理 Unix 风格路径 ~/
 	if strings.HasPrefix(path, "~/") {
-		home, _ := os.UserHomeDir()
-		return filepath.Join(home, path[2:])
+		home, err := getUserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("扩展用户目录失败: %w", err)
+		}
+		return filepath.Join(home, path[2:]), nil
 	}
 	// 处理 Windows 风格路径 ~\
 	if strings.HasPrefix(path, "~\\") {
-		home, _ := os.UserHomeDir()
-		return filepath.Join(home, path[2:])
+		home, err := getUserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("扩展用户目录失败: %w", err)
+		}
+		return filepath.Join(home, path[2:]), nil
 	}
 	// 处理单独的 ~ (表示家目录)
 	if path == "~" {
-		home, _ := os.UserHomeDir()
-		return home
+		home, err := getUserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("扩展用户目录失败: %w", err)
+		}
+		return home, nil
 	}
-	return path
+	return path, nil
 }
 
 // checkProxyField 检查代理字段是否已正确设置

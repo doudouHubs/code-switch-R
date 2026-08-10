@@ -165,8 +165,10 @@ type TieredPricingBand struct {
 	CacheReadInputTokenCost float64    `json:"cache_read_input_token_cost,omitempty"`
 }
 
-// overlayConfig 描述 overlay 文件的结构,目前仅支持 aliases。
+// overlayConfig 描述 overlay 文件的结构。
+// Models 用于基础价表尚未发布的临时模型，Aliases 仅用于完全同价的模型别名。
 type overlayConfig struct {
+	Models  map[string]PricingEntry `json:"models"`
 	Aliases map[string]string `json:"aliases"`
 }
 
@@ -238,11 +240,26 @@ func NewService() (*Service, error) {
 		}
 	}
 
-	// 合并 overlay aliases:裸名指向真实键的同一 entry 指针。
+	// 合并 overlay:临时模型可携带独立价格；只有确认完全同价时才使用 alias 复用指针。
 	var overlay overlayConfig
 	if len(overlayFile) > 0 {
 		if err := json.Unmarshal(overlayFile, &overlay); err != nil {
 			return nil, fmt.Errorf("parse overlay file: %w", err)
+		}
+		for model, entry := range overlay.Models {
+			if _, exists := pricing[model]; exists {
+				return nil, fmt.Errorf("overlay model %q conflicts with base pricing", model)
+			}
+			if err := validateOverlayModelPricing(model, entry); err != nil {
+				return nil, err
+			}
+			item := entry
+			ensureCachePricing(&item)
+			pricing[model] = &item
+			norm := normalizeName(model)
+			if _, exists := normalized[norm]; !exists {
+				normalized[norm] = model
+			}
 		}
 		for alias, target := range overlay.Aliases {
 			entry, ok := pricing[target]
@@ -263,6 +280,18 @@ func NewService() (*Service, error) {
 		ephemeral1h:  buildEphemeral1hPricing(),
 		longContexts: buildLongContextPricing(),
 	}, nil
+}
+
+// validateOverlayModelPricing 在启动时拒绝不完整的临时模型价格。
+// 费用统计宁可显式失败，也不能把高用量模型静默按 0 美元展示。
+func validateOverlayModelPricing(model string, entry PricingEntry) error {
+	if strings.TrimSpace(model) == "" {
+		return fmt.Errorf("overlay model name is empty")
+	}
+	if entry.InputCostPerToken <= 0 || entry.OutputCostPerToken <= 0 {
+		return fmt.Errorf("overlay model %q must define positive input and output prices", model)
+	}
+	return nil
 }
 
 // CalculateCost 根据模型与 token 用量返回费用明细(美元)。

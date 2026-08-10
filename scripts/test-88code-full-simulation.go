@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -16,7 +17,11 @@ import (
 // Author: Half open flowers
 
 func main() {
-	apiKey := "88_01f315e7e8ea55846f8088e713a9226f693551df66f535288e613934cb918f4a"
+	apiKey := os.Getenv("CODESWITCH_88CODE_API_KEY")
+	if apiKey == "" {
+		fmt.Fprintln(os.Stderr, "CODESWITCH_88CODE_API_KEY is required")
+		os.Exit(2)
+	}
 	url := "https://m.88code.org/api/v1/messages"
 	body := `{"model":"claude-sonnet-4-20250514","max_tokens":1024,"messages":[{"role":"user","content":"hi"}]}`
 

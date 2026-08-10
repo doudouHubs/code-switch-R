@@ -10,3 +10,12 @@ CLAUDE.md
 .ace-tool/
 mermaid/
 .codex-rules/
+
+# Local databases, logs, generated binaries, and platform build leftovers.
+*.db
+*.db-shm
+*.db-wal
+*.exe
+*.log
+*.syso
+services/Microsoft/Windows/PowerShell/ModuleAnalysisCache

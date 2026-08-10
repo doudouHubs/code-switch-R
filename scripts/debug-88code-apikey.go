@@ -1,5 +1,4 @@
 //go:build ignore
-
 // +build ignore
 
 package main
@@ -10,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 )
 
@@ -17,7 +18,11 @@ import (
 // Author: Half open flowers
 
 func main() {
-	baseKey := "88_784022b235595e84936fa42596b41bcad3dc24a79ced14a5d0d4489937ba36e8"
+	baseKey := os.Getenv("CODESWITCH_88CODE_API_KEY")
+	if baseKey == "" {
+		fmt.Fprintln(os.Stderr, "CODESWITCH_88CODE_API_KEY is required")
+		os.Exit(2)
+	}
 	apiURL := "https://m.88code.org/api/v1/messages"
 
 	reqBody := map[string]interface{}{
@@ -49,7 +54,7 @@ func main() {
 		{"BOM 字符 \\uFEFF", baseKey + "\uFEFF"},
 		{"前部 BOM", "\uFEFF" + baseKey},
 		{"修改 key 末尾字符", baseKey[:len(baseKey)-1] + "9"},
-		{"完全错误的 key", "sk-invalid-key-12345"},
+		{"完全错误的 key", "invalid-api-key"},
 	}
 
 	client := &http.Client{Timeout: 15 * time.Second}
@@ -84,11 +89,22 @@ func main() {
 			if json.Unmarshal(body, &errResp) == nil {
 				if errObj, ok := errResp["error"].(map[string]interface{}); ok {
 					fmt.Printf("   type: %v\n", errObj["type"])
-					fmt.Printf("   message: %v\n", errObj["message"])
+					message := fmt.Sprint(errObj["message"])
+					fmt.Printf("   message: %s\n", redactSecrets(message, baseKey, test.apiKey))
 				}
 			} else {
-				fmt.Printf("   响应: %s\n", string(body))
+				fmt.Printf("   响应: %s\n", redactSecrets(string(body), baseKey, test.apiKey))
 			}
 		}
 	}
+}
+
+// redactSecrets 防止服务端在错误响应中回显请求凭据。
+func redactSecrets(value string, secrets ...string) string {
+	for _, secret := range secrets {
+		if secret != "" {
+			value = strings.ReplaceAll(value, secret, "***REDACTED***")
+		}
+	}
+	return value
 }

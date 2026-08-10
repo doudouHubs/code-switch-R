@@ -345,6 +345,9 @@ const refreshAll = async () => {
   try {
     const settings = await fetchAppSettings()
     await Promise.all(cards.map((card) => card.refresh(settings)))
+  } catch (error) {
+    // 用户配置目录不可用时后端会拒绝调用；托盘应保留可用状态，不能产生未处理的 Promise rejection。
+    console.error('failed to refresh tray data', error)
   } finally {
     refreshBusy = false
     updateAllDerivedLabels()

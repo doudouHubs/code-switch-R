@@ -601,9 +601,9 @@
         "errors": "Failures",
         "errorHint": "Count & failure rate",
         "tokens": "Tokens moved",
-        "tokenHint": "Input + output tokens",
+        "tokenHint": "Input + output tokens (reasoning may already be included in output)",
         "cache": "Cache reads",
-        "cacheHint": "Read hits across responses",
+        "cacheHint": "Cached input tokens / total input tokens",
         "costHint": "24h total cost",
         "todayScope": "Today · {date}"
       },
@@ -620,6 +620,7 @@
       },
       "tokenLabels": {
         "input": "Input",
+        "billableInput": "Billable input",
         "output": "Output",
         "reasoning": "Reasoning",
         "cacheWrite": "Cache write",

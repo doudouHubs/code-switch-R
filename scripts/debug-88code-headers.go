@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -18,7 +19,11 @@ import (
 
 func main() {
 	apiURL := "https://m.88code.org/api/v1/messages"
-	apiKey := "88_784022b235595e84936fa42596b41bcad3dc24a79ced14a5d0d4489937ba36e8"
+	apiKey := os.Getenv("CODESWITCH_88CODE_API_KEY")
+	if apiKey == "" {
+		fmt.Fprintln(os.Stderr, "CODESWITCH_88CODE_API_KEY is required")
+		os.Exit(2)
+	}
 	model := "claude-haiku-4-5-20251001"
 
 	reqBody := map[string]interface{}{

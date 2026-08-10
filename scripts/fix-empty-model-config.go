@@ -11,14 +11,14 @@ import (
 )
 
 type Provider struct {
-	ID              int                `json:"id"`
-	Name            string             `json:"name"`
-	APIURL          string             `json:"apiUrl"`
-	APIKey          string             `json:"apiKey"`
-	Enabled         bool               `json:"enabled"`
-	Level           int                `json:"level,omitempty"`
-	SupportedModels map[string]bool    `json:"supportedModels,omitempty"`
-	ModelMapping    map[string]string  `json:"modelMapping,omitempty"`
+	ID              int               `json:"id"`
+	Name            string            `json:"name"`
+	APIURL          string            `json:"apiUrl"`
+	APIKey          string            `json:"apiKey"`
+	Enabled         bool              `json:"enabled"`
+	Level           int               `json:"level,omitempty"`
+	SupportedModels map[string]bool   `json:"supportedModels,omitempty"`
+	ModelMapping    map[string]string `json:"modelMapping,omitempty"`
 }
 
 type Config struct {
@@ -26,7 +26,16 @@ type Config struct {
 }
 
 func main() {
-	home, _ := os.UserHomeDir()
+	// 脚本会备份并覆盖用户配置，家目录无效时必须在写入前失败。
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Printf("获取用户目录失败: %v\n", err)
+		return
+	}
+	if !filepath.IsAbs(home) {
+		fmt.Printf("获取用户目录失败: 用户目录必须是绝对路径，实际为 %q\n", home)
+		return
+	}
 	files := []string{
 		filepath.Join(home, ".code-switch", "claude-code.json"),
 		filepath.Join(home, ".code-switch", "codex.json"),
@@ -74,14 +83,21 @@ func main() {
 			continue
 		}
 
-		// 备份原文件
+		// 配置中可能含 API Key，备份必须与原配置一样仅当前用户可读；备份失败时不覆盖原文件。
 		backupPath := filePath + ".bak"
-		os.WriteFile(backupPath, data, 0644)
+		if err := os.WriteFile(backupPath, data, 0600); err != nil {
+			fmt.Printf("  错误: 备份失败: %v\n", err)
+			continue
+		}
 		fmt.Printf("  ✓ 已备份到: %s\n", backupPath)
 
 		// 写入修复后的文件
-		newData, _ := json.MarshalIndent(config, "", "  ")
-		if err := os.WriteFile(filePath, newData, 0644); err != nil {
+		newData, err := json.MarshalIndent(config, "", "  ")
+		if err != nil {
+			fmt.Printf("  错误: 序列化失败: %v\n", err)
+			continue
+		}
+		if err := os.WriteFile(filePath, newData, 0600); err != nil {
 			fmt.Printf("  错误: 写入失败: %v\n", err)
 			continue
 		}

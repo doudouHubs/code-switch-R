@@ -1,17 +1,14 @@
 //go:build ignore
-
 // +build ignore
 
 package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -19,52 +16,24 @@ import (
 // 最终测试：精确模拟 providerrelay 的行为
 // Author: Half open flowers
 
-type ProviderConfig struct {
-	Providers []struct {
-		Name   string `json:"name"`
-		APIURL string `json:"apiUrl"`
-		APIKey string `json:"apiKey"`
-	} `json:"providers"`
-}
-
 func main() {
-	// 从用户配置文件读取 88code 配置
-	home, _ := os.UserHomeDir()
-	configPath := filepath.Join(home, ".code-switch", "claude-code.json")
-
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		fmt.Printf("读取配置文件失败: %v\n", err)
-		return
-	}
-
-	var config ProviderConfig
-	if err := json.Unmarshal(data, &config); err != nil {
-		fmt.Printf("解析配置文件失败: %v\n", err)
-		return
-	}
-
-	// 找到 88code provider
-	var apiKey, apiURL string
-	for _, p := range config.Providers {
-		if strings.Contains(strings.ToLower(p.Name), "88code") {
-			apiKey = p.APIKey
-			apiURL = p.APIURL
-			break
-		}
-	}
-
+	// 调试脚本不得读取用户配置，避免本地密钥和目录结构进入终端或 CI 日志。
+	apiKey := os.Getenv("CODESWITCH_88CODE_API_KEY")
 	if apiKey == "" {
-		fmt.Println("未找到 88code 供应商配置")
-		return
+		fmt.Fprintln(os.Stderr, "请设置 CODESWITCH_88CODE_API_KEY 后重试")
+		os.Exit(2)
+	}
+
+	apiURL := strings.TrimSpace(os.Getenv("CODESWITCH_88CODE_API_URL"))
+	if apiURL == "" {
+		apiURL = "https://m.88code.org/api"
 	}
 
 	fmt.Println("================================================================")
 	fmt.Println("88code 最终测试")
 	fmt.Println("================================================================")
 	fmt.Printf("API URL: %s\n", apiURL)
-	fmt.Printf("API Key: %s...%s (len=%d)\n", apiKey[:10], apiKey[len(apiKey)-4:], len(apiKey))
-	fmt.Printf("API Key 原始字节: %v\n", []byte(apiKey[:20]))
+	fmt.Printf("API Key: [redacted] (len=%d)\n", len(apiKey))
 	fmt.Println()
 
 	url := strings.TrimSuffix(apiURL, "/") + "/v1/messages"
@@ -87,7 +56,7 @@ func main() {
 		{
 			name: "2. 只有 Bearer（无 x-api-key）",
 			headers: map[string]string{
-				"Content-Type": "application/json",
+				"Content-Type":  "application/json",
 				"Authorization": "Bearer " + apiKey,
 			},
 		},
@@ -99,7 +68,7 @@ func main() {
 				"anthropic-version": "2023-06-01",
 				"Authorization":     "Bearer " + apiKey,
 				// Claude Code 可能发送的其他 headers
-				"Accept":         "application/json",
+				"Accept":          "application/json",
 				"Accept-Encoding": "gzip",
 			},
 		},
@@ -164,7 +133,8 @@ func main() {
 		defer resp.Body.Close()
 
 		respBody, _ := io.ReadAll(resp.Body)
-		respStr := string(respBody)
+		// 服务端可能在错误响应中回显请求凭据，输出前统一替换。
+		respStr := strings.ReplaceAll(string(respBody), apiKey, "***REDACTED***")
 
 		// 分析响应
 		isSuccess := resp.StatusCode == 200 &&
