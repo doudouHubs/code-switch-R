@@ -71,7 +71,7 @@ func forkProjectManagerSessionWithAppServer(sessionID string, lastTurnID string)
 		"params": map[string]any{
 			"clientInfo": map[string]any{
 				"name":    "code-switch-r",
-				"title":   "Code Switch R",
+				"title":   "Code Switch CLI",
 				"version": "project-manager",
 			},
 			"capabilities": map[string]any{

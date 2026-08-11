@@ -14,7 +14,7 @@ services/
 
 ### 运行所有测试
 ```bash
-cd path\to\code-switch-R
+cd path\to\code-switch-cli
 go test ./services/... -v
 ```
 

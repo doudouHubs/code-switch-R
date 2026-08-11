@@ -272,7 +272,7 @@ if (blacklistTimer) {
 
 1. **启动应用**：
    ```bash
-   cd path\to\code-switch-R
+   cd path\to\code-switch-cli
    wails3 task dev
    ```
 

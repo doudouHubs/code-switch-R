@@ -79,7 +79,7 @@ func TestBuildProjectManagerProjectTerminalWTArgs(t *testing.T) {
 func TestBuildProjectManagerProjectTaskWTArgsUsesWrapperBoundary(t *testing.T) {
 	projectPath := `C:\workspace\code-switch-test`
 	windowID := projectManagerProjectWindowID(projectPath)
-	tabTitle := "[PM]AI-Commit - code-switch-R"
+	tabTitle := "[PM]AI-Commit - code-switch-cli"
 	wrapperPath := `C:\Users\TestUser\.code-switch\project-manager-terminal-wrappers\ai-commit.cmd`
 
 	got := buildProjectManagerProjectTaskWTArgs(projectPath, windowID, tabTitle, wrapperPath)
@@ -98,14 +98,14 @@ func TestBuildProjectManagerProjectTaskWTArgsUsesWrapperBoundary(t *testing.T) {
 }
 
 func TestProjectManagerProjectTaskTabTitles(t *testing.T) {
-	projectPath := `C:\workspace\code-switch-test`
+	projectPath := `C:\workspace\code-switch-cli`
 	tests := []struct {
 		name string
 		got  string
 		want string
 	}{
-		{name: "project run", got: projectManagerProjectRunTabTitle(projectPath), want: "[PM]Run - code-switch-R"},
-		{name: "AI-Commit", got: projectManagerAICommitTabTitle(projectPath), want: "[PM]AI-Commit - code-switch-R"},
+		{name: "project run", got: projectManagerProjectRunTabTitle(projectPath), want: "[PM]Run - code-switch-cli"},
+		{name: "AI-Commit", got: projectManagerAICommitTabTitle(projectPath), want: "[PM]AI-Commit - code-switch-cli"},
 	}
 
 	for _, test := range tests {

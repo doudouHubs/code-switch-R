@@ -37,7 +37,7 @@ func TestProjectManagerFindNewTerminalTabUsesRuntimeIDDiffAfterTitleChanges(t *t
 	// 模拟用户拖动了现有 tab，Codex 同时覆盖了新 tab 的初始 [PM] 标题。
 	current := []projectManagerTerminalTabRef{
 		{RuntimeID: []int{42, 7866700, 4, 3975}, Title: "Codex B"},
-		{RuntimeID: []int{42, 7866700, 4, 3976}, Title: "code-switch-R | New task"},
+		{RuntimeID: []int{42, 7866700, 4, 3976}, Title: "code-switch-cli | New task"},
 		{RuntimeID: []int{42, 7866700, 4, 3974}, Title: "Codex A"},
 	}
 
@@ -70,7 +70,7 @@ func TestProjectManagerFindNewTerminalTabRejectsAmbiguousDiff(t *testing.T) {
 
 func TestProjectManagerFindNewTerminalTabUsesOnlyTabInNewWindow(t *testing.T) {
 	current := []projectManagerTerminalTabRef{
-		{RuntimeID: []int{42, 7866700, 4, 3974}, Title: "code-switch-R | New task"},
+		{RuntimeID: []int{42, 7866700, 4, 3974}, Title: "code-switch-cli | New task"},
 	}
 
 	got, found := projectManagerFindNewTerminalTab(projectManagerTerminalTabBaseline{}, current, "[PM]session-005 - New task")

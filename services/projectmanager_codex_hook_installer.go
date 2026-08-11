@@ -388,7 +388,7 @@ func projectManagerCodexInitializeRequest(id int) map[string]any {
 		"id":     id,
 		"method": "initialize",
 		"params": map[string]any{
-			"clientInfo":   map[string]any{"name": "code-switch-r", "title": "Code Switch R", "version": "codex-status"},
+			"clientInfo":   map[string]any{"name": "code-switch-r", "title": "Code Switch CLI", "version": "codex-status"},
 			"capabilities": map[string]any{"experimentalApi": true},
 		},
 	}
