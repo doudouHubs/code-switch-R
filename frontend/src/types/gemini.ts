@@ -14,7 +14,8 @@ export interface GeminiProvider {
   category?: string // official, third_party, custom
   partnerPromotionKey?: string
   enabled: boolean
-  envConfig?: Record<string, string | undefined>
+  // Go map[string]string 的值始终是 string，需与 Wails 生成的 binding 保持一致。
+  envConfig?: Record<string, string>
   settingsConfig?: Record<string, any>
 }
 
@@ -27,7 +28,7 @@ export interface GeminiPreset {
   description?: string
   category: string
   partnerPromotionKey?: string
-  envConfig?: Record<string, string | undefined>
+  envConfig?: Record<string, string>
 }
 
 export interface GeminiStatus {

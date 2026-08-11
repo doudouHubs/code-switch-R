@@ -1421,7 +1421,8 @@ interface GeminiProvider {
   partnerPromotionKey?: string
   enabled: boolean
   level?: number // 优先级分组 (1-10, 默认 1)
-  envConfig?: Record<string, string | undefined>
+  // Go map[string]string 的值始终是 string，需与 Wails 生成的 binding 保持一致。
+  envConfig?: Record<string, string>
   settingsConfig?: Record<string, any>
 }
 
