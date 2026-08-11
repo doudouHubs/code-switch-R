@@ -6,8 +6,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -145,14 +147,22 @@ type UpdateService struct {
 	cachedPolicy string // 缓存的更新策略，避免重复检测
 }
 
-// 常量
+// 更新源地址集中在此处，测试可替换包内变量模拟不同的发布源响应。
+var (
+	latestJSONURL    = "https://github.com/doudouHubs/code-switch-cli/releases/latest/download/latest.json"
+	githubAPIURL     = "https://api.github.com/repos/doudouHubs/code-switch-cli/releases/latest"
+	updateHTTPClient = http.DefaultClient
+)
+
 const (
-	latestJSONURL     = "https://github.com/doudouHubs/code-switch-cli/releases/latest/download/latest.json"
-	githubAPIURL      = "https://api.github.com/repos/doudouHubs/code-switch-cli/releases/latest"
 	checkCooldown     = 60 * time.Second // 检查更新冷却时间
 	progressThrottle  = 100 * time.Millisecond
 	progressMinChange = 1 // 最小进度变化（百分比）
 )
+
+// errUpdateSourceNotFound 表示发布源没有可供当前客户端检查的公开 Release。
+// 双源均为 404 时属于“暂无更新”，不应把正常的无发布状态展示成错误弹窗。
+var errUpdateSourceNotFound = errors.New("update source not found")
 
 // URL 白名单
 var allowedURLPrefixes = []string{
@@ -517,13 +527,25 @@ func (us *UpdateService) GetDismissedVersion() string {
 // doCheckUpdate 执行检查更新
 func (us *UpdateService) doCheckUpdate() (*UpdateInfo, error) {
 	// 首先尝试从 latest.json 获取
-	info, err := us.fetchFromLatestJSON()
-	if err == nil && info != nil {
+	info, latestErr := us.fetchFromLatestJSON()
+	if latestErr == nil && info != nil {
 		return info, nil
 	}
 
 	// Fallback: 从 GitHub API 获取
-	return us.fetchFromGitHubAPI()
+	info, apiErr := us.fetchFromGitHubAPI()
+	if apiErr == nil {
+		return info, nil
+	}
+
+	// 新仓库尚未发布公开 Release，或仓库对匿名 API 不可见时，两个地址都会返回 404。
+	// 这代表当前没有可检查的版本，而不是网络或数据损坏，保持空闲状态即可避免误报。
+	if errors.Is(latestErr, errUpdateSourceNotFound) && errors.Is(apiErr, errUpdateSourceNotFound) {
+		log.Printf("[UpdateService] 未找到公开更新源，按无更新处理: latest.json=%v, github_api=%v", latestErr, apiErr)
+		return nil, nil
+	}
+
+	return nil, apiErr
 }
 
 // fetchFromLatestJSON 从 latest.json 获取更新信息
@@ -536,14 +558,14 @@ func (us *UpdateService) fetchFromLatestJSON() (*UpdateInfo, error) {
 		return nil, err
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := updateHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("latest.json returned status %d", resp.StatusCode)
+		return nil, updateHTTPStatusError("latest.json", resp.StatusCode)
 	}
 
 	var manifest LatestManifest
@@ -579,14 +601,14 @@ func (us *UpdateService) fetchFromGitHubAPI() (*UpdateInfo, error) {
 	}
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := updateHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
+		return nil, updateHTTPStatusError("GitHub API", resp.StatusCode)
 	}
 
 	var release struct {
@@ -629,6 +651,14 @@ func (us *UpdateService) fetchFromGitHubAPI() (*UpdateInfo, error) {
 		SHA256:      "", // GitHub API 不提供 SHA256
 		Size:        size,
 	}, nil
+}
+
+// updateHTTPStatusError 将 404 标记为“更新源不存在”，其余状态保持原有错误语义。
+func updateHTTPStatusError(source string, statusCode int) error {
+	if statusCode == http.StatusNotFound {
+		return fmt.Errorf("%w: %s returned status %d", errUpdateSourceNotFound, source, statusCode)
+	}
+	return fmt.Errorf("%s returned status %d", source, statusCode)
 }
 
 // doDownload 执行下载
