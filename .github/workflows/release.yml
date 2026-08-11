@@ -5,6 +5,11 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version without the v prefix, for example 2.6.33'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -22,7 +27,8 @@ jobs:
       - name: Update version from tag
         id: version
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
+          VERSION="${{ inputs.version || github.ref_name }}"
+          VERSION="${VERSION#v}"
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "Updating version to: $VERSION"
           sed -i '' "s/const AppVersion = \"v[^\"]*\"/const AppVersion = \"v$VERSION\"/" version_service.go
@@ -88,7 +94,7 @@ jobs:
         id: version
         shell: pwsh
         run: |
-          $VERSION = "${{ github.ref_name }}".TrimStart('v')
+          $VERSION = "${{ inputs.version || github.ref_name }}".TrimStart('v')
           "VERSION=$VERSION" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           Write-Host "Updating version to: $VERSION"
 
@@ -207,7 +213,8 @@ jobs:
       - name: Update version from tag
         id: version
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
+          VERSION="${{ inputs.version || github.ref_name }}"
+          VERSION="${VERSION#v}"
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "Updating version to: $VERSION"
           sed -i "s/const AppVersion = \"v[^\"]*\"/const AppVersion = \"v$VERSION\"/" version_service.go
@@ -280,7 +287,8 @@ jobs:
 
       - name: Update nfpm version
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
+          VERSION="${{ inputs.version || github.ref_name }}"
+          VERSION="${VERSION#v}"
           sed -i "s/^version:.*/version: \"$VERSION\"/" build/linux/nfpm/nfpm.yaml
           echo "Updated nfpm version to: $VERSION"
 
@@ -334,7 +342,8 @@ jobs:
 
       - name: Prepare release assets
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
+          VERSION="${{ inputs.version || github.ref_name }}"
+          VERSION="${VERSION#v}"
           mkdir -p release-assets
 
           # macOS
@@ -358,14 +367,16 @@ jobs:
 
       - name: Generate latest.json
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
+          VERSION="${{ inputs.version || github.ref_name }}"
+          VERSION="${VERSION#v}"
           python3 scripts/generate-latest-json.py "v${VERSION}" release-assets release-assets/latest.json
           echo "Generated latest.json:"
           cat release-assets/latest.json
 
       - name: Generate release body
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
+          VERSION="${{ inputs.version || github.ref_name }}"
+          VERSION="${VERSION#v}"
           echo "Generating release body for v$VERSION"
 
           # 提取当前版本的更新内容（从标题到下一个版本标题之前）
@@ -437,6 +448,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: release-assets/*
+          tag_name: "${{ inputs.version && format('v{0}', inputs.version) || github.ref_name }}"
           body_path: /tmp/release_body.md
           draft: false
           prerelease: false
