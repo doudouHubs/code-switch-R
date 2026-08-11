@@ -147,8 +147,8 @@ type UpdateService struct {
 
 // 常量
 const (
-	latestJSONURL     = "https://github.com/Rogers-F/code-switch-R/releases/latest/download/latest.json"
-	githubAPIURL      = "https://api.github.com/repos/Rogers-F/code-switch-R/releases/latest"
+	latestJSONURL     = "https://github.com/doudouHubs/code-switch-cli/releases/latest/download/latest.json"
+	githubAPIURL      = "https://api.github.com/repos/doudouHubs/code-switch-cli/releases/latest"
 	checkCooldown     = 60 * time.Second // 检查更新冷却时间
 	progressThrottle  = 100 * time.Millisecond
 	progressMinChange = 1 // 最小进度变化（百分比）
@@ -156,8 +156,8 @@ const (
 
 // URL 白名单
 var allowedURLPrefixes = []string{
-	"https://github.com/Rogers-F/code-switch-R/releases/download/",
-	"https://github.com/Rogers-F/code-switch-R/releases/latest/download/",
+	"https://github.com/doudouHubs/code-switch-cli/releases/download/",
+	"https://github.com/doudouHubs/code-switch-cli/releases/latest/download/",
 	"https://objects.githubusercontent.com/", // GitHub 重定向目标
 }
 

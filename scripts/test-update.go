@@ -23,7 +23,7 @@ type GitHubRelease struct {
 func main() {
 	client := &http.Client{}
 
-	releaseURL := "https://api.github.com/repos/Rogers-F/code-switch-R/releases/latest"
+	releaseURL := "https://api.github.com/repos/doudouHubs/code-switch-cli/releases/latest"
 
 	req, err := http.NewRequest("GET", releaseURL, nil)
 	if err != nil {

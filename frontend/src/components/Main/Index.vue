@@ -1025,8 +1025,8 @@ const resolvedTheme = computed(() => {
   return themeMode.value
 })
 const themeIcon = computed(() => (resolvedTheme.value === 'dark' ? 'moon' : 'sun'))
-const releasePageUrl = 'https://github.com/Rogers-F/code-switch-R/releases'
-const releaseApiUrl = 'https://api.github.com/repos/Rogers-F/code-switch-R/releases/latest'
+const releasePageUrl = 'https://github.com/doudouHubs/code-switch-cli/releases'
+const releaseApiUrl = 'https://api.github.com/repos/doudouHubs/code-switch-cli/releases/latest'
 
 const heatmapContainerRef = ref<HTMLElement | null>(null)
 // 使用自适应热力图 composable

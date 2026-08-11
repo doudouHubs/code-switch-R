@@ -56,7 +56,7 @@ def main():
     version_clean = version.lstrip("v")
 
     # GitHub Release 下载 URL 前缀
-    base_url = f"https://github.com/Rogers-F/code-switch-R/releases/download/v{version_clean}"
+    base_url = f"https://github.com/doudouHubs/code-switch-cli/releases/download/v{version_clean}"
 
     # 定义平台资产映射
     platform_configs = {

@@ -12,7 +12,7 @@ priority: "extra"
 maintainer: ${GIT_COMMITTER_NAME} <${GIT_COMMITTER_EMAIL}>
 description: "Manage Claude & Codex relays, providers, and request logs."
 vendor: "Code Switch"
-homepage: "https://github.com/Rogers-F/code-switch-R"
+homepage: "https://github.com/doudouHubs/code-switch-cli"
 license: "MIT"
 release: "1"
 

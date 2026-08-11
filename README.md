@@ -1,4 +1,4 @@
-# Code Switch
+# code-switch-cli
 
 > 一站式管理你的 AI 编程助手（Claude Code / Codex / Gemini CLI）
 
@@ -17,7 +17,7 @@
 
 ### 1. 下载安装
 
-前往 [Releases](https://github.com/Rogers-F/code-switch-R/releases) 下载对应系统的安装包：
+前往 [Releases](https://github.com/doudouHubs/code-switch-cli/releases) 下载对应系统的安装包：
 
 | 系统 | 推荐下载 |
 |------|---------|
@@ -270,4 +270,4 @@ Apache License 2.0，详见 [LICENSE](LICENSE)。
 
 ---
 
-**有问题？** 欢迎在 [Issues](https://github.com/Rogers-F/code-switch-R/issues) 反馈
+**有问题？** 欢迎在 [Issues](https://github.com/doudouHubs/code-switch-cli/issues) 反馈
