@@ -1,0 +1,233 @@
+{
+  "name": "Capybara",
+  "subject": "cute brown capybara with a red flower on its head",
+  "builtin": true,
+  "assetVersion": 3,
+  "spriteNormalizationVersion": 1,
+  "atlasVersion": 1,
+  "atlas": {
+    "image": "atlas.png",
+    "width": 696,
+    "height": 3888,
+    "anchor": "bottom-center",
+    "layout": "action-rows"
+  },
+  "animations": {
+    "idle": {
+      "loop": true,
+      "frames": [
+        {
+          "x": 2,
+          "y": 2,
+          "width": 411,
+          "height": 320,
+          "durationMs": 240,
+          "subjectBounds": {
+            "x": 3,
+            "y": 3,
+            "width": 405,
+            "height": 315
+          }
+        }
+      ]
+    },
+    "walk": {
+      "loop": true,
+      "frames": [
+        {
+          "x": 2,
+          "y": 326,
+          "width": 444,
+          "height": 320,
+          "durationMs": 240,
+          "subjectBounds": {
+            "x": 3,
+            "y": 3,
+            "width": 438,
+            "height": 314
+          }
+        }
+      ]
+    },
+    "sleep": {
+      "loop": true,
+      "frames": [
+        {
+          "x": 2,
+          "y": 650,
+          "width": 692,
+          "height": 320,
+          "durationMs": 240,
+          "subjectBounds": {
+            "x": 4,
+            "y": 4,
+            "width": 685,
+            "height": 312
+          }
+        }
+      ]
+    },
+    "beg": {
+      "loop": true,
+      "frames": [
+        {
+          "x": 2,
+          "y": 974,
+          "width": 292,
+          "height": 320,
+          "durationMs": 240,
+          "subjectBounds": {
+            "x": 2,
+            "y": 2,
+            "width": 288,
+            "height": 316
+          }
+        }
+      ]
+    },
+    "eat": {
+      "loop": true,
+      "frames": [
+        {
+          "x": 2,
+          "y": 1298,
+          "width": 383,
+          "height": 320,
+          "durationMs": 240,
+          "subjectBounds": {
+            "x": 3,
+            "y": 3,
+            "width": 378,
+            "height": 315
+          }
+        }
+      ]
+    },
+    "munch": {
+      "loop": true,
+      "frames": [
+        {
+          "x": 2,
+          "y": 1622,
+          "width": 346,
+          "height": 320,
+          "durationMs": 240,
+          "subjectBounds": {
+            "x": 3,
+            "y": 3,
+            "width": 341,
+            "height": 315
+          }
+        }
+      ]
+    },
+    "bathe": {
+      "loop": true,
+      "frames": [
+        {
+          "x": 2,
+          "y": 1946,
+          "width": 360,
+          "height": 320,
+          "durationMs": 240,
+          "subjectBounds": {
+            "x": 3,
+            "y": 3,
+            "width": 354,
+            "height": 315
+          }
+        }
+      ]
+    },
+    "soak": {
+      "loop": true,
+      "frames": [
+        {
+          "x": 2,
+          "y": 2270,
+          "width": 316,
+          "height": 320,
+          "durationMs": 240,
+          "subjectBounds": {
+            "x": 2,
+            "y": 2,
+            "width": 312,
+            "height": 316
+          }
+        }
+      ]
+    },
+    "swim": {
+      "loop": true,
+      "frames": [
+        {
+          "x": 2,
+          "y": 2594,
+          "width": 496,
+          "height": 320,
+          "durationMs": 240,
+          "subjectBounds": {
+            "x": 3,
+            "y": 3,
+            "width": 491,
+            "height": 314
+          }
+        }
+      ]
+    },
+    "zen": {
+      "loop": true,
+      "frames": [
+        {
+          "x": 2,
+          "y": 2918,
+          "width": 276,
+          "height": 320,
+          "durationMs": 240,
+          "subjectBounds": {
+            "x": 2,
+            "y": 3,
+            "width": 273,
+            "height": 315
+          }
+        }
+      ]
+    },
+    "play": {
+      "loop": true,
+      "frames": [
+        {
+          "x": 2,
+          "y": 3242,
+          "width": 349,
+          "height": 320,
+          "durationMs": 240,
+          "subjectBounds": {
+            "x": 2,
+            "y": 2,
+            "width": 345,
+            "height": 316
+          }
+        }
+      ]
+    },
+    "held": {
+      "loop": true,
+      "frames": [
+        {
+          "x": 2,
+          "y": 3566,
+          "width": 168,
+          "height": 320,
+          "durationMs": 240,
+          "subjectBounds": {
+            "x": 2,
+            "y": 0,
+            "width": 165,
+            "height": 318
+          }
+        }
+      ]
+    }
+  }
+}

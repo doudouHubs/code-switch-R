@@ -3,10 +3,139 @@
     "title": "我的应用",
     "login": "登录"
   },
+  "update": {
+    "newVersion": "新版本 {version} 可用",
+    "checking": "检查中...",
+    "downloadNow": "立即下载",
+    "downloading": "下载中",
+    "restartNow": "重启更新",
+    "later": "稍后提醒",
+    "cancel": "取消",
+    "retry": "重试",
+    "close": "关闭",
+    "error": "更新出错",
+    "noUpdate": "已是最新版本",
+    "checkFailed": "检查更新失败",
+    "downloadFailed": "下载失败",
+    "applyFailed": "应用更新失败",
+    "releaseNotes": "更新日志",
+    "currentVersion": "当前版本",
+    "latestVersion": "最新版本",
+    "checkUpdate": "检查更新",
+    "autoCheck": "自动检查更新",
+    "ignoredVersion": "已忽略此版本"
+  },
+  "settings": {
+    "network": {
+      "title": "网络设置",
+      "listenMode": "监听模式",
+      "modes": {
+        "localhost": "仅本地 (127.0.0.1)",
+        "wslAuto": "WSL 自动检测",
+        "lan": "局域网 (0.0.0.0)",
+        "custom": "自定义地址"
+      },
+      "customAddress": "自定义地址",
+      "currentAddress": "当前监听地址",
+      "lanWarningTitle": "安全警告",
+      "lanWarningText": "局域网模式会将 API 密钥暴露给局域网内的其他设备，请仅在可信环境中使用。",
+      "wslTitle": "WSL 配置",
+      "wslAutoConfig": "WSL 自动配置",
+      "wslAutoConfigHint": "自动配置 WSL 中的 CLI 工具使用宿主机代理",
+      "wslStatus": "WSL 状态",
+      "wslDetected": "已检测到 WSL",
+      "wslNotDetected": "未检测到 WSL",
+      "wslDistros": "已检测的发行版",
+      "targetCli": "目标 CLI 工具",
+      "configureNow": "立即配置",
+      "configureSuccess": "WSL CLI 工具配置成功",
+      "configureFailed": "配置 WSL CLI 工具失败",
+      "saveFailed": "保存网络设置失败"
+    }
+  },
   "menus": {
     "general": "通用设置",
     "shortcut": "快捷键",
     "about": "关于"
+  },
+  "sidebar": {
+    "home": "首页",
+    "projects": "Codex项目",
+    "prompts": "提示词",
+    "skill": "技能",
+    "gemini": "Gemini",
+    "logs": "日志",
+    "console": "控制台",
+    "radar": "Codex雷达",
+    "petSettings": "宠物设置",
+    "settings": "设置"
+  },
+  "common": {
+    "save": "保存",
+    "saving": "保存中...",
+    "cancel": "取消"
+  },
+  "prompts": {
+    "hero": {
+      "eyebrow": "提示词管理",
+      "title": "管理系统提示词",
+      "lead": "为 Claude Code、Codex 和 Gemini 配置自定义系统提示词，增强 AI 编程助手的能力。"
+    },
+    "stats": {
+      "total": "共 {count} 个提示词",
+      "enabled": "已启用"
+    },
+    "empty": "暂无提示词，点击下方按钮创建",
+    "loading": "加载中...",
+    "confirmDelete": "确认删除此提示词？",
+    "actions": {
+      "create": "新增提示词",
+      "import": "从文件导入"
+    },
+    "form": {
+      "createTitle": "新增提示词",
+      "editTitle": "编辑提示词",
+      "name": "名称",
+      "namePlaceholder": "例如：代码审查专家",
+      "description": "描述",
+      "descriptionPlaceholder": "简短描述此提示词的用途",
+      "content": "提示词内容",
+      "cancel": "取消",
+      "save": "保存"
+    }
+  },
+  "speedtest": {
+    "hero": {
+      "eyebrow": "API 速度测试",
+      "title": "测试 API 端点延迟",
+      "lead": "测量各 API 端点的响应速度，帮助选择最优的服务供应商。"
+    },
+    "placeholder": "输入 API 端点 URL",
+    "add": "添加",
+    "endpoints": "端点列表（{count} 个）",
+    "start": "开始测试",
+    "testing": "测试中",
+    "empty": "添加 API 端点开始测试",
+    "failed": "失败",
+    "syncButton": "刷新供应商端点",
+    "syncing": "同步中...",
+    "loadingTip": "正在从首页同步供应商端点...",
+    "syncError": "同步失败，请手动刷新"
+  },
+  "envcheck": {
+    "hero": {
+      "eyebrow": "环境变量检测",
+      "title": "检测环境变量冲突",
+      "lead": "扫描系统环境变量和配置文件，发现可能影响 AI 编程工具的变量冲突。"
+    },
+    "checking": "检测中...",
+    "error": "检测失败",
+    "found": "发现 {count} 个冲突的环境变量",
+    "noConflicts": "未发现环境变量冲突",
+    "value": "值",
+    "source": "来源",
+    "source.system": "系统环境变量",
+    "refresh": "重新检测"
   },
   "components": {
     "home": {},
@@ -26,9 +155,9 @@
       },
       "modelMapping": {
         "label": "模型映射",
-        "tooltip": "将外部模型名称映射到供应商内部模型名称。支持通配符展开",
-        "keyPlaceholder": "外部模型名（如 claude-*）",
-        "valuePlaceholder": "内部模型名（如 anthropic/claude-*）",
+        "tooltip": "将 CLI 请求的模型名映射到供应商实际支持的模型名。支持通配符展开",
+        "keyPlaceholder": "CLI 模型（如 claude-*）",
+        "valuePlaceholder": "供应商模型（如 kimi-k2-thinking）",
         "add": "添加",
         "remove": "删除映射",
         "examples": {
@@ -37,13 +166,28 @@
           "wildcard": "通配符映射，自动展开 claude-sonnet-4 → anthropic/claude-sonnet-4",
           "prefix": "前缀映射"
         }
+      },
+      "modelCategory": {
+        "label": "模型用途类别",
+        "tooltip": "声明模型用于聊天、语音、嵌入、图像或视频；语音识别和 TTS 使用 speech 类别。",
+        "modelPlaceholder": "输入模型名或通配符，如 gpt-*-transcribe",
+        "select": "选择模型 {model} 的用途类别",
+        "add": "添加类别",
+        "remove": "删除模型类别",
+        "hint": "显式类别优先于模型名猜测；未填写的旧模型继续按兼容规则处理。",
+        "options": {
+          "chat": "聊天",
+          "speech": "语音",
+          "embedding": "嵌入",
+          "image": "图像",
+          "video": "视频",
+          "auto": "自动（兼容旧配置）"
+        }
       }
     },
     "main": {
       "hero": {
-        "eyebrow": "Claude & Codex 供应商总览",
-        "title": "实时掌握 AI 编程供给",
-        "lead": "下方绿砖墙展示每日算力与额度消耗情况，帮助我们快速洞察不同供应商的负载趋势"
+        "eyebrow": "Claude & Codex 供应商总览"
       },
       "heatmap": {
         "ariaLabel": "每日算力消耗热力图",
@@ -60,15 +204,49 @@
       },
       "tabs": {
         "ariaLabel": "AI 供应商切换",
-        "addCard": "新增供应商卡片"
+        "addCard": "新增供应商卡片",
+        "refresh": "刷新数据"
       },
       "relayToggle": {
         "label": "Claude proxy",
         "hostClaude": "托管 Claude Code",
         "hostCodex": "托管 Codex",
+        "hostGemini": "托管 Gemini CLI",
+        "hostOthers": "托管自定义 CLI",
         "tooltip": "通过本地转发托管 API 访问，统一管理密钥与配额。",
         "statusOn": "已托管",
         "statusOff": "未托管"
+      },
+      "customCli": {
+        "selectToolFirst": "请先选择一个 CLI 工具",
+        "noTools": "暂无自定义 CLI 工具",
+        "addTool": "添加 CLI 工具",
+        "toolName": "工具名称",
+        "toolNamePlaceholder": "例如：Droid、RooCode",
+        "configFiles": "配置文件",
+        "proxySettings": "代理注入设置",
+        "selectTool": "选择 CLI 工具",
+        "createTitle": "新建 CLI 工具",
+        "editTitle": "编辑 CLI 工具",
+        "deleteTitle": "删除 CLI 工具",
+        "deleteMessage": "确认删除 {name} 吗？此操作不可撤销。",
+        "primaryConfig": "主配置文件",
+        "labelPlaceholder": "配置文件标签",
+        "pathPlaceholder": "配置文件路径，如 ~/.droid/config.json",
+        "primary": "主文件",
+        "selectConfigFile": "选择目标配置文件",
+        "unnamed": "未命名",
+        "baseUrlFieldPlaceholder": "Base URL 字段路径，如 env.ANTHROPIC_BASE_URL",
+        "authTokenFieldPlaceholder": "认证 Token 字段路径（可选）",
+        "proxyHint": "代理注入会将本地代理地址写入指定的配置文件字段",
+        "nameRequired": "请输入工具名称",
+        "configRequired": "请至少添加一个有效的配置文件路径",
+        "createSuccess": "CLI 工具创建成功",
+        "updateSuccess": "CLI 工具更新成功",
+        "deleteSuccess": "CLI 工具已删除",
+        "saveFailed": "保存 CLI 工具失败",
+        "deleteFailed": "删除 CLI 工具失败",
+        "invalidProxyTarget": "代理注入目标配置文件无效"
       },
       "logs": {
         "view": "查看日志",
@@ -77,19 +255,23 @@
       },
       "controls": {
         "github": "打开 GitHub",
-        "githubUpdate": "打开 GitHub（发现新版本）",
         "theme": "切换主题",
         "settings": "打开设置",
-        "mcp": "打开 MCP 面板",
         "skill": "打开 Skill 列表",
-        "import": "导入 cc-switch 配置"
+        "gemini": "打开 Gemini CLI 管理",
+        "import": "导入 cc-switch 配置",
+        "duplicate": "复制供应商"
       },
-      "versionLabel": "版本 {version}",
       "importConfig": {
-        "tooltip": "导入 {providers} 个供应商 · {servers} 个 MCP 服务器",
-        "success": "已导入 {providers} 个供应商与 {servers} 个 MCP 服务器",
-        "empty": "cc-switch 中的供应商与 MCP 均已同步",
+        "tooltip": "导入 {providers} 个供应商",
+        "success": "已导入 {providers} 个供应商",
+        "empty": "cc-switch 中的供应商均已同步",
         "error": "导入 cc-switch 配置失败"
+      },
+      "firstRun": {
+        "message": "欢迎使用 Code Switch CLI！如果你有 cc-switch 的配置，可以前往设置页导入。",
+        "goToSettings": "前往设置",
+        "dismiss": "稍后"
       },
       "providers": {
         "requests": "请求数",
@@ -97,7 +279,16 @@
         "cost": "花费",
         "successRate": "成功率",
         "loading": "刷新中...",
-        "noData": "今日暂无数据"
+        "noData": "今日暂无数据",
+        "lastUsed": "正在使用"
+      },
+      "directApply": {
+        "title": "直接应用",
+        "inUse": "使用中",
+        "currentBadge": "当前使用",
+        "success": "{name} 已应用",
+        "failed": "应用失败",
+        "proxyEnabled": "请先关闭代理"
       },
       "form": {
         "createTitle": "新增供应商",
@@ -106,35 +297,55 @@
           "name": "供应商名称",
           "apiUrl": "API 地址",
           "apiKey": "API 密钥",
+          "apiEndpoint": "API 端点（可选）",
+          "upstreamProtocol": "上游协议",
           "officialSite": "官网地址",
           "icon": "图标",
           "enabled": "启用状态",
-          "level": "优先级分组"
+          "level": "优先级分组",
+          "connectivityAuthType": "认证方式"
         },
         "placeholders": {
           "name": "例如：AICoding.sh",
           "apiUrl": "https://api.aicoding.sh",
           "apiKey": "sk-xxxxx",
+          "apiEndpoint": "留空使用默认，如 /v1/chat/completions",
           "officialSite": "https://vendor.com",
-          "icon": "例如：aicoding、kimi"
+          "icon": "例如：aicoding、kimi",
+          "customAuthHeader": "自定义 Header 名称（如 Authorization、X-Custom-Key）",
+          "searchIcon": "搜索图标..."
         },
+        "noIconResults": "未找到匹配的图标",
         "hints": {
-          "level": "数字越小优先级越高，Level 1 会被优先尝试，失败后依次尝试 Level 2、Level 3 等"
+          "level": "数字越小优先级越高，Level 1 会被优先尝试，失败后依次尝试 Level 2、Level 3 等",
+          "apiEndpoint": "覆盖平台默认端点。留空使用默认（claude: /v1/messages, codex: /responses）。GLM 模型请使用 /v1/chat/completions",
+          "upstreamProtocol": "指定上游 API 的协议类型。选择 auto 时根据端点自动检测；选择 openai_chat 时自动转换请求和响应格式",
+          "connectivityAuthType": "默认使用 Bearer。Anthropic 官方 API 请选择 X-API-Key。如需自定义请在下方输入 Header 名称。"
         },
         "actions": {
           "cancel": "取消",
           "save": "保存",
+          "saveAndApply": "保存并应用",
           "delete": "删除"
         },
         "switch": {
           "on": "已启用",
           "off": "未启用"
         },
+        "upstreamProtocol": {
+          "auto": "自动检测",
+          "autoDesc": "根据 API 端点自动判断协议类型",
+          "anthropic": "Anthropic",
+          "anthropicDesc": "使用 Anthropic Messages API（默认）",
+          "openaiChat": "OpenAI Chat",
+          "openaiChatDesc": "使用 OpenAI Chat Completions API，自动转换格式"
+        },
         "confirmDeleteTitle": "删除供应商",
         "confirmDeleteMessage": "确认删除 {name} 吗？操作不可撤销",
         "errors": {
           "invalidUrl": "请输入合法的 API 地址"
-        }
+        },
+        "saveFailed": "保存供应商配置失败"
       },
       "levelDesc": {
         "highest": "最高优先级",
@@ -147,12 +358,245 @@
         "lower": "较低优先级",
         "veryLow": "很低优先级",
         "lowest": "最低优先级"
+      },
+      "blacklist": {
+        "blocked": "已拉黑",
+        "remaining": "剩余",
+        "minutes": "分",
+        "seconds": "秒",
+        "unblock": "立即解禁",
+        "unblockSuccess": "已解除 {name} 的拉黑",
+        "unblockFailed": "解除拉黑失败，请稍后重试",
+        "unblockAndReset": "解除拉黑",
+        "resetLevel": "清零等级",
+        "unblockAndResetHint": "解除拉黑并保留当前等级，重新开始降级计时",
+        "resetLevelHint": "仅清零等级，保留拉黑状态",
+        "resetLevelSuccess": "已清零 {name} 的等级",
+        "resetLevelFailed": "清零等级失败，请稍后重试",
+        "levelHint": "有失败记录",
+        "levelTitle": "黑名单等级 L{level}"
+      },
+      "errors": {
+        "loadAppSettingsFailed": "加载应用设置失败",
+        "loadHeatmapFailed": "加载使用热力图失败",
+        "loadProvidersFailed": "加载 {tab} 标签页的供应商失败"
+      }
+    },
+    "projectManager": {
+      "hero": {
+        "eyebrow": "Codex 工作台",
+        "title": "项目与会话管理",
+        "lead": "把 Codex 真正干过活的项目和会话拎出来，按项目浏览，或者直接按最近会话开工。"
+      },
+      "toolbar": {
+        "modeLabel": "项目管理模式",
+        "projectMode": "项目模式",
+        "sessionMode": "会话模式",
+        "searchPlaceholder": "搜索项目名、路径、会话标题或概要",
+        "conversationSearchPlaceholder": "搜索会话标题、摘要或对话内容",
+        "searchingConversations": "正在搜索项目内会话详情",
+        "refresh": "更新",
+        "refreshing": "同步中...",
+        "backToProjects": "返回项目列表",
+        "openTerminal": "打开终端",
+        "aiCommit": "AI-Commit"
+      },
+      "stats": {
+        "visibleCount": "当前展示",
+        "totalProjects": "项目总数",
+        "totalSessions": "会话总数"
+      },
+      "states": {
+        "loading": "正在扫描 Codex 项目和会话...",
+        "emptyProjects": "当前没有可展示的项目记录，先让 Codex 在本机干点活再说。",
+        "emptySessions": "这里暂时没有会话记录。",
+        "noSessionSearchResults": "未找到匹配的会话或用户对话内容。",
+        "sessionSearchFailed": "搜索会话详情失败，请修改关键词后重试。"
+      },
+      "card": {
+        "sessionCount": "{count} 个会话",
+        "moreActions": "更多操作",
+        "rename": "重命名",
+        "deleteProject": "删除项目",
+        "deleteSession": "删除会话",
+        "runProjectCommand": "运行项目指令",
+        "editRunCommand": "编辑运行指令",
+        "setCodexProvider": "设置 Codex 供应商",
+        "codexProvider": "Codex 供应商",
+        "codexProviderDefault": "默认路由",
+        "openFolder": "打开目录",
+        "openSession": "打开终端",
+        "openingSession": "打开中...",
+        "pathDetail": "看路径"
+      },
+      "codexStatus": {
+        "threadLabel": "线程",
+        "turnLabel": "任务轮次",
+        "agentLabel": "子 Agent",
+        "states": {
+          "not_loaded": "未加载",
+          "idle": "空闲",
+          "active": "正在运行",
+          "waiting_approval": "等待审批",
+          "waiting_user_input": "等待用户输入",
+          "system_error": "系统错误"
+        },
+        "turn": {
+          "unknown": "暂无状态",
+          "completed": "已完成",
+          "interrupted": "已中断",
+          "failed": "失败",
+          "in_progress": "进行中"
+        },
+        "agent": {
+          "unsupported": "不可用（当前 Codex CLI 版本不支持）",
+          "unknown": "暂无状态",
+          "active": "{count} 个运行中"
+        },
+        "projectSummary": "项目汇总：运行 {active}，等待 {waiting}，错误 {errors}",
+        "monitorUnavailable": "状态监控尚未安装或尚未完成初始化",
+        "monitorError": "监控异常"
+      },
+      "provider": {
+        "title": "设置 Codex 供应商",
+        "hint": "为“{name}”选择一个 Codex 首选供应商。项目首选不需要在首页启用；是否回落到全局路由由 auto 开关决定。",
+        "loading": "正在加载 Codex 供应商...",
+        "empty": "暂无 Codex 供应商配置。你仍可保存为默认路由。",
+        "defaultOption": "默认路由",
+        "defaultHint": "按全局 Level、轮询与黑名单策略选择供应商",
+        "disabledBadge": "未启用",
+        "autoLabel": "auto",
+        "autoHint": "开启：首选供应商失败时回落默认路由；关闭：只重试首选供应商，直到本次请求超时或取消。",
+        "save": "保存",
+        "saved": "Codex 供应商已更新"
+      },
+      "runCommand": {
+        "title": "项目运行指令",
+        "hint": "为“{name}”配置点击三角按钮时执行的 Shell 命令。命令会在项目目录内通过 pwsh 执行，执行后保留窗口。",
+        "commandLabel": "Shell 命令",
+        "placeholder": "例如：npm run dev\n或：pnpm test -- --watch",
+        "footnote": "保存后不会自动执行；再次点击项目卡片右上角三角按钮才会运行。清空已有内容并保存可移除运行指令。",
+        "save": "保存指令",
+        "saved": "运行指令已保存",
+        "cleared": "运行指令已清空",
+        "emptyCommand": "请先填写运行指令",
+        "started": "运行指令已启动"
+      },
+      "detail": {
+        "eyebrow": "会话详情",
+        "back": "返回项目管理",
+        "loadingTitle": "正在加载会话详情...",
+        "projectName": "所属项目",
+        "updatedAt": "最近更新时间",
+        "loading": "正在整理会话对话...",
+        "empty": "这个会话还没整理出可展示的用户 / agent 对话。",
+        "userLabel": "用户",
+        "agentLabel": "Agent",
+        "showMore": "显示更多",
+        "showLess": "收起",
+        "showUserOnly": "仅看用户",
+        "showFullConversation": "完整对话",
+        "searchButton": "搜索",
+        "searchPlaceholder": "搜索对话内容...",
+        "searchIdle": "输入关键词实时搜索",
+        "searchNoResults": "未找到匹配内容",
+        "searchResultStatus": "{current} / {total} 条匹配",
+        "previousSearchResult": "上一条匹配",
+        "nextSearchResult": "下一条匹配",
+        "closeSearch": "关闭搜索",
+        "agentCollapsed": "Agent 回复已折叠",
+        "agentCollapsedCount": "{count} 条 Agent 回复已折叠",
+        "enterSelection": "进入选择",
+        "exitSelection": "退出选择",
+        "selectPrimary": "选主问答",
+        "selectLoaded": "全选会话",
+        "clearSelection": "清空选择",
+        "selectedCount": "已选 {count} 条",
+        "totalCount": "共 {count} 条",
+        "openingTerminal": "正在打开终端...",
+        "forkFromHere": "Fork",
+        "forkConversationTitle": "fork会话",
+        "forkSelected": "Fork 已选",
+        "forking": "Fork 中...",
+        "forkSuccess": "已创建 fork 并打开终端",
+        "forkUnavailable": "这段历史缺少 turn_id，无法使用原生 fork",
+        "turnUsage": {
+          "tokenUnit": "Token",
+          "unavailable": "Token --",
+          "openDetails": "查看本轮 Token 明细",
+          "detailsLabel": "本轮 Token 明细",
+          "total": "本轮总计",
+          "input": "输入",
+          "output": "输出",
+          "cachedInput": "缓存输入",
+          "reasoningOutput": "推理输出",
+          "modelCalls": "模型调用",
+          "duration": "耗时",
+          "durationSeconds": "{count} 秒",
+          "durationMinutes": "{minutes} 分 {seconds} 秒",
+          "partial": "未完成",
+          "partialNote": "该任务轮次尚未结束，当前仅显示已累计的 Token。"
+        },
+        "copyConversationTitle": "复制对话内容",
+        "copySuccess": "已复制对话内容",
+        "copyUnavailable": "这条对话没有可复制的文字",
+        "deleteAction": "删除",
+        "deleteSelected": "删除已选 {count}",
+        "deleteTitle": "确认剪枝会话",
+        "deleteConfirm": "确认删除已选中的 {count} 条对话内容吗？",
+        "deleteHint": "这会直接改写真实 `.codex/sessions` 会话文件，属于物理剪枝，不带撤销。",
+        "confirmDeleteAction": "确认删除",
+        "deleting": "删除中...",
+        "deleteSuccess": "会话内容已剪枝",
+        "errors": {
+          "sessionNotFound": "会话不存在或会话 ID 无效"
+        }
+      },
+      "rename": {
+        "projectTitle": "重命名项目",
+        "sessionTitle": "重命名会话",
+        "hint": "项目名只改管理器里的显示别名；会话名会优先尝试回写 Codex 标题，失败时至少保住本地显示名。",
+        "placeholder": "输入新的显示名称",
+        "cancel": "取消",
+        "save": "保存",
+        "saving": "保存中...",
+        "saved": "名称已更新",
+        "emptyName": "名字不能为空，别整那没字儿的。"
+      },
+      "delete": {
+        "projectTitle": "确认删除项目",
+        "sessionTitle": "确认删除会话",
+        "projectConfirm": "确认删除项目“{name}”及其下 {count} 个会话吗？",
+        "sessionConfirm": "确认删除会话“{name}”吗？",
+        "hint": "这会物理删除真实 `.codex/sessions` 会话文件，并清理项目管理本地状态；request capture 不会被清理，且删除不可撤销。",
+        "confirmAction": "确认删除",
+        "deleting": "删除中...",
+        "projectDeleted": "项目及其关联会话已删除",
+        "sessionDeleted": "会话已删除"
+      },
+      "commit": {
+        "started": "AI-Commit 已启动",
+        "errors": {
+          "projectPathRequired": "项目路径不能为空",
+          "projectPathInvalid": "项目路径不存在或不是目录",
+          "noChanges": "当前项目没有可提交变更",
+          "gitStatusFailed": "读取 git 变更失败",
+          "launchFailed": "启动 AI-Commit 失败"
+        }
+      },
+      "common": {
+        "path": "项目路径",
+        "unknownTime": "未知时间",
+        "emptySummary": "这会话没抓到可读概要，点开终端自己看现场吧。"
+      },
+      "errors": {
+        "projectNotFound": "项目不存在或已被移除"
       }
     },
     "logs": {
       "eyebrow": "请求追踪",
       "title": "代理请求日志",
-      "subtitle": "查看 Claude Code 与 Codex 代理的最新访问记录。",
+      "subtitle": "查看 Claude Code、Codex 与 Gemini 代理的最新访问记录。",
       "loading": "加载中...",
       "refresh": "刷新",
       "applyFilters": "应用筛选",
@@ -176,9 +620,9 @@
         "errors": "失败次数",
         "errorHint": "数量与失败率",
         "tokens": "Token 流量",
-        "tokenHint": "输入 + 输出 Tokens",
+        "tokenHint": "输入 + 输出 Tokens（推理已包含在部分模型的输出中）",
         "cache": "缓存命中",
-        "cacheHint": "响应中的读取命中数",
+        "cacheHint": "缓存读取 Token / 总输入 Token",
         "costHint": "近 24 小时总花费",
         "todayScope": "今日 · {date}"
       },
@@ -190,10 +634,12 @@
         "httpCode": "HTTP",
         "stream": "传输",
         "duration": "耗时",
+        "cost": "金额",
         "tokens": "Token 汇总"
       },
       "tokenLabels": {
         "input": "输入",
+        "billableInput": "计费输入",
         "output": "输出",
         "reasoning": "推理",
         "cacheWrite": "缓存写入",
@@ -204,14 +650,23 @@
       "streamOff": "非流",
       "back": "返回主页",
       "nextRefresh": "距离下次刷新 {seconds}s",
-      "query": "查询"
+      "query": "查询",
+      "costDetail": {
+        "title": "今日消费明细",
+        "empty": "今日暂无消费记录"
+      },
+      "tokenDetail": {
+        "title": "今日 Token 明细"
+      }
     },
     "general": {
       "title": {
         "power": "权限设置",
         "application": "应用设置",
+        "trayPanel": "托盘弹窗",
         "exterior": "外观设置",
-        "update": "应用更新"
+        "blacklist": "拉黑配置",
+        "dataImport": "数据导入"
       },
       "label": {
         "assistant_access": "辅助功能访问权限",
@@ -220,10 +675,78 @@
         "language": "界面语言",
         "theme": "主题模式",
         "heatmap": "显示主界面热力墙",
-        "homeTitle": "显示首页标题",
+        "budgetTotal": "预算总额",
+        "budgetTotalHint": "用于托盘菜单进度条（USD）",
+        "budgetUsedAdjustment": "已用额度调整",
+        "budgetUsedAdjustmentHint": "用于补录已用金额（USD）",
+        "budgetCycle": "启用刷新周期",
+        "budgetCycleHint": "开启后按刷新时间重置预算统计",
+        "budgetCycleMode": "刷新周期",
+        "budgetCycleModeDaily": "每日",
+        "budgetCycleModeWeekly": "每周",
+        "budgetRefreshTime": "刷新时间",
+        "budgetRefreshDay": "刷新星期",
+        "weekdayMon": "周一",
+        "weekdayTue": "周二",
+        "weekdayWed": "周三",
+        "weekdayThu": "周四",
+        "weekdayFri": "周五",
+        "weekdaySat": "周六",
+        "weekdaySun": "周日",
+        "budgetShowCountdown": "显示重置倒计时",
+        "budgetShowForecast": "显示预算耗尽预测",
+        "budgetForecastMethod": "预测方法",
+        "budgetForecastMethodHint": "选择预算耗尽预测的计算方式",
+        "budgetForecastMethodCycle": "本周期平均速度",
+        "budgetForecastMethod10m": "近 10 分钟速度",
+        "budgetForecastMethod1h": "近 1 小时速度",
+        "budgetForecastMethodYesterday": "昨日平均速度",
+        "budgetForecastMethod24h": "近 24 小时速度",
+        "trayPanelClaude": "Claude Code",
+        "trayPanelCodex": "Codex",
         "autoStart": "开机自启动",
+        "switchNotify": "切换通知",
+        "switchNotifyHint": "供应商切换或拉黑时发送系统通知",
+        "roundRobin": "同 Level 轮询",
+        "roundRobinHint": "启用后同 Level 的供应商轮流处理请求，关闭则始终从第一个开始",
+        "requestCapture": "捕获 Agent 请求",
+        "requestCaptureHint": "将每次经本地代理发送的请求接口和参数保存到本地缓存目录，不包含返回值",
+        "requestCaptureDir": "捕获存储路径",
+        "requestCaptureDirHint": "留空则使用默认目录 ~/.code-switch/request-captures，可手动输入或选择目录",
+        "requestCaptureDirPlaceholder": "留空使用默认目录，或输入自定义目录路径",
+        "requestCaptureDirBrowseTitle": "选择请求捕获存储目录",
+        "browseDirectory": "浏览目录",
+        "modelInstructionsFile": "Codex 提示词文件",
+        "modelInstructionsFileHint": "写入 ~/.codex/config.toml 的 model_instructions_file，支持手动输入或选择文件；留空则删除该配置",
+        "modelInstructionsFilePlaceholder": "留空删除配置，或输入 model_instructions_file 文件路径",
+        "modelInstructionsFileBrowseTitle": "选择 Codex model_instructions_file 文件",
+        "browseFile": "浏览文件",
+        "speechProviderPlatform": "语音识别平台",
+        "speechProviderPlatformPlaceholder": "例如 openai",
+        "speechProviderId": "语音识别 Provider ID",
+        "speechProviderIdPlaceholder": "输入语音识别 provider ID",
+        "speechModelId": "语音识别模型 ID",
+        "speechModelIdPlaceholder": "输入语音识别模型 ID",
+        "speechProviderNotConfigured": "尚未配置语音识别服务",
+        "autoUpdate": "自动更新",
+        "lastCheck": "上次检查",
+        "currentVersion": "当前版本",
+        "latestVersion": "最新版本",
+        "checkNow": "立即检查",
+        "manualUpdate": "手动更新",
         "automatic_up": "自动检查更新",
-        "next_up": "下次启动自动检查更新"
+        "next_up": "下次启动自动检查更新",
+        "blacklistThreshold": "失败次数阈值",
+        "blacklistDuration": "拉黑时长",
+        "saveBlacklist": "保存配置",
+        "enableBlacklist": "启用拉黑功能",
+        "enableBlacklistHint": "关闭后将不再自动拉黑失败的供应商",
+        "enableLevelBlacklist": "启用等级拉黑",
+        "enableLevelBlacklistHint": "开启后使用分级拉黑机制（L1-L5），关闭则使用固定时长",
+        "times": "次",
+        "minutes": "分钟",
+        "save": "保存",
+        "saving": "保存中..."
       },
       "subLabel": {
         "sb_assistant_access": "需要无障碍访问权限来操作剪切板内容",
@@ -235,98 +758,75 @@
         "back": "返回首页"
       },
       "import": {
-        "label": "导入 cc-switch 配置",
-        "path": "配置文件：{path}",
-        "detail": "可导入 {providers} 个服务商 · {servers} 个 MCP 服务",
-        "synced": "当前服务商与 MCP 服务已同步",
-        "cta": "立即导入",
-        "syncedButton": "已同步",
-        "importing": "正在导入...",
-        "upload": "上传 JSON",
-        "uploadTitle": "选择自定义 cc-switch JSON 文件",
-        "confirm": "确认导入",
-        "noFile": "尚未选择配置文件",
-        "loadError": "读取配置文件失败",
-        "clear": "清除选择",
-        "reupload": "重新上传",
-        "missingDefault": "未检测到 cc-switch 配置文件，可手动上传 JSON 进行导入"
+        "configPath": "配置文件路径",
+        "pathPlaceholder": "输入 cc-switch 配置文件路径",
+        "status": "配置状态",
+        "loading": "加载中...",
+        "configFound": "已找到配置文件",
+        "configNotFound": "未找到配置文件",
+        "pendingCount": "{providers} 个供应商",
+        "action": "导入操作",
+        "importBtn": "导入配置",
+        "importing": "导入中...",
+        "success": "导入成功：{providers} 个供应商",
+        "nothingToImport": "没有需要导入的配置（可能已全部导入）",
+        "failed": "导入失败",
+        "fileNotFound": "配置文件不存在，请检查路径是否正确"
       }
     },
-    "mcp": {
+    "gemini": {
       "hero": {
-        "eyebrow": "MCP 管理",
-        "title": "管理 MCP 服务器",
-        "lead": "集中维护本地 / 远程 MCP Servers，了解各平台的启用状态并快速编辑配置。"
+        "eyebrow": "Gemini CLI 管理",
+        "title": "管理 Gemini 供应商",
+        "lead": "配置 Gemini CLI 的 API 供应商，支持 Google 官方和第三方中转服务。"
       },
       "controls": {
         "back": "返回主页",
         "settings": "打开设置",
-        "refresh": "刷新列表",
-        "create": "新增服务器"
-      },
-      "section": {
-        "title": "已注册服务器",
-        "subtitle": "数据来自 ~/.code-switch/mcp.json，修改后立即保存"
-      },
-      "list": {
-        "loading": "正在载入服务器...",
-        "empty": "暂无 MCP 服务器，点击下方按钮快速创建",
-        "loadError": "加载 MCP 服务器失败",
-        "saveError": "保存 MCP 服务器失败",
-        "edit": "编辑服务器",
-        "delete": "删除服务器",
-        "placeholderWarning": "请先替换变量：{vars}"
-      },
-      "toast": {
-        "placeholder": "请先替换变量：{vars}"
+        "refresh": "刷新",
+        "create": "新增供应商"
       },
       "status": {
-        "active": "已启用",
-        "inactive": "未启用"
+        "enabled": "已启用",
+        "disabled": "未配置",
+        "active": "当前使用"
       },
-      "types": {
-        "stdio": "本地进程 (stdio)",
-        "stdioShort": "本地进程",
-        "http": "远程 HTTP",
-        "httpShort": "HTTP 服务"
+      "auth": {
+        "oauth": "OAuth 认证",
+        "apiKey": "API Key 认证"
       },
-      "platforms": {
-        "claude": "Claude Code",
-        "codex": "Codex"
+      "category": {
+        "official": "官方",
+        "thirdParty": "第三方",
+        "custom": "自定义"
+      },
+      "presets": {
+        "title": "预设供应商"
+      },
+      "providers": {
+        "title": "已配置的供应商"
+      },
+      "list": {
+        "loading": "加载中...",
+        "empty": "暂无配置的供应商，点击预设卡片快速添加",
+        "edit": "编辑",
+        "delete": "删除"
+      },
+      "actions": {
+        "switch": "切换"
       },
       "form": {
-        "createTitle": "新增 MCP 服务器",
-        "editTitle": "编辑 MCP 服务器",
-        "name": "服务器名称",
-        "type": "类型",
-        "command": "执行命令",
-        "args": "命令参数",
-        "argsHint": "每行一个参数，保存时会自动按顺序传入",
-        "url": "服务地址",
-        "website": "官网地址",
-        "tips": "提示信息",
-        "tipsHint": "例如：请前往 ref.tools 获取 API Key",
-        "env": "环境变量",
-        "envKey": "变量名",
-        "envValue": "变量值",
-        "envAdd": "新增变量",
-        "envRemove": "删除变量",
-        "platforms": {
-          "title": "目标平台"
-        },
-        "actions": {
-          "cancel": "取消",
-          "save": "保存",
-          "delete": "删除"
-        },
-        "errors": {
-          "name": "请输入服务器名称",
-          "command": "stdio 类型需要提供 command",
-          "url": "http 类型需要提供 URL",
-          "duplicate": "名称已存在，请使用其他名称"
-        },
-        "deleteTitle": "删除 MCP 服务器",
-        "deleteMessage": "确认删除 {name} 吗？操作不可撤销"
+        "createTitle": "新增 Gemini 供应商",
+        "editTitle": "编辑 Gemini 供应商",
+        "deleteTitle": "删除供应商",
+        "deleteMessage": "确认删除 {name} 吗？操作不可撤销",
+        "name": "供应商名称",
+        "baseUrl": "API 地址",
+        "apiKey": "API 密钥",
+        "model": "默认模型",
+        "cancel": "取消",
+        "save": "保存",
+        "delete": "删除"
       }
     },
     "skill": {
@@ -335,24 +835,61 @@
         "title": "Claude Skill",
         "lead": "从 Skill 仓库中获取 Claude Skill，点击右上角按钮可添加更多 Skill 仓库。"
       },
+      "platform": {
+        "claude": "Claude Code",
+        "codex": "Codex"
+      },
+      "groups": {
+        "project": "项目级技能",
+        "user": "用户级技能",
+        "plugin": "插件技能",
+        "available": "可用技能"
+      },
       "actions": {
         "back": "返回首页",
         "loading": "处理中...",
         "refresh": "刷新列表",
         "view": "查看 GitHub",
-        "install": "安装到 Claude Code",
+        "install": "安装",
         "uninstall": "卸载",
         "installError": "安装 {name} 失败，请重试",
-        "uninstallError": "卸载 {name} 失败，请重试"
+        "uninstallError": "卸载 {name} 失败，请重试",
+        "toggle": "启用/禁用",
+        "enable": "启用",
+        "inject": "注入",
+        "viewContent": "查看内容",
+        "hideContent": "收起内容",
+        "openFolder": "打开文件夹",
+        "loadFailed": "加载内容失败",
+        "toggleError": "切换技能状态失败",
+        "enableError": "切换技能启用状态失败",
+        "injectError": "切换技能注入状态失败"
       },
       "list": {
         "title": "可用技能",
         "subtitle": "描述信息来源于各目录内 SKILL.md 的 front matter。",
         "loading": "正在加载技能...",
+        "catalogLoading": "仓库技能正在后台加载...",
         "empty": "仓库中没有可用技能。",
         "error": "技能列表加载失败，请检查网络后重试。",
         "noDescription": "SKILL.md 未提供描述",
-        "missingRepo": "缺少对应的仓库信息，无法安装"
+        "missingRepo": "缺少对应的仓库信息，无法安装",
+        "noInstalled": "当前没有已安装的技能"
+      },
+      "install": {
+        "title": "选择安装位置",
+        "desc": "将 {name} 安装到：",
+        "locationLabel": "安装位置",
+        "userLevel": "用户级（全局）",
+        "userLevelDesc": "~/.{platform}/skills/",
+        "projectLevel": "项目级（当前目录）",
+        "projectLevelDesc": "./.{platform}/skills/",
+        "gitWarning": "项目级技能可能需要添加到 .gitignore",
+        "installing": "安装中...",
+        "confirm": "确认安装"
+      },
+      "license": {
+        "complete": "完整条款见 {file}"
       },
       "repos": {
         "open": "管理仓库",
@@ -395,6 +932,398 @@
         "invalid": "组合无效，请包含修饰键"
       },
       "placeholder": "点击并按下组合键"
+    },
+    "deeplink": {
+      "title": "从深度链接导入供应商",
+      "preview": "请确认以下信息后点击导入：",
+      "import": "导入",
+      "importing": "正在导入...",
+      "success": "导入成功！",
+      "error": {
+        "title": "导入失败"
+      },
+      "field": {
+        "name": "名称",
+        "app": "平台",
+        "homepage": "主页",
+        "endpoint": "端点",
+        "apiKey": "API密钥",
+        "model": "模型",
+        "notes": "备注"
+      }
+    },
+    "cliConfig": {
+      "title": "CLI 配置",
+      "lockedFields": "代理托管字段（只读）",
+      "editableFields": "可编辑字段",
+      "customFields": "自定义字段",
+      "noCustomFields": "暂无自定义字段，点击 + 添加",
+      "addField": "添加字段",
+      "removeField": "删除字段",
+      "keyPlaceholder": "键名",
+      "valuePlaceholder": "值",
+      "keyConflictLocked": "键名与锁定字段冲突",
+      "keyConflictPreset": "键名与预设字段冲突",
+      "keyDuplicate": "键名已存在",
+      "loading": "加载配置中...",
+      "loadError": "加载配置失败",
+      "setAsTemplate": "设为新供应商的默认模板",
+      "restoreDefault": "恢复默认",
+      "restoreConfirm": "确定要恢复默认配置吗？这将覆盖当前设置。",
+      "restoreSuccess": "配置已恢复默认",
+      "restoreError": "恢复默认配置失败",
+      "templateSaved": "模板已保存",
+      "templateSaveError": "保存模板失败",
+      "jsonParseError": "JSON 格式无效，请检查输入",
+      "previewTitle": "配置文件预览",
+      "previewUnknownPath": "路径未知",
+      "smartPasteSuccess": "已识别 {format} 配置并填充字段",
+      "smartPasteFailed": "未识别粘贴内容，请使用 JSON / TOML / .env 格式",
+      "previewEditLocked": "只读",
+      "previewEditUnlocked": "已解锁",
+      "previewApply": "应用",
+      "previewReset": "还原",
+      "previewParseError": "配置格式无效，请检查语法",
+      "previewApplySuccess": "配置已应用",
+      "saveAllFailed": "所有配置文件保存失败",
+      "savePartialSuccess": "成功 {success} 个，失败 {fail} 个",
+      "tabPreview": "预览效果",
+      "tabCurrent": "当前磁盘"
+    }
+  },
+  "pet": {
+    "common": {
+      "refresh": "刷新",
+      "refreshing": "刷新中...",
+      "retry": "重试",
+      "loading": "加载中...",
+      "loadingShort": "读取中",
+      "processing": "处理中...",
+      "saving": "保存中...",
+      "delete": "删除",
+      "unknownDate": "时间未知"
+    },
+    "window": {
+      "defaultName": "Kapi",
+      "coins": "金币",
+      "dreamImageAlt": "梦境画面",
+      "petStageLabel": "摸摸宠物",
+      "atlasWaiting": "等待图集",
+      "awayMark": "出门中",
+      "status": {
+        "working": "工作中 · {time}",
+        "studying": "学习中 · {time}",
+        "sleeping": "睡梦中 · 点击睡眠按钮唤醒",
+        "dozing": "打盹中 · 触碰宠物唤醒",
+        "busy": "{action}中...",
+        "fallback": "本地预览模式 · 后端绑定未注册",
+        "ready": "状态正常 · 点一下宠物摸摸它"
+      },
+      "stats": {
+        "hunger": "饥饿",
+        "cleanliness": "清洁",
+        "mood": "心情"
+      },
+      "actions": {
+        "feed": "喂食",
+        "bathe": "洗澡",
+        "soak": "泡澡",
+        "play": "玩耍",
+        "sleep": "睡眠",
+        "work": "工作",
+        "study": "学习",
+        "petted": "摸摸",
+        "generic": "动作"
+      },
+      "actionGlyphs": {
+        "feed": "食",
+        "bathe": "洁",
+        "soak": "泡",
+        "play": "玩",
+        "sleep": "眠",
+        "work": "工",
+        "study": "学",
+        "petted": "爱"
+      },
+      "drag": {
+        "nativeUnavailable": "原生窗口拖拽不可用，已切换到窗口内拖拽",
+        "positionUnavailable": "无法读取原生窗口位置，已切换到窗口内拖拽"
+      },
+      "ambient": {
+        "welcome": "欢迎回来。",
+        "night": "夜深了，陪你安静休息一会儿。",
+        "time": "现在是 {time}。"
+      },
+      "contextMenu": {
+        "label": "宠物快捷菜单",
+        "title": "快捷操作",
+        "chat": "打开聊天",
+        "settings": "打开设置",
+        "studio": "打开 Studio",
+        "hide": "隐藏窗口"
+      },
+      "loading": "正在连接宠物状态...",
+      "loadFailed": "状态读取失败：{error}",
+      "retry": "重试",
+      "dashboardLabel": "宠物状态",
+      "experience": "经验",
+      "actionsLabel": "宠物动作",
+      "feedback": {
+        "scheduledActionFailed": "计划动作执行失败，请重试",
+        "workCompleted": "你刚完成工作，获得了 {coins} 金币。",
+        "studyCompleted": "你刚完成学习，成长增加了 {growth}。",
+        "levelUpPrompt": "你刚刚升级到了 Lv.{level}，想向主人报喜。",
+        "reminder": "提醒：{text}",
+        "separator": " · ",
+        "dailyBonus": "每日陪伴奖励 +{bonus} 金币",
+        "milestone": "陪伴 {days} 天，继续和我一起成长吧",
+        "actionFailed": "动作失败，请重试",
+        "failure": {
+          "coins": "金币不够",
+          "full": "已经吃饱了",
+          "clean": "已经很干净了",
+          "hungry": "太饿了，先喂点东西吧",
+          "level": "等级还不够",
+          "busy": "正在忙，等它回来吧",
+          "sleeping": "还在睡觉，先叫醒它吧",
+          "generic": "这个动作暂时没完成"
+        },
+        "success": {
+          "petted": "心情变好了一点",
+          "sleep": "晚安",
+          "wake": "醒啦",
+          "work": "出发工作啦",
+          "study": "出发学习啦",
+          "reward": "完成任务 · 金币 +{coins} · 成长 +{growth}",
+          "action": "{action}完成"
+        }
+      }
+    },
+    "chat": {
+      "eyebrow": "陪伴对话",
+      "tabs": { "chat": "聊天", "dreams": "梦境", "plans": "计划" },
+      "availability": {
+        "loading": "正在读取宠物聊天配置...",
+        "bindingRequired": "请先在宠物设置中绑定 provider 和 model",
+        "platformRequired": "请先在宠物设置中填写 provider platform"
+      },
+      "status": {
+        "connecting": "正在连接宠物...",
+        "replying": "正在回复...",
+        "stopping": "正在停止回复...",
+        "failed": "回复失败，请重试",
+        "online": "在线 · 回复会显示在这里"
+      },
+      "attachments": {
+        "typeUnsupported": "仅支持 PNG、JPEG、GIF 和 WebP 图片",
+        "singleTooLarge": "单张图片不能超过 128 KB",
+        "readFailed": "图片读取失败，请重新选择",
+        "maxImages": "一条消息最多附带 4 张图片",
+        "totalTooLarge": "单条消息图片总大小不能超过 192 KB",
+        "sentImageAlt": "已发送图片",
+        "imageAlt": "图片附件",
+        "selectImage": "选择图片",
+        "pendingImages": "待发送图片",
+        "pendingImageAlt": "待发送图片",
+        "removeImage": "移除图片 {id}",
+        "removeImageTitle": "移除图片",
+        "addImage": "添加图片",
+        "imageButton": "图片"
+      },
+      "voice": {
+        "input": "语音输入",
+        "inputShort": "语音",
+        "stop": "停止录音并发送",
+        "stopShort": "停止",
+        "starting": "正在请求麦克风权限...",
+        "startingShort": "准备中",
+        "recording": "正在录音，点击停止并发送",
+        "transcribing": "正在识别语音...",
+        "transcribingShort": "识别中",
+        "notConfigured": "请先在宠物设置中绑定可用的 provider 和 model",
+        "unsupported": "当前环境不支持语音输入",
+        "permissionDenied": "无法访问麦克风，请检查系统权限",
+        "empty": "没有识别到有效语音",
+        "providerUnsupported": "当前 provider 不支持语音转写",
+        "bindingUnavailable": "语音识别服务尚未接入",
+        "timeout": "语音识别超时，请重试",
+        "failed": "语音识别失败，请重试"
+      },
+      "errors": {
+        "cancelled": "回复已取消",
+        "timeout": "回复超时，请稍后重试",
+        "inFlight": "已有一条回复正在进行",
+        "providerNotFound": "找不到宠物绑定的 provider",
+        "modelNotConfigured": "宠物绑定的 model 尚未配置",
+        "modelUnsupported": "当前 provider 不支持这个 model",
+        "referenceInvalid": "宠物 provider 引用不完整",
+        "capabilityUnsupported": "当前 provider 不支持聊天",
+        "dependencyUnavailable": "聊天服务尚未接入",
+        "generic": "回复失败，请检查宠物 provider/model 配置"
+      },
+      "plan": {
+        "title": "聊天计划",
+        "subtitle": "已保存的提醒和动作安排",
+        "loading": "正在读取计划...",
+        "loadFailed": "计划读取失败",
+        "empty": "还没有聊天计划",
+        "emptyHint": "当宠物收到明确的提醒或定时安排后，会出现在这里",
+        "defaultTitle": "聊天计划",
+        "queued": "已排队",
+        "cancelled": "已取消",
+        "cancelling": "取消中...",
+        "cancel": "取消计划",
+        "noticeQueued": "计划“{title}”已加入队列",
+        "noticeCancelled": "计划“{title}”已取消",
+        "cancelUnavailable": "计划已完成或不存在，未取消任何任务",
+        "enqueueUnconfirmed": "计划调度服务未确认入队"
+      },
+      "message": {
+        "incomplete": "这次回复没有完成，请重试。",
+        "noText": "（宠物没有返回文字）",
+        "cancelled": "回复已取消。",
+        "cancelledShort": "已取消",
+        "generating": "正在生成"
+      },
+      "cancel": {
+        "apiUnavailable": "取消接口尚未接入，已停止接收这条回复",
+        "failed": "取消请求失败，已停止接收这条回复"
+      },
+      "dream": {
+        "empty": "还没有梦境记录",
+        "emptyHint": "梦境由后端生成并保存后会出现在这里",
+        "untitled": "无题梦境",
+        "dream": "梦境",
+        "sleepTalk": "梦话",
+        "noText": "这条梦境没有可查看的文字内容。",
+        "selectHint": "选择一条梦境查看内容"
+      },
+      "aria": {
+        "chatPanel": "宠物聊天",
+        "contentTabs": "宠物内容",
+        "dreamHistory": "梦境历史列表",
+        "planList": "宠物计划列表",
+        "messages": "聊天消息",
+        "input": "聊天输入",
+        "voiceInput": "语音输入"
+      },
+      "empty": "还没有聊天记录",
+      "emptyHint": "输入一句话，宠物会在这里回复",
+      "you": "我",
+      "composer": {
+        "placeholder": "和宠物说点什么...",
+        "stopping": "停止中",
+        "stop": "停止",
+        "send": "发送"
+      }
+    },
+    "dreamHistory": {
+      "title": "梦境历史",
+      "subtitle": "按时间查看已归档的梦境、梦话和受控图片。",
+      "loading": "正在读取梦境历史...",
+      "loadFailed": "梦境历史读取失败：{error}",
+      "empty": "还没有梦境历史记录。",
+      "imageInvalid": "图片服务未返回受控 data URL。",
+      "image": "图片",
+      "noImage": "无图",
+      "untitled": "无题梦境",
+      "retryPage": "重试本页",
+      "previousPage": "上一页",
+      "nextPage": "下一页",
+      "pagination": "第 {page} / {totalPages} 页，共 {total} 条",
+      "unknownEmotion": "情绪未知",
+      "emotions": { "pleasant": "愉快", "calm": "平静", "tense": "紧张", "afraid": "害怕" },
+      "imageAlt": "梦境图片",
+      "imageLoading": "正在读取图片...",
+      "imageFailed": "图片读取失败：{error}",
+      "imageUnavailable": "暂无可用图片",
+      "noRecordImage": "该梦境没有图片",
+      "dream": "梦境",
+      "sleepTalk": "梦话",
+      "noSleepTalk": "没有记录梦话",
+      "theme": "主题",
+      "keywords": "关键词",
+      "creativePrompt": "创作提示词",
+      "effectivePrompt": "生效提示词",
+      "notRecorded": "未记录"
+    },
+    "memory": {
+      "title": "长期记忆",
+      "subtitle": "管理会注入宠物对话上下文的长期事实。",
+      "unavailable": "当前宠物（{petId}）的记忆能力暂不可用。目标 Wails 服务当前固定绑定 default，已禁用读写以避免串宠物。",
+      "count": "共 {count} 条记忆",
+      "confirmClear": "再次点击确认清空",
+      "clear": "清空记忆",
+      "inputPlaceholder": "添加一条值得长期记住的事实",
+      "add": "添加",
+      "operationFailed": "记忆操作失败：{error}",
+      "loading": "正在读取记忆...",
+      "empty": "还没有长期记忆。",
+      "deleteTitle": "删除记忆"
+    },
+    "settings": {
+      "eyebrow": "DESKTOP PET",
+      "title": "宠物设置",
+      "subtitle": "管理桌宠窗口、照料节奏、智能体引用和梦境偏好。",
+      "backToSettings": "返回设置",
+      "openStudio": "打开形象工坊",
+      "save": "保存设置",
+      "tabsAria": "宠物设置页签",
+      "tabs": { "overview": "总览", "stats": "状态统计", "agent": "Agent", "sleep": "睡眠与梦境", "skins": "皮肤", "memory": "长期记忆", "dream-history": "梦境历史", "studio": "形象工坊" },
+      "loading": "正在读取宠物配置...",
+      "operationFailed": "设置操作失败：{error}",
+      "runtime": { "fallback": "本地预览模式", "backend": "已连接后端", "waiting": "等待连接" },
+      "status": { "none": "暂无状态", "working": "工作中", "studying": "学习中", "awayRemaining": "{label} · {minutes} 分钟后结束", "awayEnding": "{label} · 即将结束", "sleepingRemaining": "睡眠中 · {minutes} 分钟后醒来", "sleeping": "睡眠中", "awake": "清醒活动中" },
+      "overview": { "title": "窗口与照料", "subtitle": "桌宠的显示开关和自动照料阈值。", "windowEnabled": "启用桌宠窗口", "windowEnabledHint": "启用后由宿主窗口管理器显示透明宠物窗。", "autoCare": "自动照料", "autoCareHint": "当饥饿、清洁或心情低于阈值时，由后端规则选择照料动作。", "autoCareThreshold": "自动照料阈值", "insensitive": "不敏感", "attentive": "及时照料" },
+      "agent": { "title": "Agent 引用", "subtitle": "仅保存 provider/model 标识，不复制密钥或 provider 配置。", "providerPlatform": "Provider platform", "providerId": "Provider ID", "modelId": "Model ID", "reasoningEffort": "Reasoning effort", "projectId": "Project ID", "systemPrompt": "System prompt", "platformPlaceholder": "例如 claude、codex 或 gemini", "providerPlaceholder": "例如 openai-main", "modelPlaceholder": "例如 gpt-4o-mini", "followModel": "跟随模型默认", "projectPlaceholder": "可选项目引用", "systemPromptPlaceholder": "留空使用内置提示词", "proactive": "主动互动", "proactiveHint": "允许宠物按频率主动发起对话；免打扰时间支持跨午夜区间。", "proactiveFrequency": "主动频率", "quietStart": "免打扰开始", "quietEnd": "免打扰结束", "hour": "时", "to": "至" },
+      "reasoning": { "none": "none", "minimal": "minimal", "low": "low", "medium": "medium", "high": "high" },
+      "frequency": { "low": "低频", "medium": "中频", "high": "高频" },
+      "unlocks": { "soak": "泡澡", "work": "工作", "study": "学习" },
+      "voice": { "title": "Voice", "subtitle": "语音播放仍由后端 provider 适配，页面只提交引用和基础偏好。", "enabled": "启用语音", "enabledHint": "关闭时不触发 TTS 请求。", "providerId": "Voice Provider ID", "modelId": "Voice Model ID", "voice": "Voice", "mode": "Voice mode", "speech": "speech", "chat": "chat", "tag": "Voice tag", "providerPlaceholder": "可选 provider 引用", "modelPlaceholder": "可选 model 引用", "voicePlaceholder": "留空使用默认音色", "auto": "自动", "instruction": "语音风格指令", "instructionPlaceholder": "例如 温柔、简短", "tagPlaceholder": "仅 MiMo：方言或语气，例如 粤语、撒娇" },
+      "dream": { "title": "Dream", "subtitle": "睡眠中的梦话配置，长度和气泡时长由契约边界约束。", "enabled": "启用梦境", "enabledHint": "允许睡眠时生成梦话；留空提示词使用后端内置内容。", "prompt": "梦境提示词", "promptPlaceholder": "留空使用默认梦境提示词", "keywords": "关键词", "keywordsPlaceholder": "用分号分隔，例如 海边;代码;星星", "sleepTalkMinLength": "梦话最少字数", "bubbleDuration": "气泡基础时长", "seconds": "{count} 秒" },
+      "skins": { "title": "皮肤", "subtitle": "切换内置或后端扫描到的 atlas 皮肤。", "current": "当前皮肤", "default": "内置默认 · Capybara", "emptyHint": "当前没有额外皮肤；后端接入皮肤扫描后会自动出现在这里。" },
+      "stats": { "title": "状态统计", "subtitle": "数据来自当前宠物快照；经验日志通过后端独立服务读取。", "refresh": "刷新状态", "loadFailed": "统计读取失败：{error}", "needs": "需求状态", "range": "0 - 100", "hunger": "饥饿", "cleanliness": "清洁", "mood": "心情", "levelGrowth": "等级与成长", "growthProgress": "{current} / {next} 成长", "growthNote": "当前成长由基础成长与累计经验共同计算，当前等级进度为 {progress}%。", "experienceTokens": "经验与 Token", "logLoading": "日志读取中...", "logUnavailable": "日志不可用", "logCount": "{count} 条日志", "totalExperience": "累计经验", "totalTokens": "累计 Token", "logLoadingDetail": "正在读取经验日志...", "logError": "经验日志暂不可用：{error}", "logEmpty": "当前没有可展示的经验日志记录。", "premium": "Premium", "base": "Base", "tokenEntry": "{count} tok", "experienceEntry": "+{count}", "coins": "金币", "token": "Token", "companionDays": "陪伴天数", "days": "{count} 天", "noData": "暂无数据", "currentStatus": "当前状态", "plans": "计划", "memories": "记忆", "count": "{count} 条", "unlocks": "功能解锁", "currentLevel": "当前等级 Lv.{level}", "unlocked": "已解锁", "unlockAt": "Lv.{level} 解锁", "noSnapshot": "当前没有可用的宠物快照。", "defaultOnly": "当前经验日志服务仅支持 default 宠物。", "unknownModel": "未知模型" }
+    },
+    "studio": {
+      "eyebrow": "PET STUDIO",
+      "title": "形象工坊",
+      "subtitle": "生成、处理并管理桌宠皮肤。",
+      "busy": "处理中",
+      "ready": "就绪",
+      "name": "皮肤名称",
+      "subject": "Subject",
+      "subjectPlaceholder": "描述宠物外观、材质和识别特征",
+      "platform": "Platform",
+      "platformPlaceholder": "openai",
+      "provider": "Provider",
+      "model": "Model",
+      "prompt": "生成补充说明",
+      "action": "动作",
+      "frameCount": "生成帧数",
+      "targetHeight": "主体高度",
+      "chromaKey": "移除色键背景",
+      "keyColor": "Key color",
+      "bind": "保存后绑定",
+      "generate": "生成图片",
+      "pack": "打包 Atlas",
+      "save": "保存皮肤",
+      "emptyPreview": "生成图片后在此预览",
+      "generatedPreviewAlt": "生成的宠物预览",
+      "frameAlt": "{action}动作帧 {index}",
+      "atlasPreview": "Atlas 预览",
+      "atlasAlt": "宠物 atlas 预览",
+      "savedSkins": "已保存皮肤",
+      "noSkins": "暂无自定义皮肤",
+      "deleteConfirm": "删除这套皮肤？",
+      "validation": "请输入 subject、provider 和 model。",
+      "generated": "图片已处理并加入当前动作。",
+      "packed": "atlas 已生成，可保存皮肤。",
+      "packFirst": "请先生成并打包 atlas。",
+      "savedBound": "皮肤已保存并绑定。",
+      "saved": "皮肤已保存。",
+      "deleted": "皮肤已删除。",
+      "actions": { "idle": "待机", "walk": "行走", "sleep": "睡觉", "beg": "乞求", "eat": "进食", "munch": "咀嚼", "bathe": "洗澡", "soak": "泡澡", "swim": "游泳", "zen": "冥想", "play": "玩耍", "held": "被抱起", "report-time": "报时" },
+      "steps": { "generate": "生成", "split": "拆帧", "chroma": "色键处理", "normalize": "标准化", "pack": "打包" }
     }
   }
 }

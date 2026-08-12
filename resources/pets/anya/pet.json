@@ -1,0 +1,233 @@
+{
+  "name": "阿尼亚",
+  "subject": "chibi girl with short pink hair and green eyes",
+  "createdAt": 1751500000000,
+  "builtin": true,
+  "assetVersion": 3,
+  "atlasVersion": 1,
+  "atlas": {
+    "image": "atlas.png",
+    "width": 515,
+    "height": 3888,
+    "anchor": "bottom-center",
+    "layout": "action-rows"
+  },
+  "animations": {
+    "idle": {
+      "loop": true,
+      "frames": [
+        {
+          "x": 2,
+          "y": 2,
+          "width": 190,
+          "height": 320,
+          "durationMs": 240,
+          "subjectBounds": {
+            "x": 2,
+            "y": 2,
+            "width": 186,
+            "height": 317
+          }
+        }
+      ]
+    },
+    "walk": {
+      "loop": true,
+      "frames": [
+        {
+          "x": 2,
+          "y": 326,
+          "width": 228,
+          "height": 320,
+          "durationMs": 240,
+          "subjectBounds": {
+            "x": 2,
+            "y": 2,
+            "width": 225,
+            "height": 316
+          }
+        }
+      ]
+    },
+    "sleep": {
+      "loop": true,
+      "frames": [
+        {
+          "x": 2,
+          "y": 650,
+          "width": 511,
+          "height": 320,
+          "durationMs": 240,
+          "subjectBounds": {
+            "x": 3,
+            "y": 3,
+            "width": 505,
+            "height": 315
+          }
+        }
+      ]
+    },
+    "beg": {
+      "loop": true,
+      "frames": [
+        {
+          "x": 2,
+          "y": 974,
+          "width": 230,
+          "height": 320,
+          "durationMs": 240,
+          "subjectBounds": {
+            "x": 2,
+            "y": 2,
+            "width": 227,
+            "height": 316
+          }
+        }
+      ]
+    },
+    "eat": {
+      "loop": true,
+      "frames": [
+        {
+          "x": 2,
+          "y": 1298,
+          "width": 231,
+          "height": 320,
+          "durationMs": 240,
+          "subjectBounds": {
+            "x": 2,
+            "y": 2,
+            "width": 228,
+            "height": 316
+          }
+        }
+      ]
+    },
+    "munch": {
+      "loop": true,
+      "frames": [
+        {
+          "x": 2,
+          "y": 1622,
+          "width": 257,
+          "height": 320,
+          "durationMs": 240,
+          "subjectBounds": {
+            "x": 2,
+            "y": 2,
+            "width": 254,
+            "height": 317
+          }
+        }
+      ]
+    },
+    "bathe": {
+      "loop": true,
+      "frames": [
+        {
+          "x": 2,
+          "y": 1946,
+          "width": 294,
+          "height": 320,
+          "durationMs": 240,
+          "subjectBounds": {
+            "x": 2,
+            "y": 2,
+            "width": 290,
+            "height": 316
+          }
+        }
+      ]
+    },
+    "soak": {
+      "loop": true,
+      "frames": [
+        {
+          "x": 2,
+          "y": 2270,
+          "width": 291,
+          "height": 320,
+          "durationMs": 240,
+          "subjectBounds": {
+            "x": 2,
+            "y": 2,
+            "width": 288,
+            "height": 316
+          }
+        }
+      ]
+    },
+    "swim": {
+      "loop": true,
+      "frames": [
+        {
+          "x": 2,
+          "y": 2594,
+          "width": 375,
+          "height": 320,
+          "durationMs": 240,
+          "subjectBounds": {
+            "x": 3,
+            "y": 3,
+            "width": 370,
+            "height": 315
+          }
+        }
+      ]
+    },
+    "zen": {
+      "loop": true,
+      "frames": [
+        {
+          "x": 2,
+          "y": 2918,
+          "width": 221,
+          "height": 320,
+          "durationMs": 240,
+          "subjectBounds": {
+            "x": 2,
+            "y": 2,
+            "width": 217,
+            "height": 316
+          }
+        }
+      ]
+    },
+    "play": {
+      "loop": true,
+      "frames": [
+        {
+          "x": 2,
+          "y": 3242,
+          "width": 257,
+          "height": 320,
+          "durationMs": 240,
+          "subjectBounds": {
+            "x": 2,
+            "y": 2,
+            "width": 254,
+            "height": 316
+          }
+        }
+      ]
+    },
+    "held": {
+      "loop": true,
+      "frames": [
+        {
+          "x": 2,
+          "y": 3566,
+          "width": 207,
+          "height": 320,
+          "durationMs": 240,
+          "subjectBounds": {
+            "x": 2,
+            "y": 2,
+            "width": 203,
+            "height": 316
+          }
+        }
+      ]
+    }
+  }
+}

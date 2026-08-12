@@ -12,6 +12,19 @@ export type AutomationCard = {
   supportedModels?: Record<string, boolean>
   // 模型映射：external model -> internal model
   modelMapping?: Record<string, string>
+  // 模型用途类别：model（或通配符）-> chat/speech/embedding/image/video
+  modelCategories?: Record<string, string>
+  // 优先级分组：数字越小优先级越高（1-10，默认 1）
+  level?: number
+  // API 端点路径（可选）：覆盖平台默认端点
+  apiEndpoint?: string
+  // CLI 配置：存储供应商关联的 CLI 可编辑配置
+  cliConfig?: Record<string, any>
+
+  // 真实代理请求使用的认证 Header 规则，不属于已退役的连通性测试模块。
+  connectivityAuthType?: string
+  // 上游协议类型（anthropic / openai）
+  upstreamProtocol?: string
 }
 
 export const automationCardGroups: Record<'claude' | 'codex', AutomationCard[]> = {
