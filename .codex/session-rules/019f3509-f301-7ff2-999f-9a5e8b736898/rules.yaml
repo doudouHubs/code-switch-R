@@ -1,0 +1,6 @@
+rules:
+- id: r-d24a1363
+  title: 项目供应商启用边界
+  content: 项目级 Codex 首选供应商不受首页 provider enabled 开关限制；未被项目绑定的普通候选仍必须启用后才参与全局路由。
+  created_at: '2026-07-06T10:34:19+08:00'
+  updated_at: '2026-07-06T10:34:19+08:00'

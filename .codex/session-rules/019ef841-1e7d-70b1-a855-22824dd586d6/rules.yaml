@@ -1,0 +1,5 @@
+rules:
+  - title: preserve_wt_pwsh_codex_terminal_chain
+    content: 打开终端功能的主启动链路必须保持为 wt -> pwsh -> codex；修复 Windows Terminal 启动问题时不得用 direct pwsh 或其他绕过 WT 的路径替代主链路，fallback 只能作为明确失败后的兜底并需说明保留边界。
+  - title: use_production_windows_build
+    content: 构建 Windows exe 的验收命令必须使用 task windows:build PRODUCTION=true，不得用默认开发构建或其他等价命令替代，除非该命令在当前环境不可用并明确说明原因。

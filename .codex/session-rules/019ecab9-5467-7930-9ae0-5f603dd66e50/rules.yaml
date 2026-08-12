@@ -1,0 +1,3 @@
+rules:
+  - content: AI-Commit 的 Windows 启动链必须使用 pwsh.exe 作为外层启动器和实际任务终端，禁止硬编码或回退到 powershell.exe。
+  - content: 项目管理打开终端的 Windows 主启动链路固定为 wt -> pwsh -> codex；不得在主路径中经过 cmd.exe，也不得在 Windows Terminal new-tab commandline 前追加 -- 分隔符。
