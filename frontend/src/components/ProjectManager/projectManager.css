@@ -1,0 +1,2333 @@
+.project-manager-page {
+  min-height: 100%;
+  /* 这里把页面横向 gutter 收窄，解决头部左侧第一眼就能看到的空白过大问题。 */
+  padding: 24px 18px 28px;
+  background:
+    radial-gradient(circle at top right, rgba(255, 181, 138, 0.35), transparent 28%),
+    radial-gradient(circle at top left, rgba(120, 179, 255, 0.24), transparent 24%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(245, 247, 251, 0.95));
+}
+
+.dark .project-manager-page {
+  background:
+    radial-gradient(circle at top right, rgba(240, 137, 65, 0.18), transparent 28%),
+    radial-gradient(circle at top left, rgba(76, 128, 214, 0.22), transparent 24%),
+    linear-gradient(180deg, rgba(12, 16, 24, 0.98), rgba(18, 24, 35, 1));
+}
+
+.project-manager-page .toolbar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 16px 24px;
+  margin-top: 0;
+}
+
+.project-manager-page .mode-switch {
+  display: inline-flex;
+  gap: 10px;
+  padding: 0;
+  border-radius: 999px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  justify-self: start;
+  width: auto;
+  max-width: 100%;
+  align-items: center;
+  flex-wrap: nowrap;
+  overflow: visible;
+  white-space: nowrap;
+  margin: 0;
+}
+
+.dark .project-manager-page .mode-switch {
+  background: transparent;
+  border: none;
+}
+
+.project-manager-page .mode-pill {
+  position: relative;
+  min-width: max-content;
+  min-height: 42px;
+  padding: 0 20px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--mac-text-secondary);
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.2s ease;
+  isolation: isolate;
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.project-manager-page .mode-pill::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: transparent;
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+  z-index: -1;
+}
+
+.project-manager-page .mode-pill.active {
+  color: var(--mac-text);
+}
+
+.project-manager-page .mode-pill.active::before {
+  background: rgba(10, 132, 255, 0.08);
+  background: color-mix(in srgb, var(--mac-accent) 6%, var(--mac-surface-strong));
+  box-shadow: inset 0 0 0 1px rgba(10, 132, 255, 0.25);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mac-accent) 25%, transparent);
+}
+
+.project-manager-page .toolbar-actions {
+  display: grid;
+  grid-template-columns: minmax(280px, 460px) auto;
+  justify-content: end;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+}
+
+.project-manager-page .search-shell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 48px;
+  min-width: 0;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(22, 34, 56, 0.08);
+}
+
+.dark .project-manager-page .search-shell {
+  background: rgba(17, 23, 34, 0.85);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.project-manager-page .search-shell svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  color: var(--mac-text-secondary);
+}
+
+.project-manager-page .toolbar-search-spinner {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  border: 2px solid rgba(37, 99, 235, 0.2);
+  border-top-color: #2563eb;
+  animation: pm-spin 0.72s linear infinite;
+}
+
+.dark .project-manager-page .toolbar-search-spinner {
+  border-color: rgba(125, 181, 255, 0.22);
+  border-top-color: #7db5ff;
+}
+
+.project-manager-page .search-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+.project-manager-page .search-input:focus {
+  box-shadow: none;
+}
+
+.project-manager-page .toolbar-actions .btn {
+  min-height: 48px;
+  height: 48px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.project-manager-page .clear-btn {
+  border: none;
+  background: transparent;
+  color: var(--mac-text-secondary);
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+.project-manager-page .project-breadcrumb {
+  position: sticky;
+  top: 16px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 22px;
+  padding: 16px 18px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(17, 28, 47, 0.08);
+  box-shadow: 0 14px 30px rgba(32, 45, 69, 0.1);
+  backdrop-filter: blur(18px);
+}
+
+.dark .project-manager-page .project-breadcrumb {
+  background: rgba(18, 25, 38, 0.94);
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.28);
+}
+
+.project-manager-page .back-chip {
+  border: none;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border-radius: 999px;
+  background: rgba(41, 98, 255, 0.1);
+  color: #2563eb;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease;
+}
+
+.project-manager-page .back-chip:hover {
+  background: rgba(41, 98, 255, 0.16);
+  transform: translateY(-1px);
+}
+
+.project-manager-page .back-chip:focus-visible {
+  outline: 2px solid rgba(37, 99, 235, 0.28);
+  outline-offset: 2px;
+}
+
+.project-manager-page .back-chip svg {
+  width: 18px;
+  height: 18px;
+}
+
+.project-manager-page .project-breadcrumb-main {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+  flex: 1;
+}
+
+.project-manager-page .breadcrumb-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.project-manager-page .breadcrumb-copy h2 {
+  margin: 0;
+  font-size: 1.18rem;
+  color: var(--mac-text);
+}
+
+.project-manager-page .breadcrumb-copy p {
+  margin: 6px 0 0;
+  font-size: 0.86rem;
+  color: var(--mac-text-secondary);
+  word-break: break-word;
+}
+
+.project-manager-page .breadcrumb-action-button {
+  border: none;
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.12);
+  color: #2563eb;
+  font-size: 0.84rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease, opacity 0.18s ease;
+}
+
+.project-manager-page .breadcrumb-action-button:hover {
+  background: rgba(37, 99, 235, 0.18);
+  transform: translateY(-1px);
+}
+
+.project-manager-page .breadcrumb-action-button:disabled {
+  cursor: progress;
+  opacity: 0.72;
+  transform: none;
+}
+
+.project-manager-page .breadcrumb-action-button:disabled:hover {
+  background: rgba(37, 99, 235, 0.12);
+  transform: none;
+}
+
+.project-manager-page .breadcrumb-action-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  animation: pm-spin 0.72s linear infinite;
+}
+
+.project-manager-page .breadcrumb-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.dark .project-manager-page .breadcrumb-action-button {
+  background: rgba(76, 128, 214, 0.22);
+  color: #7db5ff;
+}
+
+.project-manager-page .state-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  min-height: 320px;
+  margin-top: 20px;
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px dashed rgba(17, 28, 47, 0.12);
+  color: var(--mac-text-secondary);
+}
+
+.dark .project-manager-page .state-panel {
+  background: rgba(18, 25, 38, 0.82);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.project-manager-page .state-orb {
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  border: 3px solid rgba(37, 99, 235, 0.18);
+  border-top-color: #3b82f6;
+  animation: pm-spin 1s linear infinite;
+}
+
+.project-manager-page .project-grid,
+.project-manager-page .session-grid {
+  position: relative;
+  width: 100%;
+  margin-top: 20px;
+}
+
+.project-manager-page .project-grid > .project-card,
+.project-manager-page .session-grid > .session-card {
+  position: absolute;
+  top: 0;
+  left: 0;
+  margin: 0;
+}
+
+.project-manager-page .project-card,
+.project-manager-page .session-card {
+  position: relative;
+  overflow: visible;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 22px;
+  border-radius: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.52);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(246, 248, 253, 0.82));
+  box-shadow: 0 18px 38px rgba(32, 45, 69, 0.12);
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  animation: pm-card-rise 0.32s ease both;
+}
+
+.dark .project-manager-page .project-card,
+.dark .project-manager-page .session-card {
+  border-color: rgba(255, 255, 255, 0.06);
+  background:
+    linear-gradient(180deg, rgba(20, 27, 40, 0.94), rgba(14, 18, 28, 0.88));
+  box-shadow: 0 20px 42px rgba(0, 0, 0, 0.28);
+}
+
+.project-manager-page .project-card:hover,
+.project-manager-page .session-card:hover {
+  z-index: 2;
+  transform: translateY(-4px);
+  box-shadow: 0 26px 48px rgba(32, 45, 69, 0.18);
+  border-color: rgba(47, 123, 248, 0.35);
+}
+
+.project-manager-page .project-card:focus-within,
+.project-manager-page .session-card:focus-within {
+  /* 菜单弹层属于卡片内部，提升当前卡片层级可避免被后渲染的相邻卡片盖住。 */
+  z-index: 4;
+}
+
+.project-manager-page .session-card.is-opening {
+  cursor: progress;
+}
+
+.project-manager-page .session-card.is-opening:hover {
+  transform: none;
+}
+
+.project-manager-page .project-card.is-deleting,
+.project-manager-page .session-card.is-deleting {
+  cursor: progress;
+  opacity: 0.62;
+  filter: saturate(0.72) brightness(0.9);
+  pointer-events: none;
+  transform: none;
+  box-shadow: 0 12px 24px rgba(32, 45, 69, 0.1);
+}
+
+.project-manager-page .project-card.is-deleting:hover,
+.project-manager-page .session-card.is-deleting:hover {
+  transform: none;
+  box-shadow: 0 12px 24px rgba(32, 45, 69, 0.1);
+  border-color: rgba(17, 28, 47, 0.08);
+}
+
+.project-manager-page .card-topline {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.project-manager-page .project-card .card-topline {
+  /* 项目卡片右上角固定放置运行和更多操作，标题必须为两个按钮预留完整宽度。 */
+  padding-right: 67px;
+}
+
+.project-manager-page .card-copy {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.project-manager-page .card-time {
+  font-size: 0.74rem;
+  line-height: 1;
+  color: var(--mac-text-secondary);
+}
+
+.project-manager-page .card-title {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  font-size: 1.22rem;
+  line-height: 1.18;
+  color: var(--mac-text);
+}
+
+.project-manager-page .card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: 1;
+  min-width: 0;
+}
+
+.project-manager-page .card-eyebrow {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  font-weight: 600;
+  color: var(--mac-text-secondary);
+}
+
+.project-manager-page .card-path,
+.project-manager-page .card-summary {
+  margin: 0;
+  line-height: 1.6;
+  color: var(--mac-text-secondary);
+  word-break: break-word;
+}
+
+.project-manager-page .card-highlighted-text {
+  display: inline;
+}
+
+.project-manager-page .card-search-mark {
+  color: #dc2626;
+  background: rgba(220, 38, 38, 0.12);
+}
+
+.dark .project-manager-page .card-search-mark {
+  color: #ff8a8a;
+  background: rgba(248, 113, 113, 0.18);
+}
+
+.project-manager-page .card-provider {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0;
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.08);
+  color: var(--mac-text-secondary);
+  font-size: 0.76rem;
+  line-height: 1.2;
+}
+
+.project-manager-page .card-provider strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #2563eb;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-manager-page .project-session-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  align-self: flex-start;
+  width: 100%;
+  margin: 0 !important;
+  padding: 0 !important;
+  gap: 15px;
+  min-width: 0;
+}
+
+.project-manager-page .project-session-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start !important;
+  gap: 7px !important;
+  min-width: 0 !important;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin: 0 !important;
+  border: 1px solid rgba(37, 99, 235, 0.14);
+  border-radius: 5px;
+  padding: 5px 8px !important;
+  background: rgba(37, 99, 235, 0.07);
+  color: var(--mac-text-secondary);
+  font: inherit;
+  font-size: 0.75rem;
+  line-height: 1.15 !important;
+  cursor: pointer;
+  transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
+}
+
+.project-manager-page .project-session-tag:hover,
+.project-manager-page .project-session-tag:focus-visible {
+  border-color: rgba(37, 99, 235, 0.34);
+  background: rgba(37, 99, 235, 0.13);
+  color: #1d4ed8;
+  outline: none;
+}
+
+.project-manager-page .project-session-tag:disabled {
+  cursor: progress;
+  opacity: 0.62;
+}
+
+.project-manager-page .project-session-tag-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dark .project-manager-page .card-provider {
+  background: rgba(76, 128, 214, 0.18);
+}
+
+.dark .project-manager-page .card-provider strong {
+  color: #7db5ff;
+}
+
+.dark .project-manager-page .project-session-tag {
+  border-color: rgba(125, 181, 255, 0.18);
+  background: rgba(76, 128, 214, 0.16);
+}
+
+.dark .project-manager-page .project-session-tag:hover,
+.dark .project-manager-page .project-session-tag:focus-visible {
+  border-color: rgba(125, 181, 255, 0.4);
+  background: rgba(76, 128, 214, 0.26);
+  color: #9bc7ff;
+}
+
+.project-manager-page .card-path.small {
+  font-size: 0.82rem;
+}
+
+.project-manager-page .card-summary {
+  flex: 1;
+  color: var(--mac-text);
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.project-manager-page .card-footer {
+  display: grid;
+  grid-template-columns: minmax(max-content, 1fr) auto;
+  align-items: center;
+  margin-top: auto;
+  gap: 10px;
+}
+
+.project-manager-page .card-time {
+  justify-self: start;
+  white-space: nowrap;
+}
+
+.project-manager-page .card-footer-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  justify-self: end;
+  white-space: nowrap;
+}
+
+.project-manager-page .card-topline-actions {
+  position: absolute;
+  top: 22px;
+  right: 42px;
+  display: block;
+  /* 两个按钮各自使用固定坐标，彻底隔离全局按钮最小内容宽度对兄弟节点的挤压。 */
+  margin-left: 0;
+  width: 55px;
+  height: 20px;
+  flex: 0 0 55px;
+}
+
+.project-manager-page .card-run-trigger {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border: none;
+  width: 20px !important;
+  min-width: 20px !important;
+  height: 20px !important;
+  padding: 0 !important;
+  gap: 0 !important;
+  flex: 0 0 20px;
+  border-radius: 0;
+  background: transparent;
+  color: var(--mac-text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, transform 0.2s ease, opacity 0.2s ease;
+}
+
+.project-manager-page .card-run-trigger:hover {
+  background: transparent;
+  color: #2563eb;
+  transform: translateY(-1px);
+}
+
+.project-manager-page .card-run-trigger:disabled,
+.project-manager-page .card-run-trigger.is-loading {
+  cursor: progress;
+  opacity: 0.7;
+  transform: none;
+}
+
+.project-manager-page .card-run-trigger svg {
+  width: 18px;
+  height: 18px;
+}
+
+.project-manager-page .card-run-trigger path {
+  fill: currentColor;
+}
+
+.project-manager-page .card-action-menu {
+  position: relative;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  width: 20px;
+  height: 20px;
+  margin-left: 0;
+  margin-right: 0;
+  flex: 0 0 auto;
+}
+
+.project-manager-page .session-card .card-action-menu {
+  /* 会话卡只有一个操作按钮，补齐与项目卡操作层相同的 42px 右侧边距。 */
+  margin-right: 20px;
+}
+
+.project-manager-page .card-topline-actions .card-action-menu {
+  /* 只有项目卡片使用独立的双按钮定位层；会话卡片必须留在标题行 flex 中。 */
+  position: absolute;
+  top: 0;
+  right: 0;
+  margin: 0 !important;
+}
+
+.project-manager-page .card-menu-trigger {
+  border: none;
+  width: 20px !important;
+  min-width: 20px !important;
+  height: 20px !important;
+  padding: 0 !important;
+  gap: 0 !important;
+  flex: 0 0 20px;
+  border-radius: 0;
+  background: transparent;
+  color: var(--mac-text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, transform 0.2s ease;
+}
+
+.project-manager-page .card-menu-trigger:hover {
+  background: transparent;
+  color: #2563eb;
+  transform: translateY(-1px);
+}
+
+.project-manager-page .card-menu-trigger:focus,
+.project-manager-page .card-menu-trigger:focus-visible,
+.project-manager-page .card-menu-trigger:active {
+  background: transparent;
+}
+
+.project-manager-page .card-menu-trigger svg {
+  width: 18px;
+  height: 18px;
+  margin: 0 !important;
+}
+
+.project-manager-page .card-menu-trigger.is-loading {
+  cursor: progress;
+}
+
+.project-manager-page .card-menu-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  animation: pm-spin 0.72s linear infinite;
+}
+
+.dark .project-manager-page .card-menu-trigger {
+  background: transparent;
+}
+
+.project-manager-page .card-menu-popover {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  min-width: 148px;
+  padding: 8px;
+  border-radius: 18px;
+  border: 1px solid rgba(17, 28, 47, 0.08);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 20px 40px rgba(24, 39, 63, 0.18);
+  display: grid;
+  gap: 4px;
+  backdrop-filter: blur(18px);
+}
+
+.project-manager-page .card-topline-actions .card-menu-popover {
+  /* 项目卡操作层距离卡片右侧 42px，向右补偿一个按钮宽度后与 22px 内容边距对齐。 */
+  right: -20px;
+}
+
+.dark .project-manager-page .card-menu-popover {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(18, 25, 38, 0.95);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.34);
+}
+
+.project-manager-page .card-menu-item {
+  border: none;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--mac-text);
+  text-align: left;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease;
+}
+
+.project-manager-page .card-menu-item.active {
+  background: rgba(17, 28, 47, 0.06);
+}
+
+.dark .project-manager-page .card-menu-item.active {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.project-manager-page .card-menu-item.accent {
+  color: #2563eb;
+}
+
+.project-manager-page .card-menu-item.danger {
+  color: #d14343;
+}
+
+.dark .project-manager-page .card-menu-item.danger {
+  color: #ff8b8b;
+}
+
+.project-manager-page .card-menu-enter,
+.project-manager-page .card-menu-leave {
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.project-manager-page .card-menu-enter-from,
+.project-manager-page .card-menu-leave-to {
+  opacity: 0;
+  transform: translateY(-6px) scale(0.97);
+}
+
+.project-manager-page .card-menu-enter-to,
+.project-manager-page .card-menu-leave-from {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.project-manager-page .card-footer-action {
+  border: none;
+  padding: 8px 8px;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.12);
+  color: #2563eb;
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease;
+}
+
+.project-manager-page .card-footer-action:hover {
+  background: rgba(37, 99, 235, 0.18);
+  transform: translateY(-1px);
+}
+
+.project-manager-page .card-footer-action:disabled,
+.project-manager-page .card-footer-action.is-loading {
+  cursor: progress;
+  opacity: 0.72;
+  transform: none;
+}
+
+.project-manager-page .card-footer-action:disabled:hover,
+.project-manager-page .card-footer-action.is-loading:hover {
+  background: rgba(37, 99, 235, 0.12);
+  transform: none;
+}
+
+.project-manager-page .card-footer-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  border: 1.8px solid currentColor;
+  border-right-color: transparent;
+  animation: pm-spin 0.8s linear infinite;
+  flex: 0 0 auto;
+}
+
+.dark .project-manager-page .card-footer-action {
+  background: rgba(76, 128, 214, 0.2);
+  color: #7db5ff;
+}
+
+.project-manager-page .rename-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.project-manager-page .rename-hint {
+  margin: 0;
+  color: var(--mac-text-secondary);
+  line-height: 1.6;
+}
+
+.project-manager-page .rename-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.project-provider-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.project-provider-modal-body .rename-hint {
+  margin: 0;
+  color: var(--mac-text-secondary);
+  line-height: 1.6;
+}
+
+.project-provider-modal-body .rename-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.project-provider-modal-body .provider-picker-list {
+  display: grid;
+  gap: 10px;
+  max-height: min(52vh, 420px);
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.project-provider-modal-body .provider-picker-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(17, 28, 47, 0.08);
+  background: rgba(255, 255, 255, 0.64);
+  cursor: pointer;
+}
+
+.project-provider-modal-body .provider-picker-option:hover {
+  border-color: rgba(37, 99, 235, 0.22);
+  background: rgba(37, 99, 235, 0.05);
+}
+
+.project-provider-modal-body .provider-picker-option input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #2563eb;
+}
+
+.project-provider-modal-body .provider-picker-option span {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.project-provider-modal-body .provider-picker-option strong,
+.project-provider-modal-body .provider-picker-option small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-provider-modal-body .provider-picker-option strong {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--mac-text);
+  font-size: 0.9rem;
+}
+
+.project-provider-modal-body .provider-picker-disabled-badge {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.14);
+  color: #b45309;
+  font-size: 0.68rem;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.project-provider-modal-body .provider-picker-option small,
+.project-provider-modal-body .provider-picker-empty,
+.project-provider-modal-body .provider-picker-state {
+  color: var(--mac-text-secondary);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.project-provider-modal-body .provider-picker-empty,
+.project-provider-modal-body .provider-picker-state {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(17, 28, 47, 0.04);
+}
+
+.dark .project-provider-modal-body .provider-picker-option {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(18, 25, 38, 0.72);
+}
+
+.dark .project-provider-modal-body .provider-picker-option:hover {
+  border-color: rgba(125, 181, 255, 0.22);
+  background: rgba(76, 128, 214, 0.14);
+}
+
+.dark .project-provider-modal-body .provider-picker-disabled-badge {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+}
+
+.dark .project-provider-modal-body .provider-picker-empty,
+.dark .project-provider-modal-body .provider-picker-state {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.project-provider-modal-body .provider-auto-switch {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(17, 28, 47, 0.08);
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.08), rgba(14, 165, 233, 0.05));
+  cursor: pointer;
+}
+
+.project-provider-modal-body .provider-auto-switch span {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.project-provider-modal-body .provider-auto-switch strong {
+  color: var(--mac-text);
+  font-size: 0.9rem;
+  font-weight: 850;
+}
+
+.project-provider-modal-body .provider-auto-switch small {
+  color: var(--mac-text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.project-provider-modal-body .provider-auto-switch input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.project-provider-modal-body .provider-auto-switch i {
+  position: relative;
+  width: 46px;
+  height: 26px;
+  border-radius: 999px;
+  background: rgba(100, 116, 139, 0.32);
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08);
+  transition:
+    background 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.project-provider-modal-body .provider-auto-switch i::after {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.22);
+  content: "";
+  transition: transform 0.18s ease;
+}
+
+.project-provider-modal-body .provider-auto-switch input:checked + i {
+  background: linear-gradient(135deg, #2563eb, #0ea5e9);
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.24);
+}
+
+.project-provider-modal-body .provider-auto-switch input:checked + i::after {
+  transform: translateX(20px);
+}
+
+.project-provider-modal-body .provider-auto-switch.is-disabled {
+  opacity: 0.56;
+  cursor: not-allowed;
+}
+
+.dark .project-provider-modal-body .provider-auto-switch {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: linear-gradient(135deg, rgba(76, 128, 214, 0.16), rgba(14, 165, 233, 0.1));
+}
+
+.project-run-command-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.project-run-command-modal-body .rename-hint {
+  margin: 0;
+  color: var(--mac-text-secondary);
+  line-height: 1.6;
+}
+
+.project-run-command-field {
+  display: grid;
+  gap: 8px;
+}
+
+.project-run-command-field span {
+  color: var(--mac-text);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.project-run-command-field textarea {
+  width: 100%;
+  min-height: 156px;
+  resize: vertical;
+  border: 1px solid rgba(17, 28, 47, 0.1);
+  border-radius: 16px;
+  padding: 12px 14px;
+  background: rgba(17, 28, 47, 0.04);
+  color: var(--mac-text);
+  font: 0.86rem/1.55 "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+  outline: none;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+
+.project-run-command-field textarea:focus {
+  border-color: rgba(34, 197, 94, 0.42);
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.12);
+}
+
+.project-run-command-footnote {
+  margin: 0;
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: rgba(34, 197, 94, 0.08);
+  color: var(--mac-text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.55;
+}
+
+.dark .project-run-command-field textarea {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.dark .project-run-command-field textarea:focus {
+  border-color: rgba(134, 239, 172, 0.45);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.16);
+}
+
+.dark .project-run-command-footnote {
+  background: rgba(74, 222, 128, 0.12);
+}
+
+.project-manager-page.project-manager-detail-page {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  height: 100vh;
+  max-height: 100vh;
+  padding: 0;
+  overflow: hidden;
+}
+
+.project-manager-page .detail-app-header {
+  position: sticky;
+  top: 0;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 68px;
+  margin: 0;
+  padding: 12px 18px;
+  background: rgba(255, 255, 255, 0.94);
+  border-bottom: 1px solid rgba(17, 28, 47, 0.08);
+  backdrop-filter: blur(18px);
+}
+
+.dark .project-manager-page .detail-app-header {
+  background: rgba(17, 23, 34, 0.94);
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+.project-manager-page .detail-app-header-side,
+.project-manager-page .detail-app-header-actions {
+  display: flex;
+  align-items: center;
+}
+
+.project-manager-page .detail-app-header-side {
+  min-width: 0;
+  flex: 1;
+  gap: 8px;
+}
+
+.project-manager-page .detail-app-header-actions {
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.project-manager-page .detail-search-shell {
+  position: relative;
+  display: inline-flex;
+}
+
+.project-manager-page .detail-nav-button,
+.project-manager-page .detail-header-icon-button {
+  border: none;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--mac-text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease;
+}
+
+.project-manager-page .detail-nav-button:hover,
+.project-manager-page .detail-header-icon-button:hover {
+  background: rgba(17, 28, 47, 0.06);
+}
+
+.dark .project-manager-page .detail-nav-button:hover,
+.dark .project-manager-page .detail-header-icon-button:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.project-manager-page .detail-nav-button svg,
+.project-manager-page .detail-header-icon-button svg,
+.project-manager-page .detail-search-close svg,
+.project-manager-page .detail-search-nav svg,
+.project-manager-page .selection-dock-icon svg,
+.project-manager-page .selection-dock-close svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.project-manager-page .detail-app-header-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.project-manager-page .detail-app-header-copy strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 1.02rem;
+  font-weight: 700;
+  color: var(--mac-text);
+}
+
+.project-manager-page .detail-header-text-button {
+  border: none;
+  min-height: 38px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: rgba(17, 28, 47, 0.06);
+  color: var(--mac-text-secondary);
+  font-size: 0.84rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease;
+}
+
+.project-manager-page .detail-header-text-button.accent {
+  background: rgba(37, 99, 235, 0.12);
+  color: #2563eb;
+}
+
+.project-manager-page .detail-header-text-button.active {
+  background: rgba(37, 99, 235, 0.12);
+  color: #2563eb;
+}
+
+.dark .project-manager-page .detail-header-text-button {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.dark .project-manager-page .detail-header-text-button.accent {
+  background: rgba(76, 128, 214, 0.24);
+  color: #7db5ff;
+}
+
+.dark .project-manager-page .detail-header-text-button.active {
+  background: rgba(76, 128, 214, 0.24);
+  color: #7db5ff;
+}
+
+.project-manager-page .detail-header-text-button:disabled,
+.project-manager-page .detail-header-icon-button:disabled,
+.project-manager-page .detail-nav-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.project-manager-page .detail-header-spinner {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  animation: pm-spin 0.72s linear infinite;
+}
+
+.project-manager-page .detail-search-popover {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 12;
+  width: min(360px, calc(100vw - 28px));
+  padding: 12px;
+  border: 1px solid rgba(17, 28, 47, 0.08);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 18px 42px rgba(25, 34, 51, 0.16);
+  backdrop-filter: blur(18px);
+}
+
+.dark .project-manager-page .detail-search-popover {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(18, 25, 38, 0.98);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.36);
+}
+
+.project-manager-page .detail-search-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.project-manager-page .detail-search-input {
+  min-width: 0;
+  height: 36px;
+  border: 1px solid rgba(17, 28, 47, 0.1);
+  border-radius: 14px;
+  padding: 0 12px;
+  background: rgba(17, 28, 47, 0.04);
+  color: var(--mac-text);
+  font-size: 0.84rem;
+  outline: none;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+
+.project-manager-page .detail-search-input:focus {
+  border-color: rgba(37, 99, 235, 0.42);
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.dark .project-manager-page .detail-search-input {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.dark .project-manager-page .detail-search-input:focus {
+  border-color: rgba(125, 181, 255, 0.48);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 0 0 3px rgba(76, 128, 214, 0.18);
+}
+
+.project-manager-page .detail-search-close,
+.project-manager-page .detail-search-nav button {
+  border: none;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(17, 28, 47, 0.06);
+  color: var(--mac-text-secondary);
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease, opacity 0.18s ease;
+}
+
+.project-manager-page .detail-search-close:hover,
+.project-manager-page .detail-search-nav button:hover {
+  background: rgba(17, 28, 47, 0.1);
+  color: var(--mac-text);
+}
+
+.project-manager-page .detail-search-nav button:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+}
+
+.dark .project-manager-page .detail-search-close,
+.dark .project-manager-page .detail-search-nav button {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.dark .project-manager-page .detail-search-close:hover,
+.dark .project-manager-page .detail-search-nav button:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(248, 251, 255, 0.92);
+}
+
+.project-manager-page .detail-search-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 10px;
+}
+
+.project-manager-page .detail-search-status {
+  min-width: 0;
+  color: var(--mac-text-secondary);
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.project-manager-page .detail-search-status.empty {
+  color: #d14343;
+}
+
+.dark .project-manager-page .detail-search-status.empty {
+  color: #ff8b8b;
+}
+
+.project-manager-page .detail-search-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.project-manager-page .detail-screen {
+  margin: 20px 18px 0;
+}
+
+.project-manager-page .selection-dock {
+  position: sticky;
+  bottom: 12px;
+  z-index: 8;
+  display: grid;
+  gap: 12px;
+  margin: auto 18px 12px;
+  padding: 16px 18px 14px;
+  border-radius: 26px;
+  border: 1px solid rgba(17, 28, 47, 0.08);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 20px 40px rgba(29, 40, 61, 0.12);
+  backdrop-filter: blur(18px);
+}
+
+.dark .project-manager-page .selection-dock {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(18, 25, 38, 0.96);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.32);
+}
+
+.project-manager-page .selection-dock-summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.project-manager-page .selection-dock-summary strong {
+  font-size: 0.96rem;
+  color: var(--mac-text);
+}
+
+.project-manager-page .selection-dock-summary span {
+  font-size: 0.8rem;
+  color: var(--mac-text-secondary);
+}
+
+.project-manager-page .selection-dock-actions {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+  align-items: stretch;
+}
+
+.project-manager-page .selection-dock-action,
+.project-manager-page .selection-dock-close {
+  border: none;
+  background: transparent;
+  color: var(--mac-text);
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 82px;
+  padding: 10px 8px;
+  border-radius: 18px;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease, opacity 0.18s ease;
+}
+
+.project-manager-page .selection-dock-action:hover,
+.project-manager-page .selection-dock-close:hover {
+  background: rgba(17, 28, 47, 0.05);
+}
+
+.dark .project-manager-page .selection-dock-action:hover,
+.dark .project-manager-page .selection-dock-close:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.project-manager-page .selection-dock-action:disabled,
+.project-manager-page .selection-dock-close:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.project-manager-page .selection-dock-icon {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.project-manager-page .selection-dock-action span:last-child {
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.project-manager-page .selection-dock-action.danger {
+  color: #d14343;
+}
+
+.project-manager-page .selection-dock-action.accent {
+  color: #2563eb;
+}
+
+.dark .project-manager-page .selection-dock-action.danger {
+  color: #ff8b8b;
+}
+
+.dark .project-manager-page .selection-dock-action.accent {
+  color: #7db5ff;
+}
+
+.project-manager-page .conversation-list {
+  display: grid;
+  width: 100%;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+}
+
+.project-manager-page .chat-thread {
+  width: 100%;
+  gap: 18px;
+  align-content: start;
+}
+
+.project-manager-page .conversation-viewport {
+  position: relative;
+  flex: 1;
+  overflow: auto;
+  margin-top: 0;
+  padding: 12px 18px 18px;
+  min-height: 0;
+  height: 0;
+  scrollbar-gutter: stable;
+}
+
+.project-manager-page.project-manager-detail-page.is-selecting .conversation-viewport {
+  padding-bottom: 150px;
+}
+
+.project-manager-page .conversation-virtualizer {
+  position: relative;
+  width: 100%;
+  min-height: 100%;
+}
+
+.project-manager-page .conversation-virtual-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  padding-bottom: 14px;
+}
+
+.project-manager-page .conversation-virtual-row.has-open-turn-usage {
+  /* 每行的 translateY 会创建独立层叠上下文；提升当前行才能让内部浮层跨过后续消息行。 */
+  z-index: 4;
+}
+
+.project-manager-page .message-entry {
+  display: flex;
+  align-items: flex-start;
+  width: 100%;
+  gap: 12px;
+}
+
+.project-manager-page .message-entry.is-selecting {
+  cursor: pointer;
+  border-radius: 26px;
+  padding: 8px 10px;
+  transition: background 0.18s ease, box-shadow 0.18s ease;
+}
+
+.project-manager-page .message-entry.is-selecting:hover {
+  background: rgba(37, 99, 235, 0.04);
+}
+
+.project-manager-page .message-entry.is-selecting.selected {
+  background: rgba(37, 99, 235, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.12);
+}
+
+.project-manager-page .message-entry.search-hit {
+  border-radius: 26px;
+  background: rgba(245, 158, 11, 0.05);
+}
+
+.project-manager-page .message-entry.search-active {
+  border-radius: 26px;
+  background: rgba(37, 99, 235, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.16);
+}
+
+.dark .project-manager-page .message-entry.search-hit {
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.dark .project-manager-page .message-entry.search-active {
+  background: rgba(76, 128, 214, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(125, 181, 255, 0.22);
+}
+
+.project-manager-page .message-entry.is-user {
+  justify-content: flex-start;
+  flex-direction: row-reverse;
+}
+
+.project-manager-page .message-entry.is-agent {
+  justify-content: flex-start;
+  flex-direction: row;
+}
+
+.project-manager-page .message-select-slot {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding-top: 10px;
+}
+
+.project-manager-page .message-select-slot input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #2563eb;
+}
+
+.project-manager-page .message-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  width: fit-content;
+  max-width: min(88%, 1120px);
+  min-width: 0;
+}
+
+.project-manager-page .message-entry.is-user .message-stack {
+  align-items: flex-end;
+}
+
+.project-manager-page .message-entry.is-agent .message-stack {
+  align-items: flex-start;
+}
+
+.project-manager-page .message-entry.is-selecting:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+}
+
+.project-manager-page .conversation-bubble {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  width: auto;
+  max-width: 100%;
+  min-width: 0;
+  padding: 16px 18px;
+  border: 1px solid transparent;
+  border-radius: 24px;
+  text-align: left;
+  color: inherit;
+  white-space: normal;
+  font: inherit;
+  box-shadow: 0 18px 36px rgba(32, 45, 69, 0.1);
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+.project-manager-page .conversation-bubble.is-user {
+  align-self: flex-end;
+  background:
+    linear-gradient(180deg, rgba(67, 142, 255, 0.95), rgba(33, 107, 237, 0.92));
+  border-color: rgba(37, 99, 235, 0.18);
+  color: #f8fbff;
+}
+
+.project-manager-page .conversation-bubble.is-user.has-turn-usage {
+  /* 标签最小高度 22px，加上 10px 间距后预留 32px，避免压住上一条消息。 */
+  margin-top: 32px;
+}
+
+.project-manager-page .conversation-bubble.is-agent {
+  align-self: flex-start;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(244, 247, 252, 0.9));
+  border-color: rgba(17, 28, 47, 0.08);
+  color: var(--mac-text);
+}
+
+.project-manager-page .conversation-bubble.is-user::after,
+.project-manager-page .conversation-bubble.is-agent::after {
+  content: '';
+  position: absolute;
+  bottom: 10px;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+
+.project-manager-page .conversation-bubble.is-user::after {
+  right: -4px;
+  background: rgba(33, 107, 237, 0.92);
+  transform: rotate(45deg);
+}
+
+.project-manager-page .conversation-bubble.is-agent::after {
+  left: -4px;
+  background: rgba(248, 250, 255, 0.94);
+  border-left: 1px solid rgba(17, 28, 47, 0.06);
+  border-bottom: 1px solid rgba(17, 28, 47, 0.06);
+  transform: rotate(45deg);
+}
+
+.dark .project-manager-page .conversation-bubble.is-user {
+  background:
+    linear-gradient(180deg, rgba(61, 123, 224, 0.94), rgba(33, 90, 190, 0.92));
+  border-color: rgba(123, 181, 255, 0.16);
+  color: #f7fbff;
+}
+
+.dark .project-manager-page .conversation-bubble.is-agent {
+  background:
+    linear-gradient(180deg, rgba(22, 28, 40, 0.96), rgba(14, 18, 28, 0.92));
+  border-color: rgba(255, 255, 255, 0.08);
+  color: var(--mac-text);
+}
+
+.dark .project-manager-page .conversation-bubble.is-agent::after {
+  background: rgba(18, 24, 35, 0.96);
+  border-left-color: rgba(255, 255, 255, 0.06);
+  border-bottom-color: rgba(255, 255, 255, 0.06);
+}
+
+.project-manager-page .conversation-bubble.selected {
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.16), 0 20px 38px rgba(32, 45, 69, 0.12);
+}
+
+.project-manager-page .conversation-bubble.clickable {
+  cursor: pointer;
+}
+
+.project-manager-page .conversation-bubble.clickable:hover {
+  transform: translateY(-1px);
+}
+
+.project-manager-page .conversation-bubble.clickable:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18), 0 18px 36px rgba(32, 45, 69, 0.12);
+}
+
+.project-manager-page .conversation-content {
+  display: block;
+  width: 100%;
+  line-height: 1.72;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  user-select: text;
+}
+
+.project-manager-page .conversation-bubble,
+.project-manager-page .conversation-content,
+.project-manager-page .conversation-content * {
+  /* 全局样式默认禁用 user-select；搜索高亮会把正文拆成 span/mark 子节点。
+     必须把正文和子节点都显式放开，否则鼠标拖拽会命中子节点的禁选规则。 */
+  -webkit-user-select: text;
+  user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+}
+
+.project-manager-page .conversation-toggle,
+.project-manager-page .message-actions-row,
+.project-manager-page .message-meta {
+  -webkit-user-select: none;
+  user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+}
+
+.project-manager-page .conversation-content.clamped {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.project-manager-page .conversation-bubble.compacted {
+  max-width: min(72%, 860px);
+  padding: 10px 14px;
+  opacity: 0.82;
+}
+
+.project-manager-page .conversation-content.compacted {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.project-manager-page .conversation-search-mark {
+  border-radius: 5px;
+  padding: 0 2px;
+  background: rgba(245, 158, 11, 0.35);
+  color: inherit;
+}
+
+.dark .project-manager-page .conversation-search-mark {
+  background: rgba(245, 158, 11, 0.42);
+}
+
+.project-manager-page .conversation-toggle {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #2563eb;
+}
+
+.project-manager-page .conversation-bubble.is-user .conversation-toggle {
+  color: rgba(248, 251, 255, 0.92);
+}
+
+.dark .project-manager-page .conversation-toggle {
+  color: #7db5ff;
+}
+
+.project-manager-page .message-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: auto;
+  padding: 0 2px;
+  font-size: 0.74rem;
+  color: var(--mac-text-secondary);
+  line-height: 1.2;
+}
+
+.project-manager-page .message-meta.is-user {
+  align-self: flex-end;
+  justify-content: flex-end;
+}
+
+.project-manager-page .message-meta.is-agent {
+  align-self: flex-start;
+  justify-content: flex-start;
+}
+
+.project-manager-page .message-meta-role {
+  font-weight: 700;
+}
+
+.project-manager-page .turn-usage {
+  position: absolute;
+  top: auto;
+  bottom: calc(100% + 10px);
+  display: inline-flex;
+  min-width: 0;
+  right: 0;
+  z-index: 3;
+  /* 标签已移入正文气泡，显式锁回元信息字号，避免继承正文的较大字号。 */
+  font-size: 0.74rem;
+  line-height: 1.2;
+  -webkit-user-select: none;
+  user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+}
+
+.project-manager-page .turn-usage-trigger,
+.project-manager-page .turn-usage-unavailable {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 22px;
+  border-radius: 999px;
+  font: inherit;
+  font-size: inherit;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.project-manager-page .turn-usage-trigger {
+  border: 1px solid rgba(37, 99, 235, 0.2);
+  display: inline-flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  gap: 5px !important;
+  width: auto !important;
+  min-width: 0 !important;
+  padding: 3px 7px !important;
+  background: rgba(37, 99, 235, 0.08);
+  color: #1d4ed8;
+  cursor: pointer;
+  transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
+}
+
+.project-manager-page .turn-usage-trigger:hover,
+.project-manager-page .turn-usage-trigger:focus-visible {
+  border-color: rgba(37, 99, 235, 0.42);
+  background: rgba(37, 99, 235, 0.14);
+  color: #1e40af;
+  outline: none;
+}
+
+.project-manager-page .turn-usage-trigger.partial {
+  border-color: rgba(217, 119, 6, 0.28);
+  background: rgba(245, 158, 11, 0.1);
+  color: #a16207;
+}
+
+.project-manager-page .turn-usage-trigger svg {
+  /* 全局 button svg 使用 !important 固定为 16px；这里的统计图标必须保持紧凑。 */
+  width: 12px !important;
+  height: 12px !important;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+}
+
+.project-manager-page .turn-usage-partial {
+  padding-left: 5px;
+  border-left: 1px solid currentColor;
+  opacity: 0.82;
+}
+
+.project-manager-page .turn-usage-unavailable {
+  padding: 3px 2px;
+  color: var(--mac-text-secondary);
+  opacity: 0.78;
+}
+
+.project-manager-page .turn-usage-popover {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  bottom: auto;
+  z-index: 16;
+  width: min(280px, calc(100vw - 44px));
+  padding: 12px;
+  border: 1px solid rgba(17, 28, 47, 0.1);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 18px 36px rgba(24, 39, 63, 0.2);
+  color: var(--mac-text);
+  backdrop-filter: blur(18px);
+}
+
+.project-manager-page .turn-usage-popover-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid rgba(17, 28, 47, 0.08);
+  font-size: 0.78rem;
+}
+
+.project-manager-page .turn-usage-popover-header strong {
+  font-weight: 700;
+}
+
+.project-manager-page .turn-usage-popover-header span {
+  color: #1d4ed8;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.project-manager-page .turn-usage-breakdown {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px 14px;
+  margin: 11px 0 0;
+}
+
+.project-manager-page .turn-usage-breakdown div {
+  min-width: 0;
+}
+
+.project-manager-page .turn-usage-breakdown dt {
+  color: var(--mac-text-secondary);
+  font-size: 0.7rem;
+}
+
+.project-manager-page .turn-usage-breakdown dd {
+  margin: 3px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.project-manager-page .turn-usage-partial-note {
+  margin: 10px 0 0;
+  padding-top: 9px;
+  border-top: 1px solid rgba(217, 119, 6, 0.16);
+  color: #a16207;
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.dark .project-manager-page .turn-usage-trigger {
+  border-color: rgba(125, 181, 255, 0.26);
+  background: rgba(76, 128, 214, 0.18);
+  color: #9bc7ff;
+}
+
+.dark .project-manager-page .turn-usage-trigger:hover,
+.dark .project-manager-page .turn-usage-trigger:focus-visible {
+  border-color: rgba(155, 199, 255, 0.52);
+  background: rgba(76, 128, 214, 0.3);
+  color: #d2e7ff;
+}
+
+.dark .project-manager-page .turn-usage-trigger.partial {
+  border-color: rgba(251, 191, 36, 0.34);
+  background: rgba(180, 83, 9, 0.25);
+  color: #fcd34d;
+}
+
+.dark .project-manager-page .turn-usage-popover {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(18, 25, 38, 0.98);
+  box-shadow: 0 20px 42px rgba(0, 0, 0, 0.36);
+}
+
+.dark .project-manager-page .turn-usage-popover-header {
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+.dark .project-manager-page .turn-usage-popover-header span {
+  color: #9bc7ff;
+}
+
+.dark .project-manager-page .turn-usage-partial-note {
+  border-top-color: rgba(251, 191, 36, 0.2);
+  color: #fcd34d;
+}
+
+.project-manager-page .message-footer {
+  display: flex;
+  align-self: stretch;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  /* 短消息也必须容纳元信息与操作区，不能把同一行内容重新挤成上下两行。 */
+  min-width: max-content;
+  max-width: 100%;
+}
+
+.project-manager-page .message-footer .message-actions-row,
+.project-manager-page .message-footer .message-meta {
+  align-self: center;
+  flex: 0 0 auto;
+}
+
+.project-manager-page .message-footer.is-user .message-meta {
+  order: 2;
+  margin-left: auto;
+}
+
+.project-manager-page .message-footer.is-user .message-actions-row {
+  order: 1;
+}
+
+.project-manager-page .message-footer.is-agent .message-meta {
+  order: 1;
+}
+
+.project-manager-page .message-footer.is-agent .message-actions-row {
+  order: 2;
+  margin-left: auto;
+}
+
+.project-manager-page .message-meta-action {
+  border: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 12px;
+  width: 12px;
+  height: 16px;
+  padding: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease, opacity 0.18s ease;
+}
+
+.project-manager-page .message-actions-row {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  /* 12px 紧凑按钮加 18px 间隙，刚好形成 30px 的图标中心距离。 */
+  gap: 18px;
+  width: auto;
+  max-width: none;
+  color: var(--mac-text-secondary);
+}
+
+.project-manager-page .message-actions-row.is-user {
+  flex: 0 0 auto;
+}
+
+.project-manager-page .message-actions-row.is-agent {
+  flex: 0 0 auto;
+}
+
+.project-manager-page .message-meta-action svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.project-manager-page .message-meta-action:hover {
+  background: rgba(17, 28, 47, 0.06);
+  color: var(--mac-text-primary);
+}
+
+.project-manager-page .message-meta-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.dark .project-manager-page .message-meta-action {
+  color: inherit;
+}
+
+.dark .project-manager-page .message-meta-action:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(248, 251, 255, 0.92);
+}
+
+.project-manager-page .detail-delete-hint {
+  margin: 10px 0 0;
+  line-height: 1.6;
+  color: var(--mac-text-secondary);
+}
+
+@keyframes pm-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pm-card-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 920px) {
+  .project-manager-page {
+    padding: 16px 14px 18px;
+  }
+
+  .project-manager-page .detail-app-header {
+    padding: 10px 14px;
+  }
+
+  .project-manager-page .toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .project-manager-page .toolbar-actions {
+    grid-template-columns: minmax(0, 1fr) auto;
+    justify-content: stretch;
+  }
+
+  .project-manager-page .search-shell {
+    min-width: 100%;
+  }
+}
+
+@media (max-width: 640px) {
+  .project-manager-page .project-breadcrumb,
+  .project-manager-page .project-breadcrumb-main {
+    align-items: stretch;
+  }
+
+  .project-manager-page .project-breadcrumb {
+    flex-direction: column;
+  }
+
+  .project-manager-page .project-breadcrumb-main {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .project-manager-page .breadcrumb-action-button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .project-manager-page .breadcrumb-actions {
+    width: 100%;
+    flex-direction: column;
+  }
+
+  .project-manager-page .project-breadcrumb {
+    top: 12px;
+  }
+
+  .project-manager-page .back-chip {
+    width: 42px;
+    height: 42px;
+  }
+
+  .project-manager-page .toolbar-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .project-manager-page .project-detail-actions {
+    align-items: stretch;
+  }
+
+  .project-manager-page .project-detail-action-row {
+    width: 100%;
+  }
+
+  .project-manager-page .project-detail-action-row .btn {
+    flex: 1;
+  }
+
+  .project-manager-page .conversation-viewport {
+    padding: 10px 14px 16px;
+  }
+
+  .project-manager-page .selection-dock {
+    margin-right: 14px;
+    margin-left: 14px;
+    bottom: 8px;
+    padding: 14px 12px 12px;
+  }
+
+  .project-manager-page .selection-dock-actions {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .project-manager-page .message-entry {
+    gap: 10px;
+  }
+
+  .project-manager-page .message-stack {
+    max-width: min(92%, 100%);
+  }
+
+  .project-manager-page .message-meta {
+    gap: 7px;
+    /* 底栏已由 footer 保障最小内容宽度，移动端也不能让角色和时间自行换行。 */
+    flex-wrap: nowrap;
+  }
+
+  .project-manager-page .turn-usage-popover {
+    width: min(260px, calc(100vw - 36px));
+  }
+
+  .project-manager-page .conversation-bubble {
+    padding: 14px 16px;
+    border-radius: 20px;
+  }
+}

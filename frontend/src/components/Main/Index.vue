@@ -2019,7 +2019,7 @@ const switchToTabAndHighlight = (platform: string, providerName: string) => {
 
 // 处理供应商切换事件
 // @author sm
-const handleProviderSwitched: Events.WailsEventCallback<'provider:switched'> = event => {
+const handleProviderSwitched: Events.Callback = event => {
   const { platform, toProvider } = event.data as { platform: string; toProvider: string }
   console.log('[Event] provider:switched', platform, toProvider)
   switchToTabAndHighlight(platform, toProvider)
@@ -2027,7 +2027,7 @@ const handleProviderSwitched: Events.WailsEventCallback<'provider:switched'> = e
 
 // 处理供应商拉黑事件
 // @author sm
-const handleProviderBlacklisted: Events.WailsEventCallback<'provider:blacklisted'> = event => {
+const handleProviderBlacklisted: Events.Callback = event => {
   const { platform, providerName } = event.data as { platform: string; providerName: string }
   console.log('[Event] provider:blacklisted', platform, providerName)
   switchToTabAndHighlight(platform, providerName)

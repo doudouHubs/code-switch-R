@@ -1,4 +1,4 @@
-import { Call } from '@wailsio/runtime'
+import { Call } from '../wails-runtime-compat'
 
 export type AppSettings = {
   show_heatmap: boolean

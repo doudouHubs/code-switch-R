@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 type petStudioTestStore struct {
@@ -182,6 +183,59 @@ func TestPetStudioSaveSkinAtomicallyPersistsAndBinds(t *testing.T) {
 	}
 }
 
+func TestPetStudioReadSkinDefaultAndCustomArePathSafeAndPetScoped(t *testing.T) {
+	atlas := petStudioTestPNG(t, 2, 2)
+	manifest := petStudioTestBuiltinManifest(t)
+	previousSource := currentPetAssetSource()
+	t.Cleanup(func() { SetPetAssetSource(previousSource) })
+	SetPetAssetSource(fstest.MapFS{
+		"resources/pets/capybara/pet.json":  {Data: manifest, Mode: 0o600},
+		"resources/pets/capybara/atlas.png": {Data: atlas, Mode: 0o600},
+	})
+
+	root := t.TempDir()
+	store := &petStudioTestStore{}
+	service := NewPetStudioAPIService(store, PetStudioAPIOptions{Root: root})
+
+	defaultResult, err := service.ReadSkin("pet-1", "")
+	if err != nil {
+		t.Fatalf("ReadSkin(default) error = %v", err)
+	}
+	if defaultResult.Skin.SkinID != "capybara" || defaultResult.Skin.PetID != "pet-1" || !defaultResult.Skin.Builtin {
+		t.Fatalf("ReadSkin(default) skin = %#v", defaultResult.Skin)
+	}
+	if defaultResult.Atlas.Src == "" || !strings.HasPrefix(defaultResult.Atlas.Src, "data:image/png;base64,") || len(defaultResult.Atlas.Manifest) == 0 {
+		t.Fatalf("ReadSkin(default) atlas = %#v", defaultResult.Atlas)
+	}
+	if defaultResult.Skin.Path != "" || defaultResult.Skin.AtlasPath != "" {
+		t.Fatalf("ReadSkin(default) leaked paths: %#v", defaultResult.Skin)
+	}
+
+	request := petStudioTestRequest(t)
+	request.SkinID = "custom-one"
+	request.Name = "Custom one"
+	if _, err := service.SaveSkin("pet-1", request); err != nil {
+		t.Fatalf("SaveSkin(custom) error = %v", err)
+	}
+	customResult, err := service.ReadSkin("pet-1", request.SkinID)
+	if err != nil {
+		t.Fatalf("ReadSkin(custom) error = %v", err)
+	}
+	if customResult.Skin.PetID != "pet-1" || customResult.Skin.SkinID != request.SkinID || customResult.Skin.Builtin {
+		t.Fatalf("ReadSkin(custom) skin = %#v", customResult.Skin)
+	}
+	if customResult.Skin.Path != "" || customResult.Skin.AtlasPath != "" {
+		t.Fatalf("ReadSkin(custom) leaked paths: %#v", customResult.Skin)
+	}
+	if customResult.Atlas.Src == "" || len(customResult.Atlas.Manifest) == 0 {
+		t.Fatalf("ReadSkin(custom) atlas = %#v", customResult.Atlas)
+	}
+
+	if _, err := service.ReadSkin("pet-2", request.SkinID); err == nil || !strings.Contains(err.Error(), "当前宠物不存在") {
+		t.Fatalf("ReadSkin(other pet) error = %v, want pet isolation", err)
+	}
+}
+
 func TestPetStudioSaveSkinRollsBackFilesWhenDatabaseFails(t *testing.T) {
 	root := t.TempDir()
 	store := &petStudioTestStore{upsertErr: os.ErrPermission}
@@ -295,6 +349,22 @@ func TestPetStudioListSkinsClearsPathsAndSortsStable(t *testing.T) {
 	}
 }
 
+func TestPetStudioGetRootReturnsOnlyConfiguredRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "pets")
+	service := NewPetStudioAPIService(&petStudioTestStore{}, PetStudioAPIOptions{Root: root})
+
+	got, err := service.GetRoot()
+	if err != nil {
+		t.Fatalf("GetRoot() error = %v", err)
+	}
+	if got != filepath.Clean(root) {
+		t.Fatalf("GetRoot() = %q, want %q", got, filepath.Clean(root))
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("GetRoot() created root directory or returned unexpected error: %v", err)
+	}
+}
+
 func petStudioTestRequest(t *testing.T) PetStudioSaveSkinRequest {
 	t.Helper()
 	atlas := petStudioTestPNG(t, 2, 2)
@@ -332,6 +402,29 @@ func petStudioTestManifest(t *testing.T, width, height int, animations map[strin
 		t.Fatal(err)
 	}
 	return raw
+}
+
+func petStudioTestBuiltinManifest(t *testing.T) []byte {
+	t.Helper()
+	manifest, err := json.Marshal(PetAtlasManifest{
+		Name:         "Builtin capybara",
+		Subject:      "builtin subject",
+		ModelID:      "builtin-model",
+		AtlasVersion: PetAtlasVersion,
+		Atlas: PetAtlasMetadata{
+			AtlasVersion: PetAtlasVersion,
+			Image:        "atlas.png",
+			Width:        2,
+			Height:       2,
+			Anchor:       "bottom-center",
+			Layout:       "action-rows",
+		},
+		Animations: map[string]PetAtlasAnimation{"idle": petStudioTestAnimation()},
+	})
+	if err != nil {
+		t.Fatalf("marshal builtin manifest: %v", err)
+	}
+	return manifest
 }
 
 func petStudioTestPNG(t *testing.T, width, height int) []byte {

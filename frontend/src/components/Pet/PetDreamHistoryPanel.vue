@@ -339,10 +339,10 @@ onUnmounted(() => {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
   border: 1px solid var(--dream-line);
-  border-radius: 12px;
-  padding: 16px;
+  border-radius: 8px;
+  padding: 14px;
   background: color-mix(in srgb, var(--dream-surface) 80%, transparent);
   color: var(--dream-ink);
 }
@@ -437,7 +437,7 @@ onUnmounted(() => {
 .pet-dream-history-panel__layout {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(190px, 0.4fr) minmax(0, 1fr);
+  grid-template-columns: minmax(180px, 0.38fr) minmax(0, 1fr);
   gap: 12px;
 }
 

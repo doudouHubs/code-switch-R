@@ -1,4 +1,4 @@
-type ToastType = 'success' | 'error'
+export type ToastType = 'success' | 'error' | 'info' | 'warning'
 
 const TOAST_DURATION = 2400
 

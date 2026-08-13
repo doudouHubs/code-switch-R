@@ -45,3 +45,15 @@ export const importFromCustomFile = async (path: string): Promise<ConfigImportRe
   const response = await Call.ByName('codeswitch/services.ImportService.ImportFromFile', path)
   return response as ConfigImportResult
 }
+
+// 旧设置页仍通过这些名称调用导入流程；保留兼容别名，实际 RPC 继续复用当前后端入口。
+export const importFromPath = importFromCustomFile
+
+export const isFirstRun = async (): Promise<boolean> => {
+  const response = await Call.ByName('codeswitch/services.ImportService.IsFirstRun')
+  return response as boolean
+}
+
+export const markFirstRunDone = async (): Promise<void> => {
+  await Call.ByName('codeswitch/services.ImportService.MarkFirstRunDone')
+}

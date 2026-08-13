@@ -114,6 +114,44 @@ func TestPetMediaAPIPackAtlasRequiresIdleAndReturnsManifest(t *testing.T) {
 	}
 }
 
+func TestPetMediaAPIPackAtlasPreservesMetadataAndBehaviors(t *testing.T) {
+	frame := image.NewNRGBA(image.Rect(0, 0, 2, 2))
+	frame.SetNRGBA(0, 0, color.NRGBA{R: 255, A: 255})
+	encoded := encodePetMediaTestPNG(t, frame)
+	metadata := PetAtlasManifestMetadata{
+		Subject:                    "studio subject",
+		ModelID:                    "studio-model",
+		CreatedAt:                  101,
+		UpdatedAt:                  202,
+		Builtin:                    true,
+		AssetVersion:               3,
+		SpriteNormalizationVersion: 4,
+	}
+	behaviors := map[string]PetAtlasBehavior{
+		"greeting": {Label: "问候", Actions: []string{"idle", "walk"}},
+	}
+
+	result, err := NewPetMediaAPIService().PackAtlas(PetAtlasPackAPIRequest{
+		Name:      "studio-pet",
+		Metadata:  &metadata,
+		Behaviors: behaviors,
+		Actions:   []PetAtlasPackAPIAction{{ID: "idle", Frames: []string{encoded}, Loop: true}, {ID: "walk", Frames: []string{encoded}, Loop: true}},
+	})
+	if err != nil {
+		t.Fatalf("PackAtlas() error = %v", err)
+	}
+	manifest := result.Manifest
+	if manifest.Subject != metadata.Subject || manifest.ModelID != metadata.ModelID ||
+		manifest.CreatedAt != metadata.CreatedAt || manifest.UpdatedAt != metadata.UpdatedAt ||
+		manifest.Builtin != metadata.Builtin || manifest.AssetVersion != metadata.AssetVersion ||
+		manifest.SpriteNormalizationVersion != metadata.SpriteNormalizationVersion {
+		t.Fatalf("PackAtlas() metadata = %#v, want %#v", manifest, metadata)
+	}
+	if got := manifest.Behaviors["greeting"]; got.Label != "问候" || len(got.Actions) != 2 || got.Actions[0] != "idle" || got.Actions[1] != "walk" {
+		t.Fatalf("PackAtlas() behaviors = %#v", manifest.Behaviors)
+	}
+}
+
 func TestPetMediaAPISplitActionSheetUsesStableGridAndKeepsAllFrames(t *testing.T) {
 	source := image.NewNRGBA(image.Rect(0, 0, 10, 6))
 	for y := 0; y < source.Bounds().Dy(); y++ {

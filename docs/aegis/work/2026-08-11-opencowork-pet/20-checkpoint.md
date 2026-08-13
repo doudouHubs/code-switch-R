@@ -25,11 +25,13 @@
 - [completed] PetChat 录音输入：MediaRecorder webm/opus、停止转写、自动发送、取消/卸载/切宠物释放麦克风和中英文文案。
 - [completed] Provider/Gemini 模型用途类别已接入后端、表单、Gemini 专属字段和 Wails binding；未命中类别继续兼容旧模型名规则，重叠通配符按确定性规则选择。
 - [pending] Windows 手工验收和最终 parity 证据。
+- [completed] 设置页 parity 收口：总览默认 atlas、改名契约、真实 provider/model 与项目选择、皮肤预览/绑定/删除/刷新及中英文文案。
+- [completed] 设置页收尾校验：`selectTab`、Agent/Sleep/Skins/Stats 条件渲染、语音预设类型和源版页签顺序已复核；Vite 模块加载重新验证。
 
 ## Baseline
 
 - Root: `F:\GitlabProjects\code-switch-cli`
-- Branch: `main`
+- Branch: `dev-pets`
 - TaskStart HEAD: `55cc2d5217b2e4fb8941f300a644a808a5657b60`
 - Initial worktree: clean
 
@@ -68,8 +70,20 @@
 - `npm exec -- vue-tsc --noEmit`（`frontend`）：退出码 0；已对齐 Wails `GeminiProvider.envConfig` 的可选 map 值契约。
 - `wails3 task common:generate:bindings`：成功，处理 573 packages、32 services、258 methods、19 enums、143 models；`Provider.modelCategories`、`GeminiProvider/GeminiPreset.modelCategory` 已进入 `frontend/bindings`。
 - `go test ./services -run '^TestPet' -p 1 -count=1`：通过；包含模型类别、provider 解析、AI、转写、Studio、窗口和调度器测试。
+- 2026-08-13 fresh `go test ./services -run '^TestPet' -p 1 -count=1`：通过，退出码 0，耗时约 4.3s。
+- 2026-08-13 fresh `npm exec -- vue-tsc --noEmit`（`frontend`）：通过，退出码 0。
 - `go test ./services -run 'TestGeminiProviderDuplicatePreservesModelCategory|TestGeminiPreset_Fields|TestPet' -p 1 -count=1`：通过；覆盖 Gemini 复制类别持久化和宠物专项回归。
 - Vite 开发服务器 `http://127.0.0.1:5173/`、`/pet`、`/pet/settings`、`PetWindow.vue`、`PetStudio.vue` 和中英文 locale 请求均返回 HTTP 200；两份 locale 可被 `ConvertFrom-Json` 解析。
+- 2026-08-13 fresh HTTP check：`/`、`/pet`、`/pet/settings` 均返回 `200`；Vite 仍由 PID `27348` 监听 `127.0.0.1:5173`。
+- 2026-08-13 static runtime check：`main.go` 注入 `embed.FS` 并注册 `PetStudioAPIService`/`PetWindowAPI`；桌宠窗口使用透明背景、点击穿透初始模式，并显式 `SetAlwaysOnTop(false)`。
+- 2026-08-13 source-of-truth check：Studio 的空 `skinId` 固定读取只读默认 `capybara`；运行时 atlas 则按 active skin 优先，二者职责保持分离。
+- 2026-08-13 collaboration closeout：本轮六个协作 Agent 均已关闭，未遗留运行中的 Agent。
+- 2026-08-13 settings slice：`git diff --check`、`npm exec -- vue-tsc --noEmit`、`go test ./services -run '^TestPet' -p 1 -count=1` 均通过；两份 locale 可被 `ConvertFrom-Json` 解析；临时 Vite 服务下 `/`、`/pet/settings` 和 `PetSettings.vue` 均返回 `200`。
+- 2026-08-13 settings follow-up：确认 `selectTab(tab: PetTab)` 仍在 `PetSettings.vue`；Agent、语音、Sleep、Skins、Stats 各区域的 `v-show` 边界与源版 `PET_TABS` 顺序一致；语音预设改用类型安全的 `some()` 匹配，不再使用 `as never`。
+- 2026-08-13 settings Vite fresh check：临时 Vite 服务请求 `/`、`/pet/settings`、`/src/components/Pet/PetSettings.vue` 均返回 `200`，检查完成后已停止临时服务。
+- 2026-08-13 final focused rerun：`git diff --check`、locale JSON 解析、`npm exec -- vue-tsc --noEmit`、`go test ./services -run '^TestPet' -p 1 -count=1` 均通过；未遗留临时 Vite 进程。
+- 2026-08-13 Windows production build：直连执行 `task windows:build PRODUCTION=true` 在 `go mod tidy` 校验 `github.com/esiqveland/notify@v0.13.3` 时因 `sum.golang.org` 网络超时失败；设置 `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY` 为 `http://127.0.0.1:7890` 后同一任务退出码 0，产物为 `bin/CodeSwitch.exe`（约 44.3 MB）。
+- 该构建过程按 `go mod tidy` 规范更新了 `go.mod`/`go.sum`；未关闭 `GOSUMDB`，未把本机代理写入项目配置。
 - PetChat 录音静态检查：`MediaRecorder` 仅提交当前 generation 且使用 `audio/webm;codecs=opus` 优先编码；关闭/卸载/宠物切换调用 `discardVoiceCapture` 停止轨道并丢弃片段；录音转写复用 `sendMessage`，不复制聊天状态机。
 - 本轮宠物专项首跑曾暴露 action-sheet 最后一行右对齐边界错误；修复 `SplitActionSheet` canonical owner 后，原测试完整通过。
 
@@ -83,8 +97,8 @@
 
 ## Next
 
-主控已完成媒体、AI continuation、workspace resolver、Studio、PetChat 录音和模型类别配置接线，并通过宠物专项 Go 与前端类型回归；下一步是 Windows Wails 启动、桌宠透明窗口、麦克风/转写链路和 Studio 流程手工验收。内置浏览器连接器当前不可用，不能把 HTTP 200 当成视觉或原生窗口验收。
+主控已完成媒体、AI continuation、workspace resolver、Studio、PetChat 录音、模型类别配置和设置页 parity 接线，并通过 2026-08-13 宠物专项 Go、前端类型与 Vite 模块加载回归；下一步仍是 Windows Wails 启动、桌宠透明窗口、麦克风/转写链路和 Studio 流程手工验收。HTTP 200 仅证明 Vite 能提供模块，不能替代视觉或原生窗口验收。
 
 ## Resume State Hint
 
-如果进程中断：保留当前未提交工作区；先读取本文件和 `git status --short`，不要重新迁移源文件。确认 `PetDAO.Resolve`、`PetAIService` resolver 注入、`services/pet_ai_workspace_test.go` 和前端音频文件仍在，再运行宠物专项回归。Windows 手工验收前不要宣称完整 parity；symlink TOCTOU 仍是已知残余风险。
+如果进程中断：保留当前未提交工作区；先读取本文件和 `git status --short`，不要重新迁移源文件。确认 `PetDAO.Resolve`、`PetAIService` resolver 注入、`services/pet_ai_workspace_test.go` 和前端音频文件仍在，再运行宠物专项回归。Windows 手工验收前不要宣称完整 parity；symlink TOCTOU 仍是已知残余风险。Studio 默认来源继续读取只读 `capybara`，不要把它改成 active skin。

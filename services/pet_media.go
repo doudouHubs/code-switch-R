@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	xdraw "golang.org/x/image/draw"
 )
@@ -25,9 +26,12 @@ const (
 	PetAtlasMaxTextureSize  = 8192
 	PetAtlasFramePadding    = 2
 	PetAtlasDefaultDuration = 240
+	PetAtlasMaxBehaviors    = 64
 	petAtlasMaxActionIDLen  = 64
 	petAtlasMaxLabelLen     = 80
 	petAtlasMaxDescription  = 500
+	petAtlasMaxSubjectLen   = 512
+	petAtlasMaxModelIDLen   = 256
 )
 
 var (
@@ -493,12 +497,39 @@ type PetAtlasAnimation struct {
 	Frames      []PetAtlasFrame `json:"frames"`
 }
 
+// PetAtlasBehavior 把运行时行为映射到一个或多个动作。行为属于 manifest，
+// 这样不同皮肤可以在不改 Go 运行时的情况下调整 feed/drag 等动作组合。
+type PetAtlasBehavior struct {
+	Label   string   `json:"label,omitempty"`
+	Actions []string `json:"actions"`
+}
+
+// PetAtlasManifestMetadata 是生成和读取 atlas 时共享的非几何元数据。
+// 指针不需要出现在这里：零值表示“未设置”，而 builtin=false 的默认语义不影响运行时。
+type PetAtlasManifestMetadata struct {
+	Subject                    string `json:"subject,omitempty"`
+	ModelID                    string `json:"modelId,omitempty"`
+	CreatedAt                  int64  `json:"createdAt,omitempty"`
+	UpdatedAt                  int64  `json:"updatedAt,omitempty"`
+	Builtin                    bool   `json:"builtin,omitempty"`
+	AssetVersion               int    `json:"assetVersion,omitempty"`
+	SpriteNormalizationVersion int    `json:"spriteNormalizationVersion,omitempty"`
+}
+
 // PetAtlasManifest 是与源项目 action-rows manifest 对齐的内存表示。
 type PetAtlasManifest struct {
-	Name         string                       `json:"name"`
-	AtlasVersion int                          `json:"atlasVersion"`
-	Atlas        PetAtlasMetadata             `json:"atlas"`
-	Animations   map[string]PetAtlasAnimation `json:"animations"`
+	Name                       string                       `json:"name"`
+	Subject                    string                       `json:"subject,omitempty"`
+	ModelID                    string                       `json:"modelId,omitempty"`
+	CreatedAt                  int64                        `json:"createdAt,omitempty"`
+	UpdatedAt                  int64                        `json:"updatedAt,omitempty"`
+	Builtin                    bool                         `json:"builtin,omitempty"`
+	AssetVersion               int                          `json:"assetVersion,omitempty"`
+	SpriteNormalizationVersion int                          `json:"spriteNormalizationVersion,omitempty"`
+	AtlasVersion               int                          `json:"atlasVersion"`
+	Atlas                      PetAtlasMetadata             `json:"atlas"`
+	Animations                 map[string]PetAtlasAnimation `json:"animations"`
+	Behaviors                  map[string]PetAtlasBehavior  `json:"behaviors,omitempty"`
 }
 
 type PetAtlasAction struct {
@@ -512,7 +543,9 @@ type PetAtlasAction struct {
 
 type PetAtlasPackRequest struct {
 	Name      string
+	Metadata  PetAtlasManifestMetadata
 	Actions   []PetAtlasAction
+	Behaviors map[string]PetAtlasBehavior
 	MaxWidth  int
 	MaxHeight int
 	Padding   int
@@ -704,12 +737,87 @@ func packPetAtlasRequest(request PetAtlasPackRequest) (PetAtlasPackResult, error
 		Anchor:       "bottom-center",
 		Layout:       "action-rows",
 	}
-	manifest := PetAtlasManifest{Name: name, AtlasVersion: PetAtlasVersion, Atlas: atlas, Animations: animations}
+	metadata, err := normalizePetAtlasManifestMetadata(request.Metadata, name)
+	if err != nil {
+		return PetAtlasPackResult{}, err
+	}
+	behaviors, err := normalizePetAtlasBehaviors(request.Behaviors)
+	if err != nil {
+		return PetAtlasPackResult{}, err
+	}
+	manifest := PetAtlasManifest{
+		Name:                       name,
+		Subject:                    metadata.Subject,
+		ModelID:                    metadata.ModelID,
+		CreatedAt:                  metadata.CreatedAt,
+		UpdatedAt:                  metadata.UpdatedAt,
+		Builtin:                    metadata.Builtin,
+		AssetVersion:               metadata.AssetVersion,
+		SpriteNormalizationVersion: metadata.SpriteNormalizationVersion,
+		AtlasVersion:               PetAtlasVersion,
+		Atlas:                      atlas,
+		Animations:                 animations,
+		Behaviors:                  behaviors,
+	}
 	pngBytes, err := encodePNG(atlasImage)
 	if err != nil {
 		return PetAtlasPackResult{}, fmt.Errorf("encode pet atlas: %w", err)
 	}
 	return PetAtlasPackResult{PNG: pngBytes, Manifest: manifest, Atlas: atlas}, nil
+}
+
+func normalizePetAtlasManifestMetadata(metadata PetAtlasManifestMetadata, fallbackName string) (PetAtlasManifestMetadata, error) {
+	metadata.Subject = strings.TrimSpace(metadata.Subject)
+	metadata.ModelID = strings.TrimSpace(metadata.ModelID)
+	if utf8.RuneCountInString(metadata.Subject) > petAtlasMaxSubjectLen {
+		return PetAtlasManifestMetadata{}, fmt.Errorf("pet atlas subject is too long")
+	}
+	if utf8.RuneCountInString(metadata.ModelID) > petAtlasMaxModelIDLen {
+		return PetAtlasManifestMetadata{}, fmt.Errorf("pet atlas modelId is too long")
+	}
+	if metadata.CreatedAt < 0 || metadata.UpdatedAt < 0 || metadata.AssetVersion < 0 || metadata.SpriteNormalizationVersion < 0 {
+		return PetAtlasManifestMetadata{}, errors.New("pet atlas metadata contains a negative value")
+	}
+	if strings.TrimSpace(fallbackName) == "" {
+		return PetAtlasManifestMetadata{}, errors.New("pet atlas metadata requires a name")
+	}
+	return metadata, nil
+}
+
+func normalizePetAtlasBehaviors(input map[string]PetAtlasBehavior) (map[string]PetAtlasBehavior, error) {
+	if len(input) == 0 {
+		return nil, nil
+	}
+	if len(input) > PetAtlasMaxBehaviors {
+		return nil, fmt.Errorf("pet atlas behaviors contain too many entries")
+	}
+	result := make(map[string]PetAtlasBehavior, len(input))
+	for id, behavior := range input {
+		if !validPetActionID(id) {
+			return nil, fmt.Errorf("invalid pet atlas behavior ID: %q", id)
+		}
+		if len(behavior.Label) > petAtlasMaxLabelLen {
+			return nil, fmt.Errorf("pet atlas behavior %q label is too long", id)
+		}
+		if len(behavior.Actions) == 0 || len(behavior.Actions) > petAtlasMaxActionIDLen {
+			return nil, fmt.Errorf("pet atlas behavior %q actions are invalid", id)
+		}
+		seen := make(map[string]struct{}, len(behavior.Actions))
+		actions := make([]string, 0, len(behavior.Actions))
+		for _, actionID := range behavior.Actions {
+			actionID = strings.TrimSpace(actionID)
+			if !validPetActionID(actionID) {
+				return nil, fmt.Errorf("invalid action ID in pet atlas behavior %q", id)
+			}
+			if _, exists := seen[actionID]; exists {
+				return nil, fmt.Errorf("pet atlas behavior %q contains duplicate action", id)
+			}
+			seen[actionID] = struct{}{}
+			actions = append(actions, actionID)
+		}
+		result[id] = PetAtlasBehavior{Label: strings.TrimSpace(behavior.Label), Actions: actions}
+	}
+	return result, nil
 }
 
 func normalizePetAtlasActions(input []PetAtlasAction) ([]PetAtlasAction, error) {

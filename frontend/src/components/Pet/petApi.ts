@@ -1,4 +1,5 @@
-import { Call } from '@wailsio/runtime'
+import { Call } from '../../wails-runtime-compat'
+import { isWailsRuntimeAvailable } from '../../wails-runtime-compat/runtime'
 import { parsePetAtlasDocument } from './petAtlas'
 import {
   DEFAULT_PET_ID,
@@ -53,6 +54,7 @@ export const PET_RUNTIME_METHODS = {
   performAction: 'PerformAction',
   petted: 'Petted',
   saveSettings: 'SaveSettings',
+  updateName: 'UpdateName',
   recordProactive: 'RecordProactive'
 } as const
 
@@ -84,6 +86,7 @@ export interface PetApi {
   getSnapshot(petId?: string): Promise<PetSnapshot>
   performAction(petId: string, action: PetInteractionAction): Promise<PetActionResult>
   saveSettings(petId: string, settings: PetSettingsInput): Promise<PetSnapshot>
+  updateName(petId: string, name: string): Promise<PetSnapshot>
   recordProactive(petId: string, now?: number): Promise<PetSnapshot>
   setWindowEnabled(enabled: boolean): Promise<PetWindowRuntimeState>
   getWindowState(): Promise<PetWindowRuntimeState>
@@ -92,7 +95,8 @@ export interface PetApi {
 
 const wailsRuntimeAdapter: PetRuntimeAdapter = {
   call(method, args) {
-    // PetService 保持短方法名；窗口适配器传入完整 service path，避免把两类 Wails 绑定混在一起。
+    // Call.ByName 在桌面端仍走 Wails，在浏览器端由兼容层改走 loopback bridge；
+    // 这里不能再提前拒绝浏览器，否则真实 SQLite 快照永远到不了页面。
     const target = method.includes('.') ? method : `${PET_SERVICE}.${method}`
     return Promise.resolve(Call.ByName(target, ...args))
   }
@@ -766,6 +770,13 @@ function isRuntimeUnavailable(error: unknown): boolean {
   return /failed to fetch|networkerror|unknown method|method .*not found|binding|wails runtime|404/i.test(message)
 }
 
+function shouldUsePreviewFallback(error: unknown): boolean {
+  // 浏览器页面现在有明确的 loopback bridge；bridge 不在线时必须把错误交给
+  // 页面显示，否则默认宠物会伪装成 SQLite 数据，用户修改后还会在刷新时丢失。
+  // Wails 桌面端仍保留旧 binding 缺失时的兼容 fallback。
+  return isWailsRuntimeAvailable() && isRuntimeUnavailable(error)
+}
+
 function cloneFallbackWindowState(): PetWindowRuntimeState {
   return { ...fallbackWindowState }
 }
@@ -810,7 +821,7 @@ export function createPetApi(adapter: PetRuntimeAdapter = wailsRuntimeAdapter): 
     try {
       return await readRemoteSnapshot(petId)
     } catch (error) {
-      if (!isRuntimeUnavailable(error)) throw error
+      if (!shouldUsePreviewFallback(error)) throw error
       mode = 'fallback'
       return settleFallback(getFallbackSnapshot(petId))
     }
@@ -830,7 +841,7 @@ export function createPetApi(adapter: PetRuntimeAdapter = wailsRuntimeAdapter): 
       mode = 'backend'
       return { ...result, snapshot }
     } catch (error) {
-      if (!isRuntimeUnavailable(error)) throw error
+      if (!shouldUsePreviewFallback(error)) throw error
       mode = 'fallback'
       return fallbackAction(getFallbackSnapshot(petId), action)
     }
@@ -846,7 +857,7 @@ export function createPetApi(adapter: PetRuntimeAdapter = wailsRuntimeAdapter): 
       mode = 'backend'
       return snapshot
     } catch (error) {
-      if (!isRuntimeUnavailable(error)) throw error
+      if (!shouldUsePreviewFallback(error)) throw error
       mode = 'fallback'
       return recordFallbackProactive(settleFallback(getFallbackSnapshot(petId)), now)
     }
@@ -869,13 +880,26 @@ export function createPetApi(adapter: PetRuntimeAdapter = wailsRuntimeAdapter): 
       mode = 'backend'
       return mergeSettings(current, raw ?? settings, petId)
     } catch (error) {
-      if (!isRuntimeUnavailable(error)) throw error
+      if (!shouldUsePreviewFallback(error)) throw error
       mode = 'fallback'
       const current = settleFallback(getFallbackSnapshot(petId))
       const next = mergeSettings(current, settings, petId)
       fallbackSnapshots.set(petId, next)
       return clone(next)
     }
+  }
+
+  async function updateName(petId: string, name: string): Promise<PetSnapshot> {
+    const normalized = name.trim()
+    if (!normalized) throw new Error('宠物名称不能为空。')
+    // fallback 只用于预览设置和动作，不具备持久化能力；名称若在此处静默成功，
+    // 用户重启应用后会丢失，反而比明确提示后端不可用更危险。
+    if (mode === 'fallback') throw new Error('宠物改名需要已连接的后端。')
+    const raw = await adapter.call(PET_RUNTIME_METHODS.updateName, [petId, normalized])
+    mode = 'backend'
+    return hasStatePayload(raw)
+      ? normalizeSnapshot(raw, petId)
+      : await readRemoteSnapshot(petId)
   }
 
   async function readRemoteWindowState(): Promise<PetWindowRuntimeState> {
@@ -891,13 +915,19 @@ export function createPetApi(adapter: PetRuntimeAdapter = wailsRuntimeAdapter): 
       return await readRemoteWindowState()
     } catch (error) {
       // PetService 已经在线时，窗口服务缺失是桥接集成错误，不能把后续保存静默降级到 fallback。
-      if (!isRuntimeUnavailable(error) || mode === 'backend') throw error
+      if (!shouldUsePreviewFallback(error) || mode === 'backend') throw error
       mode = 'fallback'
       return cloneFallbackWindowState()
     }
   }
 
   async function setWindowEnabled(enabled: boolean): Promise<PetWindowRuntimeState> {
+    if (!isWailsRuntimeAvailable()) {
+      // 浏览器页面只持久化 enabled 配置，不执行 Open/Close 这类原生窗口副作用；
+      // Chrome 没有透明桌面窗口可供控制，强行调用只会让保存结果被错误覆盖。
+      const state = await getWindowState()
+      return { ...state, open: enabled }
+    }
     if (mode === 'fallback') {
       // fallback 只模拟当前预览进程的窗口状态，不引入 localStorage 这个第二持久化 owner。
       fallbackWindowState = { ...fallbackWindowState, open: enabled }
@@ -922,6 +952,7 @@ export function createPetApi(adapter: PetRuntimeAdapter = wailsRuntimeAdapter): 
     getSnapshot,
     performAction,
     saveSettings,
+    updateName,
     recordProactive,
     setWindowEnabled,
     getWindowState,

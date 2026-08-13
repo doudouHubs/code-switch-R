@@ -60,6 +60,13 @@ type PetStudioSaveSkinRequest struct {
 	Bind         bool            `json:"bind,omitempty"`
 }
 
+// PetStudioReadSkinResult 是 Studio 的受控读取协议。Atlas 以 data URL 返回，
+// Skin 只保留业务元数据；Path/AtlasPath 会在服务层清空，前端不需要也不应该知道磁盘布局。
+type PetStudioReadSkinResult struct {
+	Atlas PetAtlasAsset `json:"atlas"`
+	Skin  PetSkinRecord `json:"skin"`
+}
+
 // PetStudioAPIService 是 Wails 面向 Studio 的独立适配器。
 // 文件只是 atlas/manifest 载体，数据库记录仍然是皮肤的唯一事实来源。
 type PetStudioAPIService struct {
@@ -132,6 +139,25 @@ func (s *PetStudioAPIService) SaveSkin(petID string, request PetStudioSaveSkinRe
 	if err != nil {
 		return PetSkinRecord{}, err
 	}
+	var manifest PetAtlasManifest
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		// validatePetStudioManifest 已经完成 JSON 校验；这里的错误只可能表示
+		// 契约在两处解析之间发生漂移，直接失败比保存一条不完整记录更安全。
+		return PetSkinRecord{}, fmt.Errorf("解析已校验 manifest JSON 失败: %w", err)
+	}
+	if manifest.CreatedAt < 0 || manifest.UpdatedAt < 0 || manifest.AssetVersion < 0 || manifest.SpriteNormalizationVersion < 0 {
+		return PetSkinRecord{}, errors.New("manifest metadata 不能为负数")
+	}
+	if manifestSubject, err := validatePetStudioText(manifest.Subject, "manifest subject", petStudioSubjectMaxLen, false); err != nil {
+		return PetSkinRecord{}, err
+	} else if manifestSubject != "" {
+		subject = manifestSubject
+	}
+	if manifestModelID, err := validatePetStudioText(manifest.ModelID, "manifest modelId", petStudioModelIDMaxLen, false); err != nil {
+		return PetSkinRecord{}, err
+	} else if manifestModelID != "" {
+		modelID = manifestModelID
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -178,22 +204,32 @@ func (s *PetStudioAPIService) SaveSkin(petID string, request PetStudioSaveSkinRe
 
 	now := time.Now().UnixMilli()
 	createdAt := now
-	if found && previous.CreatedAt != nil {
+	if manifest.CreatedAt > 0 {
+		createdAt = manifest.CreatedAt
+	} else if found && previous.CreatedAt != nil {
 		createdAt = *previous.CreatedAt
 	}
+	updatedAt := now
+	if manifest.UpdatedAt > 0 {
+		updatedAt = manifest.UpdatedAt
+	}
+	assetVersion := petStudioOptionalManifestInt(manifest.AssetVersion, previous.AssetVersion, found)
+	spriteNormalizationVersion := petStudioOptionalManifestInt(manifest.SpriteNormalizationVersion, previous.SpriteNormalizationVersion, found)
 	record := PetSkinRecord{
-		PetID:        petID,
-		SkinID:       skinID,
-		Name:         name,
-		Path:         target,
-		AtlasPath:    filepath.Join(target, "atlas.png"),
-		Subject:      subject,
-		ModelID:      modelID,
-		CreatedAt:    &createdAt,
-		UpdatedAt:    &now,
-		Builtin:      false,
-		Atlas:        atlas,
-		ManifestJSON: append(json.RawMessage(nil), manifestBytes...),
+		PetID:                      petID,
+		SkinID:                     skinID,
+		Name:                       name,
+		Path:                       target,
+		AtlasPath:                  filepath.Join(target, "atlas.png"),
+		Subject:                    subject,
+		ModelID:                    modelID,
+		CreatedAt:                  &createdAt,
+		UpdatedAt:                  &updatedAt,
+		Builtin:                    false,
+		AssetVersion:               assetVersion,
+		SpriteNormalizationVersion: spriteNormalizationVersion,
+		Atlas:                      atlas,
+		ManifestJSON:               append(json.RawMessage(nil), manifestBytes...),
 	}
 
 	if err := s.store.UpsertSkin(ctx, record); err != nil {
@@ -342,6 +378,97 @@ func (s *PetStudioAPIService) ListSkins(petID string) ([]PetSkinRecord, error) {
 		records[index] = sanitizePetStudioSkinRecord(records[index])
 	}
 	return records, nil
+}
+
+// GetRoot 只返回服务端计算出的受控资源 root，供设置页展示目录位置；
+// 前端不能传入任意路径，也不能通过皮肤记录反推出磁盘布局。
+func (s *PetStudioAPIService) GetRoot() (string, error) {
+	if err := s.validate(); err != nil {
+		return "", err
+	}
+	root, err := normalizePetStudioRoot(s.root)
+	if err != nil {
+		return "", err
+	}
+	return root, nil
+}
+
+// OpenRoot 在打开前再次校验受控 root，并只把该 root 交给系统文件管理器。
+// root 不存在时创建它，保证用户点击“打开目录”不会得到无意义的空路径错误。
+func (s *PetStudioAPIService) OpenRoot() error {
+	root, err := s.ensureRoot()
+	if err != nil {
+		return err
+	}
+	return OpenInExplorer(root)
+}
+
+// manifest 中的版本字段是可选的。更新旧皮肤时若新 manifest 未携带字段，
+// 保留数据库里已有的版本信息，避免一次兼容性保存把资产升级轨迹清空。
+func petStudioOptionalManifestInt(value int, previous *int, found bool) *int {
+	if value > 0 {
+		current := value
+		return &current
+	}
+	if found && previous != nil {
+		current := *previous
+		return &current
+	}
+	return nil
+}
+
+// ReadSkin 读取 Studio 可编辑的 atlas。空 skinID 固定读取默认内置皮肤，
+// 非空 skinID 只允许读取当前 petID 的记录，避免通过 skinId 枚举其他宠物的自定义资源。
+func (s *PetStudioAPIService) ReadSkin(petID, skinID string) (PetStudioReadSkinResult, error) {
+	if err := s.validate(); err != nil {
+		return PetStudioReadSkinResult{}, err
+	}
+	petID, err := validatePetStudioPetID(petID)
+	if err != nil {
+		return PetStudioReadSkinResult{}, err
+	}
+	skinID = strings.TrimSpace(skinID)
+	if skinID != "" {
+		if _, err := validatePetStudioSkinID(skinID); err != nil {
+			return PetStudioReadSkinResult{}, err
+		}
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var skin PetSkinRecord
+	if skinID == "" {
+		// 默认值与资源注册顺序保持一致；这里不依赖数据库，确保新宠物尚未写入
+		// pet_skins 时 Studio 仍然可以直接打开默认形象。
+		skin, err = loadBuiltinPetSkinRecord(petID, builtinPetSkinIDs[0])
+	} else if isBuiltinPetSkinID(skinID) {
+		// 内置皮肤由随包资源 owner 管理，对所有 pet 都可见，但仍重建带 petID 的
+		// 记录，避免把某个宠物的历史 JSON 当成另一个宠物的当前资源。
+		skin, err = loadBuiltinPetSkinRecord(petID, skinID)
+	} else {
+		var records []PetSkinRecord
+		records, err = s.store.ListSkins(context.Background(), petID)
+		if err == nil {
+			var ok bool
+			skin, ok = findPetStudioSkin(records, skinID)
+			if !ok {
+				err = errors.New("当前宠物不存在该皮肤")
+			}
+		}
+	}
+	if err != nil {
+		return PetStudioReadSkinResult{}, fmt.Errorf("读取 Studio 皮肤记录失败: %w", err)
+	}
+
+	asset, err := loadPetSkinAtlas(skin)
+	if err != nil {
+		return PetStudioReadSkinResult{}, fmt.Errorf("读取 Studio 皮肤资源失败: %w", err)
+	}
+	return PetStudioReadSkinResult{
+		Atlas: *asset,
+		Skin:  sanitizePetStudioSkinRecord(skin),
+	}, nil
 }
 
 func (s *PetStudioAPIService) validate() error {

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"unicode/utf8"
 )
 
 const (
@@ -71,6 +72,40 @@ type PetSettingsInput struct {
 	Agent         *PetAgentConfig   `json:"agent,omitempty"`
 	Dream         *PetDreamConfig   `json:"dream,omitempty"`
 	SkinSelection *PetSkinSelection `json:"skinSelection,omitempty"`
+}
+
+const petNameMaxLength = 20
+
+// UpdateName 是宠物名称的唯一写入口。名称属于 PetState，而不是设置配置；
+// 单独读取并保存最新快照，避免设置页只提交配置时把桌宠窗口刚产生的状态覆盖掉。
+func (s *PetService) UpdateName(petID, name string) (PetSnapshot, error) {
+	service, err := s.apiServiceForPet(petID)
+	if err != nil {
+		return PetSnapshot{}, err
+	}
+
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return PetSnapshot{}, errors.New("宠物名称不能为空")
+	}
+	if utf8.RuneCountInString(name) > petNameMaxLength {
+		return PetSnapshot{}, fmt.Errorf("宠物名称不能超过 %d 个字符", petNameMaxLength)
+	}
+
+	service.mu.Lock()
+	defer service.mu.Unlock()
+
+	ctx := context.Background()
+	snapshot, err := service.loadSnapshotLocked(ctx, petNow(nil))
+	if err != nil {
+		return PetSnapshot{}, err
+	}
+	// 名称修改只改变 state.name，其他状态和设置必须完整保留，避免并发窗口操作被回滚。
+	snapshot.State.Name = name
+	if err := service.saveSnapshotLocked(ctx, snapshot); err != nil {
+		return PetSnapshot{}, err
+	}
+	return newPetSnapshot(snapshot)
 }
 
 // GetSnapshot 返回指定宠物的前端快照。petID 必须由调用方明确提供，不能让空 ID

@@ -3,6 +3,7 @@ package services
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -216,6 +217,29 @@ func ensureProviderTable(mp map[string]map[string]any, key string) map[string]an
 	provider := make(map[string]any)
 	mp[key] = provider
 	return provider
+}
+
+// sanitizeProviderKey 将供应商名称转换为稳定、合法且不会撞代理保留名的 TOML key。
+// providerID 只在名称为空或与代理 key 冲突时参与生成，保证配置预览和实际写入一致。
+func sanitizeProviderKey(name string, providerID int) string {
+	key := strings.ToLower(strings.TrimSpace(name))
+	key = strings.ReplaceAll(key, " ", "-")
+
+	var result strings.Builder
+	for _, r := range key {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+			result.WriteRune(r)
+		}
+	}
+	if result.Len() == 0 {
+		return fmt.Sprintf("provider-%d", providerID)
+	}
+
+	finalKey := result.String()
+	if finalKey == codexProviderKey {
+		return fmt.Sprintf("%s-%d", finalKey, providerID)
+	}
+	return finalKey
 }
 
 func stripModelProvidersHeader(data []byte) []byte {

@@ -7,6 +7,12 @@ export type SkillSummary = {
   directory: string
   readme_url: string
   installed: boolean
+  enabled?: boolean
+  inject_enabled?: boolean
+  license_file?: string
+  platform?: 'claude' | 'codex' | ''
+  install_location?: 'user' | 'project' | 'plugin' | ''
+  readonly?: boolean
   repo_owner?: string
   repo_name?: string
   repo_branch?: string
@@ -37,6 +43,16 @@ export const installSkill = async (payload: InstallSkillPayload): Promise<void> 
 
 export const uninstallSkill = async (directory: string): Promise<void> => {
   await Call.ByName('codeswitch/services.SkillService.UninstallSkill', directory)
+}
+
+export const getSkillContent = async (directory: string, platform: string, location: string): Promise<string> => {
+  const response = await Call.ByName(
+    'codeswitch/services.SkillService.GetSkillContent',
+    directory,
+    platform,
+    location
+  )
+  return response as string
 }
 
 export const fetchSkillRepos = async (): Promise<SkillRepoConfig[]> => {

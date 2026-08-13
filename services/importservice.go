@@ -461,8 +461,8 @@ func (is *ImportService) saveProviders(kind string, candidates []providerCandida
 	return len(candidates), nil
 }
 
-func nextProviderID(list []Provider) int {
-	maxID := 0
+func nextProviderID(list []Provider) int64 {
+	maxID := int64(0)
 	for _, provider := range list {
 		if provider.ID > maxID {
 			maxID = provider.ID

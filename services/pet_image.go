@@ -45,12 +45,13 @@ const (
 	PetImageDefaultSize                       = "1024x1024"
 	PetImageMaxPromptLength                   = 8 << 10
 	PetImageMaxCount                          = 4
+	PetImageMaxReferenceImages                = 3
 	PetImageMaxSizeLength                     = 32
 	PetImageMaxDimension                      = 4096
 	PetImageDefaultMaxRequestBytes      int64 = 64 << 10
 	PetImageDefaultMaxResponseBytes     int64 = 32 << 20
 	PetImageDefaultMaxImageBytes        int64 = 16 << 20
-	PetImageDefaultMaxMultipartBytes    int64 = PetImageDefaultMaxImageBytes + 64<<10
+	PetImageDefaultMaxMultipartBytes    int64 = PetImageMaxReferenceImages*PetImageDefaultMaxImageBytes + 64<<10
 	PetImageMaxReferencePathLength            = 4 << 10
 	PetImageMaxReferenceDimension             = 1024
 	PetImageMaxReferenceDataURLMetadata       = 128
@@ -65,13 +66,15 @@ func PetImageErrorCodeOf(err error) string {
 // PetImageRequest 是梦境/聊天图片生成的窄协议。provider 只允许携带引用，
 // 不允许调用方把 API key 或完整 provider 配置塞进请求。
 type PetImageRequest struct {
-	PetID          string               `json:"petId"`
-	RequestID      string               `json:"requestId"`
-	Provider       PetProviderReference `json:"provider"`
-	Prompt         string               `json:"prompt"`
-	Size           string               `json:"size,omitempty"`
-	Count          int                  `json:"count,omitempty"`
-	ReferenceImage *PetImageReference   `json:"referenceImage,omitempty"`
+	PetID           string               `json:"petId"`
+	RequestID       string               `json:"requestId"`
+	Provider        PetProviderReference `json:"provider"`
+	Prompt          string               `json:"prompt"`
+	Size            string               `json:"size,omitempty"`
+	Count           int                  `json:"count,omitempty"`
+	ReferenceImages []PetImageReference  `json:"referenceImages,omitempty"`
+	// ReferenceImage 是单图时代的兼容字段。归一化后始终以 ReferenceImages 为唯一执行入口。
+	ReferenceImage *PetImageReference `json:"referenceImage,omitempty"`
 }
 
 // PetImageReference 只允许当前皮肤的 idle 首帧作为身份参考。
@@ -265,9 +268,22 @@ func normalizePetImageRequest(request PetImageRequest, options PetImageOptions) 
 	}
 	request.Size = size
 	if request.ReferenceImage != nil {
-		if err := validatePetImageReferenceMetadata(*request.ReferenceImage, options); err != nil {
+		if len(request.ReferenceImages) == 0 {
+			request.ReferenceImages = []PetImageReference{*request.ReferenceImage}
+		}
+	}
+	if len(request.ReferenceImages) > PetImageMaxReferenceImages {
+		return PetImageRequest{}, newPetAIError(PET_IMAGE_INVALID_REQUEST, 0, nil)
+	}
+	for index := range request.ReferenceImages {
+		if err := validatePetImageReferenceMetadata(request.ReferenceImages[index], options); err != nil {
 			return PetImageRequest{}, err
 		}
+	}
+	if len(request.ReferenceImages) > 0 {
+		// 旧 bridge 仍可能读取单图字段；第一张作为兼容投影，但执行路径只看数组。
+		first := request.ReferenceImages[0]
+		request.ReferenceImage = &first
 	}
 	return request, nil
 }
@@ -457,8 +473,8 @@ func (s *PetImageService) executeImageRequest(
 	provider petAIProviderRuntime,
 	request PetImageRequest,
 ) (PetImageResult, error) {
-	if request.ReferenceImage != nil {
-		return s.executePetImageEdit(ctx, provider, request, *request.ReferenceImage)
+	if len(request.ReferenceImages) > 0 {
+		return s.executePetImageEdit(ctx, provider, request, request.ReferenceImages)
 	}
 	return s.executePetImageGeneration(ctx, provider, request)
 }
@@ -549,9 +565,9 @@ func (s *PetImageService) executePetImageEdit(
 	ctx context.Context,
 	provider petAIProviderRuntime,
 	request PetImageRequest,
-	reference PetImageReference,
+	references []PetImageReference,
 ) (PetImageResult, error) {
-	payload, err := readPetImageReference(reference, s.options)
+	payload, err := readPetImageReferences(references, s.options)
 	if err != nil {
 		return PetImageResult{}, err
 	}
@@ -583,38 +599,50 @@ func (s *PetImageService) executePetImageEdit(
 	return s.parsePetImageHTTPResponse(ctx, httpRequest, request.Count)
 }
 
-func readPetImageReference(reference PetImageReference, options PetImageOptions) (petImageReferencePayload, error) {
-	if err := validatePetImageReferenceMetadata(reference, options); err != nil {
-		return petImageReferencePayload{}, err
+func readPetImageReferences(references []PetImageReference, options PetImageOptions) ([]petImageReferencePayload, error) {
+	if len(references) == 0 || len(references) > PetImageMaxReferenceImages {
+		return nil, newPetAIError(PET_IMAGE_INVALID_REQUEST, 0, nil)
 	}
-	if strings.TrimSpace(reference.Data) != "" {
-		return readPetImageReferenceData(reference, options)
-	}
-	file, err := os.Open(filepath.Clean(reference.Path))
-	if err != nil {
-		return petImageReferencePayload{}, newPetAIError(PET_IMAGE_INVALID_REQUEST, 0, nil)
-	}
-	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, options.MaxImageBytes+1))
-	if err != nil {
-		return petImageReferencePayload{}, newPetAIError(PET_IMAGE_INVALID_REQUEST, 0, nil)
-	}
-	if int64(len(data)) > options.MaxImageBytes {
-		return petImageReferencePayload{}, newPetAIError(PET_IMAGE_REQUEST_TOO_LARGE, 0, nil)
-	}
-	format, err := validatePetImageBytesAndFormat(data, options.MaxImageBytes, options.MaxDimension)
-	if err != nil {
-		if PetImageErrorCodeOf(err) == string(PET_IMAGE_RESPONSE_INVALID) {
-			return petImageReferencePayload{}, newPetAIError(PET_IMAGE_INVALID_REQUEST, 0, nil)
+	payloads := make([]petImageReferencePayload, 0, len(references))
+	for _, reference := range references {
+		if err := validatePetImageReferenceMetadata(reference, options); err != nil {
+			return nil, err
 		}
-		return petImageReferencePayload{}, err
+		if strings.TrimSpace(reference.Data) != "" {
+			payload, err := readPetImageReferenceData(reference, options)
+			if err != nil {
+				return nil, err
+			}
+			payloads = append(payloads, payload)
+			continue
+		}
+		file, err := os.Open(filepath.Clean(reference.Path))
+		if err != nil {
+			return nil, newPetAIError(PET_IMAGE_INVALID_REQUEST, 0, nil)
+		}
+		data, readErr := io.ReadAll(io.LimitReader(file, options.MaxImageBytes+1))
+		_ = file.Close()
+		if readErr != nil {
+			return nil, newPetAIError(PET_IMAGE_INVALID_REQUEST, 0, nil)
+		}
+		if int64(len(data)) > options.MaxImageBytes {
+			return nil, newPetAIError(PET_IMAGE_REQUEST_TOO_LARGE, 0, nil)
+		}
+		format, err := validatePetImageBytesAndFormat(data, options.MaxImageBytes, options.MaxDimension)
+		if err != nil {
+			if PetImageErrorCodeOf(err) == string(PET_IMAGE_RESPONSE_INVALID) {
+				return nil, newPetAIError(PET_IMAGE_INVALID_REQUEST, 0, nil)
+			}
+			return nil, err
+		}
+		declared := normalizePetImageMediaType(reference.MediaType)
+		actual := petImageFormatMediaType(format)
+		if declared == "" || actual == "" || declared != actual {
+			return nil, newPetAIError(PET_IMAGE_INVALID_REQUEST, 0, nil)
+		}
+		payloads = append(payloads, petImageReferencePayload{Bytes: data, MediaType: declared})
 	}
-	declared := normalizePetImageMediaType(reference.MediaType)
-	actual := petImageFormatMediaType(format)
-	if declared == "" || actual == "" || declared != actual {
-		return petImageReferencePayload{}, newPetAIError(PET_IMAGE_INVALID_REQUEST, 0, nil)
-	}
-	return petImageReferencePayload{Bytes: data, MediaType: declared}, nil
+	return payloads, nil
 }
 
 func readPetImageReferenceData(reference PetImageReference, options PetImageOptions) (petImageReferencePayload, error) {
@@ -708,7 +736,7 @@ func minPetImageReferenceDimension(maxDimension int) int {
 func buildPetImageEditMultipart(
 	provider petAIProviderRuntime,
 	request PetImageRequest,
-	reference petImageReferencePayload,
+	references []petImageReferencePayload,
 	maxBytes int64,
 ) ([]byte, string, error) {
 	var body bytes.Buffer
@@ -730,15 +758,20 @@ func buildPetImageEditMultipart(
 			return nil, "", newPetAIError(PET_IMAGE_INVALID_REQUEST, 0, nil)
 		}
 	}
-	header := make(textproto.MIMEHeader)
-	header.Set("Content-Disposition", `form-data; name="image"; filename="`+petImageReferenceFileName(reference.MediaType)+`"`)
-	header.Set("Content-Type", reference.MediaType)
-	part, err := writer.CreatePart(header)
-	if err != nil {
+	if len(references) == 0 || len(references) > PetImageMaxReferenceImages {
 		return nil, "", newPetAIError(PET_IMAGE_INVALID_REQUEST, 0, nil)
 	}
-	if _, err := part.Write(reference.Bytes); err != nil {
-		return nil, "", newPetAIError(PET_IMAGE_INVALID_REQUEST, 0, nil)
+	for _, reference := range references {
+		header := make(textproto.MIMEHeader)
+		header.Set("Content-Disposition", `form-data; name="image"; filename="`+petImageReferenceFileName(reference.MediaType)+`"`)
+		header.Set("Content-Type", reference.MediaType)
+		part, err := writer.CreatePart(header)
+		if err != nil {
+			return nil, "", newPetAIError(PET_IMAGE_INVALID_REQUEST, 0, nil)
+		}
+		if _, err := part.Write(reference.Bytes); err != nil {
+			return nil, "", newPetAIError(PET_IMAGE_INVALID_REQUEST, 0, nil)
+		}
 	}
 	if err := writer.Close(); err != nil {
 		return nil, "", newPetAIError(PET_IMAGE_INVALID_REQUEST, 0, nil)

@@ -1,0 +1,50 @@
+{
+  "models": {
+    "gpt-5.5": {
+      "input_cost_per_token": 0.000005,
+      "output_cost_per_token": 0.00003,
+      "input_cost_per_token_above_272k_tokens": 0.00001,
+      "output_cost_per_token_above_272k_tokens": 0.000045,
+      "input_cost_per_token_priority": 0.0000125,
+      "output_cost_per_token_priority": 0.000075,
+      "input_cost_per_token_flex": 0.0000025,
+      "output_cost_per_token_flex": 0.000015,
+      "cache_read_input_token_cost": 0.0000005,
+      "cache_read_input_token_cost_above_272k_tokens": 0.000001,
+      "cache_read_input_token_cost_priority": 0.00000125,
+      "cache_read_input_token_cost_flex": 0.00000025
+    },
+    "gpt-5.6-terra": {
+      "input_cost_per_token": 0.0000025,
+      "output_cost_per_token": 0.000015,
+      "cache_creation_input_token_cost": 0.000003125,
+      "cache_read_input_token_cost": 0.00000025
+    },
+    "gpt-5.6-luna": {
+      "input_cost_per_token": 0.000001,
+      "output_cost_per_token": 0.000006,
+      "cache_creation_input_token_cost": 0.00000125,
+      "cache_read_input_token_cost": 0.0000001
+    },
+    "fireworks_ai/accounts/fireworks/models/glm-4p6": {
+      "input_cost_per_token": 0.00000055,
+      "output_cost_per_token": 0.00000219
+    }
+  },
+  "aliases": {
+    "qwen-max": "dashscope/qwen-max",
+    "qwen-plus": "dashscope/qwen-plus",
+    "qwen-turbo": "dashscope/qwen-turbo",
+    "qwen-coder": "dashscope/qwen-coder",
+    "qwen-flash": "dashscope/qwen-flash",
+    "qwen3-coder-flash": "dashscope/qwen3-coder-flash",
+    "qwen3-coder-plus": "dashscope/qwen3-coder-plus",
+    "kimi-latest": "moonshot/kimi-latest",
+    "kimi-k2-0711-preview": "moonshot/kimi-k2-0711-preview",
+    "glm-4.5": "fireworks_ai/accounts/fireworks/models/glm-4p5",
+    "glm-4.5-air": "fireworks_ai/accounts/fireworks/models/glm-4p5-air",
+    "glm-4.6": "fireworks_ai/accounts/fireworks/models/glm-4p6",
+    "gpt-5.5-2026-04-23": "gpt-5.5",
+    "gpt-5.6-sol": "gpt-5.5"
+  }
+}

@@ -255,6 +255,7 @@ func TestPetServiceSaveSettingsMergesAndValidatesPetID(t *testing.T) {
 	repository := &memoryPetRepository{
 		snapshot: PetMigrationSnapshot{
 			State: &PetState{Name: "kept-state", Hunger: 42},
+			Window: &PetWindowConfig{PetID: "pet-1", Enabled: true},
 			Agent: &PetAgentConfig{ProviderID: &providerID, ProactiveFreq: PetProactiveHigh},
 		},
 	}
@@ -288,6 +289,26 @@ func TestPetServiceSaveSettingsMergesAndValidatesPetID(t *testing.T) {
 	if strings.Contains(string(encoded), "apiKey") {
 		t.Fatalf("agent JSON contains forbidden API key field: %s", encoded)
 	}
+	if !snapshot.Window.Enabled {
+		t.Fatalf("window.enabled was cleared by a partial settings update: %#v", snapshot.Window)
+	}
+
+	// 空设置提交代表“没有更新任何分组”，不能把已有的 window.enabled 覆盖成 Go 零值 false。
+	beforeEmptySaveCount := repository.saveCount
+	emptySnapshot, err := service.SaveSettings("pet-1", PetSettingsInput{})
+	if err != nil {
+		t.Fatalf("SaveSettings() with empty settings error = %v", err)
+	}
+	if !emptySnapshot.Window.Enabled {
+		t.Fatalf("empty SaveSettings() cleared window.enabled: %#v", emptySnapshot.Window)
+	}
+	if repository.saveCount != beforeEmptySaveCount+1 {
+		t.Fatalf("empty settings save count = %d, want %d", repository.saveCount, beforeEmptySaveCount+1)
+	}
+	persisted := repository.getSnapshot()
+	if persisted.Window == nil || !persisted.Window.Enabled {
+		t.Fatalf("empty settings did not preserve persisted window.enabled: %#v", persisted.Window)
+	}
 
 	beforeSaveCount := repository.saveCount
 	settings.Window = &PetWindowConfig{PetID: "other-pet", Enabled: true}
@@ -296,5 +317,41 @@ func TestPetServiceSaveSettingsMergesAndValidatesPetID(t *testing.T) {
 	}
 	if repository.saveCount != beforeSaveCount {
 		t.Fatalf("invalid petId changed persistence count: got %d, want %d", repository.saveCount, beforeSaveCount)
+	}
+}
+
+func TestPetServiceUpdateNameTrimsAndPreservesSnapshot(t *testing.T) {
+	repository := &memoryPetRepository{
+		snapshot: PetMigrationSnapshot{
+			State:      &PetState{PetID: "pet-1", Name: "Before", Hunger: 42, Coins: 17},
+			Experience: &PetExperience{PetID: "pet-1", TotalExp: 12},
+		},
+	}
+	service := NewPetServiceForPet(repository, "pet-1")
+
+	snapshot, err := service.UpdateName("pet-1", "  新名字  ")
+	if err != nil {
+		t.Fatalf("UpdateName() error = %v", err)
+	}
+	if snapshot.State.Name != "新名字" || snapshot.State.Hunger != 42 || snapshot.State.Coins != 17 {
+		t.Fatalf("updated snapshot = %#v, want name-only update", snapshot.State)
+	}
+	if got := repository.saveCount; got != 1 {
+		t.Fatalf("save count = %d, want 1", got)
+	}
+}
+
+func TestPetServiceUpdateNameRejectsInvalidNameWithoutSaving(t *testing.T) {
+	repository := &memoryPetRepository{snapshot: PetMigrationSnapshot{State: &PetState{Name: "Before"}}}
+	service := NewPetService(repository)
+
+	invalidNames := []string{"", "   ", "123456789012345678901"}
+	for _, name := range invalidNames {
+		if _, err := service.UpdateName(DefaultPetID, name); err == nil {
+			t.Fatalf("UpdateName(%q) returned nil error", name)
+		}
+	}
+	if got := repository.saveCount; got != 0 {
+		t.Fatalf("save count = %d, want 0", got)
 	}
 }

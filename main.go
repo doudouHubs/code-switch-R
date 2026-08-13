@@ -188,8 +188,11 @@ func main() {
 	// 运行时只消费调用方提供的心跳，不自行启动 ticker；这样状态推进、自动照料
 	// 和应用关闭共用同一生命周期，避免后台 goroutine 在 Wails 已退出后继续写库。
 	var petApp *application.App
+	var petBrowserBridge *services.PetBrowserBridge
+	petBrowserEvents := services.NewPetBrowserEventHub()
 	petRuntime := services.NewPetRuntime(petService, services.PetRuntimeOptions{
 		Emitter: services.PetRuntimeEmitterFunc(func(result services.PetRuntimeResult) {
+			petBrowserEvents.Publish("pet.runtime", result)
 			if petApp != nil {
 				petApp.Event.Emit("pet.runtime", result)
 			}
@@ -199,6 +202,7 @@ func main() {
 	petScheduler := services.NewPetScheduler(
 		petJobStore,
 		services.PetSchedulerEmitterFunc(func(_ context.Context, event services.PetSchedulerEvent) error {
+			petBrowserEvents.Publish("pet.reminder", event)
 			if petApp != nil {
 				petApp.Event.Emit("pet.reminder", event)
 			}
@@ -216,6 +220,7 @@ func main() {
 	}
 
 	providerService := services.NewProviderService()
+	mcpService := services.NewMCPService()
 	settingsService := services.NewSettingsService()
 	autoStartService := services.NewAutoStartService()
 	appSettings := services.NewAppSettingsService(autoStartService)
@@ -227,8 +232,9 @@ func main() {
 		ProviderReader:        petAIProviderReader,
 		SpeechSelectionReader: appSettings,
 		WorkspaceResolver:     petDAO,
-		Transport:              http.DefaultTransport,
+		Transport:             http.DefaultTransport,
 		Emitter: services.PetAIEventEmitterFunc(func(event services.PetAIEvent) error {
+			petBrowserEvents.Publish("pet.ai", event)
 			if event.Type == services.PetAIEventUsage {
 				// usage 账本使用 requestId 作为稳定幂等键；入账失败只记录日志，
 				// 不能因为经验或 canonical pricing 异常把已经完成的聊天变成失败。
@@ -272,6 +278,7 @@ func main() {
 		// 音频 chunk 与文本事件共用同一生命周期，但单独使用 pet.audio 事件，
 		// 前端可以在取消时丢弃旧 request 的 PCM，不会把二进制塞进文本事件。
 		AudioEmitter: services.PetAudioEventEmitterFunc(func(event services.PetAudioEvent) error {
+			petBrowserEvents.Publish("pet.audio", event)
 			if petApp != nil {
 				petApp.Event.Emit("pet.audio", event)
 			}
@@ -284,14 +291,23 @@ func main() {
 	petMediaAPIService := services.NewPetMediaAPIService()
 	// Studio 的资源目录和皮肤记录必须共享同一个 PetDAO；否则前端保存后桌宠快照无法看到新皮肤。
 	petStudioAPIService := services.NewPetStudioAPIService(petDAO)
-	providerRelay := services.NewProviderRelayService(providerService, geminiService, blacklistService, notificationService, appSettings, ":18100")
+	// relay 复用主应用的 Gemini、黑名单、通知和轮询配置；这些依赖共同维持
+	// provider 路由与请求日志的单一运行时状态，不能退回到宠物分支的简化代理。
+	providerRelay := services.NewProviderRelayService(
+		providerService,
+		geminiService,
+		blacklistService,
+		notificationService,
+		appSettings,
+		":18100",
+	)
 	claudeSettings := services.NewClaudeSettingsService(providerRelay.Addr())
 	codexSettings := services.NewCodexSettingsService(providerRelay.Addr())
 	cliConfigService := services.NewCliConfigService(providerRelay.Addr())
 	logService := services.NewLogService()
 	skillService := services.NewSkillService()
 	promptService := services.NewPromptService()
-	importService := services.NewImportService(providerService)
+	importService := services.NewImportService(providerService, mcpService)
 	deeplinkService := services.NewDeepLinkService(providerService)
 	dockService := dock.New()
 	versionService := NewVersionService()
@@ -340,6 +356,7 @@ func main() {
 			application.NewService(appservice),
 			application.NewService(suiService),
 			application.NewService(providerService),
+			application.NewService(mcpService),
 			application.NewService(settingsService),
 			application.NewService(blacklistService),
 			application.NewService(claudeSettings),
@@ -396,6 +413,10 @@ func main() {
 				if err != nil {
 					log.Printf("宠物计划调度心跳失败: %v", err)
 				}
+				petBrowserEvents.Publish("pet.scheduler", schedulerResult)
+				for _, action := range schedulerResult.Actions {
+					petBrowserEvents.Publish("pet.action", action)
+				}
 				if petApp != nil {
 					petApp.Event.Emit("pet.scheduler", schedulerResult)
 					for _, action := range schedulerResult.Actions {
@@ -411,8 +432,8 @@ func main() {
 
 	var petWindow *services.PetWindow
 	petWindow, petWindowErr := services.NewPetWindow(app, services.PetWindowOptions{
-		Name:   services.DefaultPetWindowName,
-		Title:  services.DefaultPetWindowTitle,
+		Name:  services.DefaultPetWindowName,
+		Title: services.DefaultPetWindowTitle,
 		// 与 OpenCowork 的 appView=pet 入口保持一致；独立窗口必须绕过主应用
 		// App.vue，否则会把 Sidebar 和普通路由布局一起渲染进透明桌宠窗。
 		URL:    "/?appView=pet",
@@ -444,7 +465,33 @@ func main() {
 	}
 	// PetWindow 依赖已经创建好的原生窗口，故在 app 创建后再注册；服务仍在
 	// Wails 启动前完成绑定，前端不会看到“设置已保存但窗口方法不存在”的假状态。
-	app.RegisterService(application.NewService(services.NewPetWindowAPI(petWindow)))
+	petWindowAPI := services.NewPetWindowAPI(petWindow)
+	app.RegisterService(application.NewService(petWindowAPI))
+
+	// 浏览器预览没有 Wails 原生消息桥；loopback bridge 让设置页能够复用同一套
+	// PetService/SQLite，而不是退回到只存在于当前 tab 内存里的 fallback 快照。
+	// 只监听 127.0.0.1，且 handler 内部仍按宠物页面白名单分发，不暴露通用 Wails RPC。
+	petBrowserBridge = services.NewPetBrowserBridge(services.PetBrowserBridgeDependencies{
+		Pet:         petService,
+		Memory:      petMemoryService,
+		Dream:       petDreamAPIService,
+		AI:          petAIAPIService,
+		Image:       petImageAPIService,
+		Media:       petMediaAPIService,
+		Studio:      petStudioAPIService,
+		Window:      petWindowAPI,
+		Provider:    providerService,
+		Gemini:      geminiService,
+		Project:     projectManagerService,
+		AppSettings: appSettings,
+		Scheduler:   petSchedulerAPI,
+		Events:      petBrowserEvents,
+	})
+	if err := petBrowserBridge.Start(); err != nil {
+		log.Printf("⚠️ 宠物浏览器 bridge 启动失败: %v", err)
+	} else {
+		log.Printf("✅ 宠物浏览器 bridge 已启动: http://%s", petBrowserBridge.Addr())
+	}
 
 	// 设置 NotificationService 的 App 引用，用于发送事件到前端
 	notificationService.SetApp(app)
@@ -456,6 +503,14 @@ func main() {
 
 	app.OnShutdown(func() {
 		log.Println("🛑 应用正在关闭，停止后台服务...")
+
+		if petBrowserBridge != nil {
+			bridgeCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			if err := petBrowserBridge.Stop(bridgeCtx); err != nil {
+				log.Printf("⚠️ 宠物浏览器 bridge 关闭失败: %v", err)
+			}
+			cancel()
+		}
 
 		if petWindow != nil {
 			if err := petWindow.Close(); err != nil {

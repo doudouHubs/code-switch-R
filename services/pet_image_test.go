@@ -304,6 +304,93 @@ func TestPetImageServiceUsesCroppedDataReferenceWithImagesEditsMultipart(t *test
 	}
 }
 
+func TestPetImageServicePreservesThreeReferenceImageMultipartOrder(t *testing.T) {
+	makeImage := func(red, green, blue uint8) []byte {
+		t.Helper()
+		canvas := image.NewRGBA(image.Rect(0, 0, 2, 2))
+		canvas.SetRGBA(0, 0, color.RGBA{R: red, G: green, B: blue, A: 255})
+		var buffer bytes.Buffer
+		if err := png.Encode(&buffer, canvas); err != nil {
+			t.Fatalf("生成 reference PNG 失败: %v", err)
+		}
+		return buffer.Bytes()
+	}
+	references := [][]byte{makeImage(255, 0, 0), makeImage(0, 255, 0), makeImage(0, 0, 255)}
+	transport := petImageTestRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Path != "/v1/images/edits" {
+			t.Fatalf("图片 edit endpoint = %q", request.URL.Path)
+		}
+		multipartReader, err := request.MultipartReader()
+		if err != nil {
+			t.Fatalf("创建 multipart reader 失败: %v", err)
+		}
+		var uploaded [][]byte
+		for {
+			part, err := multipartReader.NextPart()
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if err != nil {
+				t.Fatalf("读取 multipart part 失败: %v", err)
+			}
+			data, err := io.ReadAll(part)
+			if err != nil {
+				t.Fatalf("读取 multipart part 内容失败: %v", err)
+			}
+			if part.FormName() == "image" {
+				uploaded = append(uploaded, data)
+			}
+		}
+		if len(uploaded) != len(references) {
+			t.Fatalf("multipart image 数量 = %d, want %d", len(uploaded), len(references))
+		}
+		for index := range references {
+			if !bytes.Equal(uploaded[index], references[index]) {
+				t.Fatalf("multipart image[%d] 顺序或内容错误", index)
+			}
+		}
+		return petImageTestResponse(http.StatusOK, "application/json", petImageTestJSONResponse(references[0])), nil
+	})
+
+	request := petImageTestRequest()
+	request.ReferenceImages = make([]PetImageReference, 0, len(references))
+	for _, reference := range references {
+		request.ReferenceImages = append(request.ReferenceImages, PetImageReference{
+			Data:      petImageTestDataURL(reference),
+			MediaType: "image/png",
+			Pose:      "idle",
+		})
+	}
+	result, err := NewPetImageService(&petImageTestProviderReader{config: petImageTestConfig()}, transport).GenerateImage(context.Background(), request)
+	if err != nil || len(result.Images) != 1 {
+		t.Fatalf("three reference result = %#v, error=%v", result, err)
+	}
+}
+
+func TestPetImageServiceRejectsMoreThanThreeReferenceImages(t *testing.T) {
+	transportCalled := false
+	transport := petImageTestRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		transportCalled = true
+		return petImageTestResponse(http.StatusOK, "application/json", petImageTestJSONResponse(petImageTestPNG(t))), nil
+	})
+	request := petImageTestRequest()
+	request.ReferenceImages = make([]PetImageReference, PetImageMaxReferenceImages+1)
+	for index := range request.ReferenceImages {
+		request.ReferenceImages[index] = PetImageReference{
+			Data:      petImageTestDataURL(petImageTestPNG(t)),
+			MediaType: "image/png",
+			Pose:      "idle",
+		}
+	}
+	_, err := NewPetImageService(&petImageTestProviderReader{config: petImageTestConfig()}, transport).GenerateImage(context.Background(), request)
+	if got := petImageTestCode(t, err); got != string(PET_IMAGE_INVALID_REQUEST) {
+		t.Fatalf("超过 reference 上限错误码 = %q, want %q", got, PET_IMAGE_INVALID_REQUEST)
+	}
+	if transportCalled {
+		t.Fatal("超过 reference 上限不应进入 transport")
+	}
+}
+
 func TestPetImageServiceRejectsUnsafeCroppedDataReference(t *testing.T) {
 	imageBytes := petImageTestPNG(t)
 	tallAtlasLike := petImageTestPNGWithSize(t, 2, PetImageMaxReferenceDimension+1)

@@ -3,6 +3,7 @@ package services
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -125,6 +126,18 @@ func (css *ClaudeSettingsService) baseURL() string {
 		host = "http://" + host
 	}
 	return host
+}
+
+// anyToString 将配置 JSON 中的动态值安全转换为字符串；nil 保持为空，
+// 这样读取旧配置时不会把缺失字段误显示成 "<nil>" 并污染代理状态判断。
+func anyToString(v any) string {
+	if v == nil {
+		return ""
+	}
+	if value, ok := v.(string); ok {
+		return value
+	}
+	return fmt.Sprintf("%v", v)
 }
 
 type claudeSettingsFile struct {

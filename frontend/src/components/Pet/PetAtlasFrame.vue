@@ -43,9 +43,12 @@ const safeScale = computed(() => {
   return Number.isFinite(props.scale) && props.scale > 0 ? props.scale : 1
 })
 
-const targetDisplayHeight = computed(() => {
-  return Number.isFinite(props.displayHeight) && props.displayHeight > 0
-    ? props.displayHeight
+const targetDisplayHeight = computed<number | null>(() => {
+  const displayHeight = props.displayHeight
+  // displayHeight 是可选尺寸；先完成类型和数值收窄，再参与主体高度缩放，
+  // 未传入或非法时保留原有 safeScale 兜底，不改变桌宠默认比例。
+  return typeof displayHeight === 'number' && Number.isFinite(displayHeight) && displayHeight > 0
+    ? displayHeight
     : null
 })
 

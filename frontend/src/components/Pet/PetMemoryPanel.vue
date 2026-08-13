@@ -238,15 +238,10 @@ onUnmounted(() => {
   --memory-ink: var(--settings-ink, var(--mac-text, #1d1d1f));
   --memory-muted: var(--settings-muted, var(--mac-text-secondary, #6e6e73));
   --memory-line: var(--settings-line, var(--mac-border, rgba(15, 23, 42, 0.12)));
-  --memory-surface: var(--settings-surface, var(--mac-surface, #fff));
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 14px;
-  border: 1px solid var(--memory-line);
-  border-radius: 12px;
-  padding: 16px;
-  background: color-mix(in srgb, var(--memory-surface) 80%, transparent);
+  gap: 16px;
   color: var(--memory-ink);
 }
 

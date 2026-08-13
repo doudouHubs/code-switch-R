@@ -73,11 +73,20 @@ type PetAtlasPackAPIAction struct {
 }
 
 type PetAtlasPackAPIRequest struct {
-	Name      string                  `json:"name,omitempty"`
-	Actions   []PetAtlasPackAPIAction `json:"actions"`
-	MaxWidth  int                     `json:"maxWidth,omitempty"`
-	MaxHeight int                     `json:"maxHeight,omitempty"`
-	Padding   int                     `json:"padding,omitempty"`
+	Name                       string                      `json:"name,omitempty"`
+	Subject                    string                      `json:"subject,omitempty"`
+	ModelID                    string                      `json:"modelId,omitempty"`
+	CreatedAt                  int64                       `json:"createdAt,omitempty"`
+	UpdatedAt                  int64                       `json:"updatedAt,omitempty"`
+	Builtin                    bool                        `json:"builtin,omitempty"`
+	AssetVersion               int                         `json:"assetVersion,omitempty"`
+	SpriteNormalizationVersion int                         `json:"spriteNormalizationVersion,omitempty"`
+	Metadata                   *PetAtlasManifestMetadata   `json:"metadata,omitempty"`
+	Behaviors                  map[string]PetAtlasBehavior `json:"behaviors,omitempty"`
+	Actions                    []PetAtlasPackAPIAction     `json:"actions"`
+	MaxWidth                   int                         `json:"maxWidth,omitempty"`
+	MaxHeight                  int                         `json:"maxHeight,omitempty"`
+	Padding                    int                         `json:"padding,omitempty"`
 }
 
 type PetAtlasPackAPIResult struct {
@@ -311,9 +320,45 @@ func (api *PetMediaAPIService) PackAtlas(request PetAtlasPackAPIRequest) (PetAtl
 			Description: action.Description,
 		})
 	}
+	metadata := PetAtlasManifestMetadata{
+		Subject:                    request.Subject,
+		ModelID:                    request.ModelID,
+		CreatedAt:                  request.CreatedAt,
+		UpdatedAt:                  request.UpdatedAt,
+		Builtin:                    request.Builtin,
+		AssetVersion:               request.AssetVersion,
+		SpriteNormalizationVersion: request.SpriteNormalizationVersion,
+	}
+	if request.Metadata != nil {
+		// 页面同时发送扁平字段和 metadata 兼容字段时，显式字段优先，
+		// 这样升级中的前端不会因为旧 bridge 的兼容负载而覆盖用户输入。
+		if metadata.Subject == "" {
+			metadata.Subject = request.Metadata.Subject
+		}
+		if metadata.ModelID == "" {
+			metadata.ModelID = request.Metadata.ModelID
+		}
+		if metadata.CreatedAt == 0 {
+			metadata.CreatedAt = request.Metadata.CreatedAt
+		}
+		if metadata.UpdatedAt == 0 {
+			metadata.UpdatedAt = request.Metadata.UpdatedAt
+		}
+		if !metadata.Builtin {
+			metadata.Builtin = request.Metadata.Builtin
+		}
+		if metadata.AssetVersion == 0 {
+			metadata.AssetVersion = request.Metadata.AssetVersion
+		}
+		if metadata.SpriteNormalizationVersion == 0 {
+			metadata.SpriteNormalizationVersion = request.Metadata.SpriteNormalizationVersion
+		}
+	}
 	packed, err := PackPetAtlas(PetAtlasPackRequest{
 		Name:      request.Name,
+		Metadata:  metadata,
 		Actions:   actions,
+		Behaviors: request.Behaviors,
 		MaxWidth:  request.MaxWidth,
 		MaxHeight: request.MaxHeight,
 		Padding:   request.Padding,
