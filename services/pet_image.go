@@ -457,11 +457,15 @@ func (s *PetImageService) resolveProvider(
 			nil,
 		)
 	}
-	if provider.protocol != "openai" {
+	// 图片端点使用 OpenAI-compatible images 协议，与 provider 的对话协议是
+	// 两条独立能力链。Codex 对话虽然走 Responses API，但同一个 /v1 provider
+	// 仍可能暴露 /images/generations 和 /images/edits；不能因为聊天协议是
+	// responses 就在真正发请求前把图片能力拦掉。
+	if provider.protocol != "openai" && provider.protocol != "responses" {
 		return petAIProviderRuntime{}, newPetProviderError(
 			PET_CAPABILITY_UNSUPPORTED,
 			reference,
-			"图片生成只支持 OpenAI-compatible protocol",
+			"图片生成只支持 OpenAI-compatible images protocol",
 			nil,
 		)
 	}

@@ -121,6 +121,11 @@ interface PetProviderModelGroup {
 interface PetProviderModelCatalogEntry {
   id?: unknown
   name?: unknown
+  modelCategory?: unknown
+  category?: unknown
+  type?: unknown
+  supportsImageGeneration?: unknown
+  supports_image_generation?: unknown
 }
 
 interface PetProviderModelLoadResult {
@@ -405,18 +410,21 @@ function providerConfiguredModelIds(provider: Provider): string[] {
 function providerModelOption(
   platform: string,
   provider: Provider,
-  modelId: string
+  modelId: string,
+  remoteModel?: PetProviderModelCatalogEntry
 ): PetProviderModelOption {
   const providerId = String(provider.id)
   const capabilities = provider as Provider & {
     modelReasoningEffortLevels?: Record<string, unknown>
   }
+  const configuredCategory = normalizePetModelCategory(resolveModelRule(provider.modelCategories, modelId))
   return {
     platform,
     providerId,
     providerName: provider.name.trim() || providerId,
     modelId,
-    modelCategory: String(resolveModelRule(provider.modelCategories, modelId) ?? '').trim(),
+    // provider 配置是本地显式事实源；远端元数据和名称识别只负责补足没有配置的模型。
+    modelCategory: configuredCategory || remoteModelCategory(remoteModel, modelId),
     reasoningEffortLevels: normalizeReasoningEffortLevels(
       resolveModelRule(capabilities.modelReasoningEffortLevels, modelId)
     )
@@ -432,6 +440,7 @@ async function providerModelOptions(platform: string, providers: Provider[]): Pr
     const rules = Object.keys(provider.supportedModels ?? {}).filter((rule) => rule.trim())
     const shouldFetchRemoteModels = rules.length === 0 || rules.some((rule) => rule.includes('*'))
     const modelIds = new Set(configuredModelIds)
+    const remoteModels = new Map<string, PetProviderModelCatalogEntry>()
     const errors: string[] = []
 
     if (shouldFetchRemoteModels) {
@@ -443,7 +452,10 @@ async function providerModelOptions(platform: string, providers: Provider[]): Pr
         ) as PetProviderModelCatalogEntry[]
         for (const model of discovered ?? []) {
           const modelId = typeof model?.id === 'string' ? model.id.trim() : ''
-          if (modelId && providerRuleAllowsModel(provider, modelId)) modelIds.add(modelId)
+          if (modelId && providerRuleAllowsModel(provider, modelId)) {
+            modelIds.add(modelId)
+            remoteModels.set(modelId, model)
+          }
         }
       } catch (error) {
         // 远端目录失败时保留已配置的精确模型；这样网络抖动不会清空当前宠物引用。
@@ -455,7 +467,7 @@ async function providerModelOptions(platform: string, providers: Provider[]): Pr
       options: [...modelIds]
         .filter((modelId) => providerRuleAllowsModel(provider, modelId))
         .sort((left, right) => left.localeCompare(right))
-        .map((modelId) => providerModelOption(platform, provider, modelId)),
+        .map((modelId) => providerModelOption(platform, provider, modelId, remoteModels.get(modelId))),
       errors
     }
   }))
@@ -473,8 +485,75 @@ function normalizeReasoningEffortLevels(value: unknown): PetReasoningEffort[] {
   )
 }
 
+function normalizePetModelCategory(value: unknown): string {
+  const normalized = String(value ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_')
+  switch (normalized) {
+    case 'chat':
+    case 'text':
+    case 'language':
+    case 'llm':
+    case 'completion':
+    case 'completions':
+      return 'chat'
+    case 'speech':
+    case 'audio':
+    case 'tts':
+    case 'text_to_speech':
+    case 'texttospeech':
+      return 'speech'
+    case 'embedding':
+    case 'embeddings':
+      return 'embedding'
+    case 'image':
+    case 'images':
+    case 'image_generation':
+    case 'imagegeneration':
+    case 'text_to_image':
+    case 'text2image':
+      return 'image'
+    case 'video':
+    case 'video_generation':
+    case 'videogeneration':
+    case 'text_to_video':
+    case 'text2video':
+      return 'video'
+    default:
+      return ''
+  }
+}
+
+function inferPetModelCategory(modelId: string): string {
+  const normalized = modelId.trim().toLowerCase()
+  if (!normalized) return ''
+  // 这里只兜底识别明确的图片模型家族，避免“包含 image”这种宽规则误伤聊天模型。
+  return [
+    'gpt-image',
+    'dall-e',
+    'imagen',
+    'flux',
+    'stable-diffusion',
+    'stable_diffusion',
+    'sdxl',
+    'seedream',
+    'qwen-image',
+    'qwen_image',
+    'image-gen',
+    'image_generation',
+    'imagegen'
+  ].some((marker) => normalized.includes(marker)) ? 'image' : ''
+}
+
+function remoteModelCategory(model: PetProviderModelCatalogEntry | undefined, modelId: string): string {
+  const explicit = [model?.modelCategory, model?.category, model?.type]
+    .map(normalizePetModelCategory)
+    .find(Boolean)
+  if (explicit) return explicit
+  if (model?.supportsImageGeneration === true || model?.supports_image_generation === true) return 'image'
+  return inferPetModelCategory(modelId)
+}
+
 function modelCategory(option: PetProviderModelOption): string {
-  return option.modelCategory.trim().toLowerCase() || 'chat'
+  return normalizePetModelCategory(option.modelCategory) || 'chat'
 }
 
 function geminiModelOptions(providers: GeminiProvider[]): PetProviderModelOption[] {

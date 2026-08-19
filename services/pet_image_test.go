@@ -172,6 +172,34 @@ func TestPetImageServiceGeneratesB64JSONAndUsesSharedAuth(t *testing.T) {
 	}
 }
 
+func TestPetImageServiceAllowsCodexResponsesProviderForImages(t *testing.T) {
+	imageBytes := petImageTestPNG(t)
+	config := petImageTestConfig()
+	config.Platform = "codex"
+	config.Protocol = "responses"
+	transport := petImageTestRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		// Codex 的聊天请求使用 Responses，但图片能力仍复用同一 provider 的
+		// OpenAI-compatible images 路径；这里验证不会在协议门禁处提前短路。
+		if request.URL.Path != "/v1/images/generations" {
+			t.Fatalf("Codex 图片 endpoint = %q", request.URL.Path)
+		}
+		return petImageTestResponse(http.StatusOK, "application/json", petImageTestJSONResponse(imageBytes)), nil
+	})
+	request := petImageTestRequest()
+	request.Provider.Platform = "codex"
+
+	result, err := NewPetImageService(
+		&petImageTestProviderReader{config: config},
+		transport,
+	).GenerateImage(context.Background(), request)
+	if err != nil {
+		t.Fatalf("Codex responses 图片请求 error = %v", err)
+	}
+	if len(result.Images) != 1 || !bytes.Equal(result.Images[0], imageBytes) {
+		t.Fatalf("Codex responses 图片结果 = %#v", result)
+	}
+}
+
 func TestPetImageServiceUsesIdleReferenceWithImagesEditsMultipart(t *testing.T) {
 	imageBytes := petImageTestPNG(t)
 	reference := petImageTestReference(t, t.TempDir(), imageBytes)

@@ -588,8 +588,8 @@ const awayPillStyle = computed(() => ({
 }))
 
 const statusText = computed(() => {
-  if (state.value?.sleeping) return t('pet.window.status.sleeping')
-  if (dozing.value) return t('pet.window.status.dozing')
+  // 睡眠和打盹本身已经由宠物动画表达；不再额外冒泡“点击唤醒”提示，
+  // 避免遮挡宠物，同时保留右键菜单中的明确唤醒动作和真正的梦话气泡。
   // 动作进行中只保留菜单按钮的 busy 状态，不把任务过程文案冒泡到宠物头顶。
   if (runtimeMode.value === 'fallback') return t('pet.window.status.fallback')
   return ''

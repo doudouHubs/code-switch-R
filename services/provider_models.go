@@ -14,8 +14,9 @@ import (
 // ProviderModel 是 provider /v1/models 返回给前端的最小安全投影。
 // API key、完整响应 metadata 和 provider 配置都不应跨过 Wails 边界。
 type ProviderModel struct {
-	ID   string `json:"id"`
-	Name string `json:"name,omitempty"`
+	ID            string `json:"id"`
+	Name          string `json:"name,omitempty"`
+	ModelCategory string `json:"modelCategory,omitempty"`
 }
 
 // FetchModels 从指定 provider 的真实模型目录读取模型，不依赖 supportedModels 白名单。
@@ -136,11 +137,16 @@ func decodeProviderModels(body []byte) ([]ProviderModel, error) {
 
 func decodeProviderModel(raw json.RawMessage) (ProviderModel, bool) {
 	var model struct {
-		ID          string `json:"id"`
-		Name        string `json:"name"`
-		DisplayName string `json:"display_name"`
-		Display     string `json:"displayName"`
-		Slug        string `json:"slug"`
+		ID                        string `json:"id"`
+		Name                      string `json:"name"`
+		DisplayName               string `json:"display_name"`
+		Display                   string `json:"displayName"`
+		Slug                      string `json:"slug"`
+		ModelCategory             string `json:"modelCategory"`
+		Category                  string `json:"category"`
+		Type                      string `json:"type"`
+		SupportsImageGeneration   *bool  `json:"supportsImageGeneration"`
+		SupportsImageGenerationV2 *bool  `json:"supports_image_generation"`
 	}
 	if len(bytes.TrimSpace(raw)) > 0 && bytes.TrimSpace(raw)[0] == '"' {
 		var id string
@@ -148,7 +154,11 @@ func decodeProviderModel(raw json.RawMessage) (ProviderModel, bool) {
 			return ProviderModel{}, false
 		}
 		id = strings.TrimSpace(id)
-		return ProviderModel{ID: id, Name: id}, id != ""
+		return ProviderModel{
+			ID:            id,
+			Name:          id,
+			ModelCategory: inferProviderModelCategory(id),
+		}, id != ""
 	}
 	if err := json.Unmarshal(raw, &model); err != nil {
 		return ProviderModel{}, false
@@ -170,5 +180,74 @@ func decodeProviderModel(raw json.RawMessage) (ProviderModel, bool) {
 	if name == "" {
 		name = id
 	}
-	return ProviderModel{ID: id, Name: name}, true
+
+	// provider 自己声明的类别优先；没有类别时再读取图片能力标志，最后才按
+	// 模型名做有限兜底。这样不会因为一个普通模型名包含“image”字样就误判，
+	// 同时兼容 OpenAI /v1/models 只返回 id 的常见响应。
+	category := firstProviderModelCategory(model.ModelCategory, model.Category, model.Type)
+	if category == "" && ((model.SupportsImageGeneration != nil && *model.SupportsImageGeneration) ||
+		(model.SupportsImageGenerationV2 != nil && *model.SupportsImageGenerationV2)) {
+		category = "image"
+	}
+	if category == "" {
+		category = inferProviderModelCategory(id)
+	}
+	return ProviderModel{ID: id, Name: name, ModelCategory: category}, true
+}
+
+func firstProviderModelCategory(values ...string) string {
+	for _, value := range values {
+		if category := normalizeProviderModelCategory(value); category != "" {
+			return category
+		}
+	}
+	return ""
+}
+
+func normalizeProviderModelCategory(value string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	normalized = strings.NewReplacer("-", "_", " ", "_").Replace(normalized)
+	switch normalized {
+	case "chat", "text", "language", "llm", "completion", "completions":
+		return "chat"
+	case "speech", "audio", "tts", "text_to_speech", "texttospeech":
+		return "speech"
+	case "embedding", "embeddings":
+		return "embedding"
+	case "image", "images", "image_generation", "imagegeneration", "text_to_image", "text2image":
+		return "image"
+	case "video", "video_generation", "videogeneration", "text_to_video", "text2video":
+		return "video"
+	default:
+		return ""
+	}
+}
+
+func inferProviderModelCategory(modelID string) string {
+	normalized := strings.ToLower(strings.TrimSpace(modelID))
+	if normalized == "" {
+		return ""
+	}
+	// 只维护明确的图片模型家族，不使用“包含 image”这种过宽规则，避免
+	// 把普通聊天模型、embedding 模型或厂商自定义模型错误放进梦境图片列表。
+	for _, marker := range []string{
+		"gpt-image",
+		"dall-e",
+		"imagen",
+		"flux",
+		"stable-diffusion",
+		"stable_diffusion",
+		"sdxl",
+		"seedream",
+		"qwen-image",
+		"qwen_image",
+		"image-gen",
+		"image_generation",
+		"imagegen",
+	} {
+		if strings.Contains(normalized, marker) {
+			return "image"
+		}
+	}
+	return ""
 }

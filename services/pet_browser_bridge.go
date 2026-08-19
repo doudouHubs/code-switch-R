@@ -626,7 +626,7 @@ func (b *PetBrowserBridge) dispatch(ctx context.Context, method string, args []j
 		if err := decodePetBrowserArg(args, 1, &providerID); err != nil {
 			return nil, err
 		}
-		// 只返回 ProviderModel 的 id/name，API key 留在后端；浏览器预览也必须走同一条安全边界。
+		// 只返回 ProviderModel 的安全模型元数据，API key 留在后端；浏览器预览也必须走同一条安全边界。
 		return b.requireProvider().FetchModels(kind, providerID)
 	case "codeswitch/services.GeminiService.GetProviders":
 		return sanitizePetBrowserGeminiProviders(b.requireGemini().GetProviders()), nil

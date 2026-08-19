@@ -87,3 +87,32 @@ func TestDecodeProviderModelsSupportsArrayAndStringEntries(t *testing.T) {
 		}
 	}
 }
+
+func TestDecodeProviderModelsCarriesAndInfersImageCategory(t *testing.T) {
+	models, err := decodeProviderModels([]byte(`{"data":[
+		{"id":"explicit-image","category":"image_generation"},
+		{"id":"flag-image","supportsImageGeneration":true},
+		{"id":"gpt-image-1"},
+		{"id":"dall-e-3"},
+		{"id":"text-model","type":"model"}
+	]}`))
+	if err != nil {
+		t.Fatalf("decodeProviderModels() error = %v", err)
+	}
+
+	want := map[string]string{
+		"explicit-image": "image",
+		"flag-image":     "image",
+		"gpt-image-1":    "image",
+		"dall-e-3":       "image",
+		"text-model":     "",
+	}
+	if len(models) != len(want) {
+		t.Fatalf("got %d models, want %d: %#v", len(models), len(want), models)
+	}
+	for _, model := range models {
+		if got := model.ModelCategory; got != want[model.ID] {
+			t.Errorf("model %q category = %q, want %q", model.ID, got, want[model.ID])
+		}
+	}
+}
