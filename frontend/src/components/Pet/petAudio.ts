@@ -31,6 +31,8 @@ export interface PetAudioPlaybackOptions {
 }
 
 export const PET_AUDIO_PCM_SAMPLE_RATE = 24_000
+const PET_AUDIO_STREAM_TIMEOUT_MS = 120_000
+const PET_AUDIO_ELEMENT_TIMEOUT_MS = 120_000
 
 interface Deferred<T> {
   promise: Promise<T>
@@ -51,6 +53,7 @@ interface ActivePlayback {
   cancelled: boolean
   nextTime: number
   finishTimer: ReturnType<typeof setTimeout> | null
+  streamTimeout: ReturnType<typeof setTimeout> | null
   mediaCleanup: ((interrupt: boolean) => void) | null
   sources: Set<AudioBufferSourceNode>
   done: Deferred<boolean>
@@ -422,11 +425,21 @@ export class PetAudioPlayer {
       cancelled: false,
       nextTime: 0,
       finishTimer: null,
+      streamTimeout: null,
       mediaCleanup: null,
       sources: new Set(),
       done: createDeferred<boolean>()
     }
     this.active = active
+    if (context) {
+      // 事件丢失时不能让句子队列永久等待；超时后交给 playOne 的既有
+      // 失败收敛和同步语音 fallback 处理，并同时取消远端生成。
+      active.streamTimeout = setTimeout(() => {
+        if (this.active === active && !active.settled && !active.cancelled) {
+          this.failActive(active, new Error('pet audio stream timed out'))
+        }
+      }, PET_AUDIO_STREAM_TIMEOUT_MS)
+    }
     return active
   }
 
@@ -533,6 +546,10 @@ export class PetAudioPlayer {
   }
 
   private releaseActive(active: ActivePlayback, interrupt: boolean): void {
+    if (active.streamTimeout !== null) {
+      clearTimeout(active.streamTimeout)
+      active.streamTimeout = null
+    }
     if (active.finishTimer !== null) {
       clearTimeout(active.finishTimer)
       active.finishTimer = null
@@ -553,6 +570,7 @@ export class PetAudioPlayer {
       const cleanup = (interrupt: boolean): void => {
         if (settled) return
         settled = true
+        clearTimeout(playbackTimeout)
         if (interrupt) audio.pause()
         audio.removeEventListener('ended', onEnded)
         audio.removeEventListener('error', onError)
@@ -563,9 +581,10 @@ export class PetAudioPlayer {
       }
       const onEnded = (): void => cleanup(false)
       const onPause = (): void => cleanup(false)
-      const onError = (): void => {
+      const onError = (_error?: unknown): void => {
         if (settled) return
         settled = true
+        clearTimeout(playbackTimeout)
         audio.removeEventListener('ended', onEnded)
         audio.removeEventListener('error', onError)
         audio.removeEventListener('pause', onPause)
@@ -573,6 +592,9 @@ export class PetAudioPlayer {
         if (active.mediaCleanup === cleanup) active.mediaCleanup = null
         reject(new Error('synchronous pet speech playback failed'))
       }
+      const playbackTimeout = setTimeout(() => {
+        onError(new Error('synchronous pet speech playback timed out'))
+      }, PET_AUDIO_ELEMENT_TIMEOUT_MS)
       active.mediaCleanup = cleanup
       audio.addEventListener('ended', onEnded)
       audio.addEventListener('error', onError)

@@ -38,6 +38,10 @@ type Provider struct {
 	// 这是宠物语音等能力校验的显式事实源；空值继续兼容旧 provider 配置。
 	ModelCategories map[string]string `json:"modelCategories,omitempty"`
 
+	// 模型推理等级 - 模型名（或通配符）-> none/minimal/low/medium/high。
+	// 这是设置页按模型展示 reasoning 选项的能力事实源；旧配置为空时继续兼容。
+	ModelReasoningEffortLevels map[string][]string `json:"modelReasoningEffortLevels,omitempty"`
+
 	// 优先级分组 - 数字越小优先级越高（1-10，默认 1）
 	// 使用 omitempty 确保零值不序列化，向后兼容
 	Level int `json:"level,omitempty"`
@@ -378,6 +382,13 @@ func (ps *ProviderService) DuplicateProvider(kind string, sourceID int64) (*Prov
 		cloned.ModelCategories = make(map[string]string, len(source.ModelCategories))
 		for k, v := range source.ModelCategories {
 			cloned.ModelCategories[k] = v
+		}
+	}
+
+	if source.ModelReasoningEffortLevels != nil {
+		cloned.ModelReasoningEffortLevels = make(map[string][]string, len(source.ModelReasoningEffortLevels))
+		for k, v := range source.ModelReasoningEffortLevels {
+			cloned.ModelReasoningEffortLevels[k] = append([]string(nil), v...)
 		}
 	}
 

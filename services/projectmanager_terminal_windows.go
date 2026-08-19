@@ -338,15 +338,19 @@ func buildProjectManagerProjectTaskWTArgs(projectPath string, windowID string, t
 func startProjectManagerWTCommand(workingDir string, wtPath string, wtArgs []string) error {
 	launcher, err := projectManagerWTLauncherExecutable()
 	if err != nil {
+		WriteRuntimeDiagnostic("terminal-wt-launcher-missing", fmt.Sprintf("working_dir=%q wt=%q err=%q", workingDir, wtPath, err.Error()))
 		projectManagerWriteTerminalDebug("launcher-missing", workingDir, "", wtPath, wtArgs, err)
 		return err
 	}
+	WriteRuntimeDiagnostic("terminal-wt-start", fmt.Sprintf("working_dir=%q launcher=%q wt=%q args=%q", workingDir, launcher, wtPath, wtArgs))
 	log.Printf("[ProjectManager] 准备通过 launcher 启动 WT working_dir=%q launcher=%q wt=%q args=%q", workingDir, launcher, wtPath, wtArgs)
 	projectManagerWriteTerminalDebug("start", workingDir, launcher, wtPath, wtArgs, nil)
 	if err := projectManagerWTCommandStarter(workingDir, launcher, buildProjectManagerWTLauncherArgs(wtPath, wtArgs, workingDir)...); err != nil {
+		WriteRuntimeDiagnostic("terminal-wt-start-failed", fmt.Sprintf("working_dir=%q err=%q", workingDir, err.Error()))
 		projectManagerWriteTerminalDebug("start-error", workingDir, launcher, wtPath, wtArgs, err)
 		return err
 	}
+	WriteRuntimeDiagnostic("terminal-wt-started", fmt.Sprintf("working_dir=%q", workingDir))
 	projectManagerWriteTerminalDebug("started", workingDir, launcher, wtPath, wtArgs, nil)
 	return nil
 }
@@ -592,7 +596,14 @@ func startProjectManagerHiddenCommand(workingDir string, executable string, args
 	// 不能再拿到 *exec.Cmd 后误把无害替身改回真实 pwsh 并调用 Start。
 	cmd := hideWindowCmd(executable, args...)
 	cmd.Dir = workingDir
-	return cmd.Start()
+	if err := cmd.Start(); err != nil {
+		WriteRuntimeDiagnostic("terminal-launch-process-failed", fmt.Sprintf("working_dir=%q executable=%q err=%q", workingDir, executable, err.Error()))
+		return err
+	}
+	if cmd.Process != nil {
+		WriteRuntimeDiagnostic("terminal-launch-process-started", fmt.Sprintf("working_dir=%q executable=%q child_pid=%d", workingDir, executable, cmd.Process.Pid))
+	}
+	return nil
 }
 
 func buildProjectManagerAICommitPowerShellCommand(projectPath string) string {
@@ -894,6 +905,8 @@ func projectManagerWriteTerminalDebug(stage string, workingDir string, launcher 
 	lines := []string{
 		fmt.Sprintf("time=%s stage=%s", time.Now().Format(time.RFC3339Nano), stage),
 		fmt.Sprintf("exe=%s", os.Args[0]),
+		fmt.Sprintf("pid=%d", os.Getpid()),
+		fmt.Sprintf("ppid=%d", os.Getppid()),
 		fmt.Sprintf("workingDir=%s", workingDir),
 		fmt.Sprintf("launcher=%s", launcher),
 		fmt.Sprintf("wtPath=%s", wtPath),

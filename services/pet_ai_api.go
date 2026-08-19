@@ -85,11 +85,17 @@ func (api *PetAIAPIService) CancelSpeech(requestID string) error {
 // TranscribeAudio 是桌宠录音输入的同步桥接；音频解码、multipart 边界和 provider
 // 认证仍由核心服务负责，Wails 层只暴露清洗后的文本结果。
 func (api *PetAIAPIService) TranscribeAudio(request PetTranscriptionRequest) (PetTranscriptionResult, error) {
+	return api.transcribeAudio(context.Background(), request)
+}
+
+// transcribeAudio 保留 request context 的内部 bridge 入口；Wails 公共方法没有
+// 请求 context，但浏览器 bridge 有，不能把可取消的 HTTP 请求重新降级成 Background。
+func (api *PetAIAPIService) transcribeAudio(ctx context.Context, request PetTranscriptionRequest) (PetTranscriptionResult, error) {
 	service, err := api.getService()
 	if err != nil {
 		return PetTranscriptionResult{}, err
 	}
-	return service.TranscribeAudio(context.Background(), request)
+	return service.TranscribeAudio(ctx, request)
 }
 
 func (api *PetAIAPIService) getService() (*PetAIService, error) {

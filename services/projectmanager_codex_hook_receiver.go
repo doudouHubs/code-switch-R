@@ -62,6 +62,7 @@ func IsProjectManagerCodexHookInvocation(args []string) bool {
 // RunProjectManagerCodexHookReceiver 是独立的轻量入口，必须在 Wails 和数据库初始化前调用。
 // Hook 属于 Codex 的同步主流程；这里只校验、补充进程身份并原子落盘，绝不能启动 GUI 或做网络请求。
 func RunProjectManagerCodexHookReceiver(reader io.Reader) error {
+	WriteRuntimeDiagnostic("hook-receiver-start", fmt.Sprintf("args=%q", os.Args[1:]))
 	if reader == nil {
 		return errors.New("Codex hook stdin 不能为空")
 	}
@@ -107,7 +108,13 @@ func RunProjectManagerCodexHookReceiver(reader io.Reader) error {
 		return err
 	}
 	fileName := fmt.Sprintf("%020d-%s.json", event.ReceivedUnixNano, event.EventID)
-	return AtomicWriteJSON(filepath.Join(eventDir, fileName), event)
+	path := filepath.Join(eventDir, fileName)
+	if err := AtomicWriteJSON(path, event); err != nil {
+		WriteRuntimeDiagnostic("hook-receiver-write-failed", fmt.Sprintf("path=%q err=%q", path, err.Error()))
+		return err
+	}
+	WriteRuntimeDiagnostic("hook-receiver-written", fmt.Sprintf("event=%s path=%q", event.HookEventName, path))
+	return nil
 }
 
 func projectManagerCodexPlanImplementationPending(payload projectManagerCodexHookPayload) bool {

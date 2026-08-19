@@ -182,6 +182,22 @@
           "video": "Video",
           "auto": "Automatic (legacy compatibility)"
         }
+      },
+      "modelReasoning": {
+        "label": "Reasoning effort levels",
+        "tooltip": "Declare the reasoning levels supported by a model. Exact model names and wildcards are supported; undeclared models receive no reasoning parameter.",
+        "modelPlaceholder": "Model or wildcard, e.g. gpt-5*",
+        "select": "Select the {level} reasoning level for {model}",
+        "add": "Add reasoning rule",
+        "remove": "Remove reasoning rule",
+        "hint": "Only explicitly declared levels appear in Pet Agent settings; clearing every level removes the rule.",
+        "options": {
+          "none": "Off",
+          "minimal": "Minimal",
+          "low": "Low",
+          "medium": "Medium",
+          "high": "High"
+        }
       }
     },
     "main": {
@@ -712,6 +728,9 @@
         "roundRobinHint": "When enabled, providers at the same Level take turns handling requests; when disabled, always starts from the first",
         "requestCapture": "Capture Agent Requests",
         "requestCaptureHint": "Save each request endpoint and parameters sent through the local relay to the local cache directory without storing responses",
+        "codexHook": "Codex Hook",
+        "codexHookHint": "Control the Codex status hooks used by Project Manager. Disabling removes only CodeSwitch hooks and preserves your own hooks",
+        "codexHookSaveFailed": "Failed to save Codex Hook settings",
         "requestCaptureDir": "Capture Storage Path",
         "requestCaptureDirHint": "Leave empty to use the default directory ~/.code-switch/request-captures, or enter/select a custom directory",
         "requestCaptureDirPlaceholder": "Leave empty for the default directory, or enter a custom path",
@@ -1006,6 +1025,7 @@
       "defaultName": "Kapi",
       "coins": "Coins",
       "dreamImageAlt": "Dream scene",
+      "dreamImageOpen": "Open dream image",
       "petStageLabel": "Pet the companion",
       "atlasWaiting": "Waiting for pet atlas",
       "awayMark": "Away",
@@ -1051,15 +1071,22 @@
       "ambient": {
         "welcome": "Welcome back.",
         "night": "It is late. Let us rest quietly together for a while.",
-        "time": "It is {time}."
+        "time": "It is {time}.",
+        "hungry": ["I'm hungry...", "Feed me please~", "My tummy is rumbling..."],
+        "dirty": ["I feel itchy...", "Bath time maybe?", "I could use a bath..."],
+        "lateNight": ["It's late - get some rest soon~", "Your eyes need a break", "If you're sleepy, go to bed... I'm sleepy too..."],
+        "gloomy": ["A little bored...", "Play with me for a bit...", "Sigh..."],
+        "snack": ["Sneaking a little snack~", "Crunch crunch...", "This leaf is delicious"],
+        "happyIdle": ["What a good day~", "Yay!", "So happy I could hop"],
+        "zen": ["...", "Just vibing.", "Perfectly still..."]
       },
       "contextMenu": {
         "label": "Pet shortcut menu",
         "title": "Quick actions",
-        "chat": "Open chat",
+        "chat": "Chat",
         "settings": "Open settings",
-        "studio": "Open Studio",
-        "hide": "Hide window"
+        "studio": "Pet studio",
+        "hide": "Hide pet"
       },
       "loading": "Connecting to pet status...",
       "loadFailed": "Failed to read status: {error}",
@@ -1067,7 +1094,9 @@
       "dashboardLabel": "Pet status",
       "experience": "Experience",
       "actionsLabel": "Pet actions",
+      "requiresLevel": "Lv.{level}",
       "feedback": {
+        "imageOpenBlocked": "The browser blocked the original image. Allow pop-ups and try again.",
         "scheduledActionFailed": "Scheduled action failed, please retry",
         "workCompleted": "You just finished work and earned {coins} coins.",
         "studyCompleted": "You just finished studying and gained {growth} growth.",
@@ -1089,11 +1118,14 @@
         },
         "success": {
           "petted": "Mood improved a little",
+          "happy": ["Hehe~", "That feels nice!", "More pets please~"],
+          "zenPetted": ["So peaceful...", "Zen +1", "The bird approves too."],
           "sleep": "Good night",
           "wake": "Awake now",
-          "work": "Off to work",
-          "study": "Off to study",
-          "reward": "Task complete · Coins +{coins} · Growth +{growth}",
+        "work": "Off to work",
+        "study": "Off to study",
+        "workEndedEarly": "Work task ended",
+        "reward": "Task complete · Coins +{coins} · Growth +{growth}",
           "action": "{action} complete"
         }
       }
@@ -1146,7 +1178,9 @@
         "providerUnsupported": "This provider does not support transcription",
         "bindingUnavailable": "The transcription service is not connected",
         "timeout": "Voice transcription timed out; please retry",
-        "failed": "Voice transcription failed; please retry"
+        "failed": "Voice transcription failed; please retry",
+        "tooLong": "Recording reached the 60-second limit",
+        "tooLarge": "Recording reached the size limit; please try a shorter clip"
       },
       "errors": {
         "cancelled": "Reply cancelled",
@@ -1251,6 +1285,7 @@
       "subtitle": "Manage long-term facts injected into the pet conversation context.",
       "unavailable": "Memory for pet {petId} is unavailable. The target Wails service is fixed to default, so read/write is disabled to prevent mixing pets.",
       "count": "{count} memories",
+      "openFile": "Open file",
       "confirmClear": "Click again to confirm clearing",
       "clear": "Clear memory",
       "inputPlaceholder": "Add a fact worth remembering long-term",
@@ -1262,24 +1297,24 @@
     },
     "settings": {
       "eyebrow": "DESKTOP PET",
-      "title": "Pet Settings",
-      "subtitle": "Manage the desktop pet window, care rhythm, agent references, and dream preferences.",
+      "title": "Desktop Pet",
+      "subtitle": "A little capybara that lives on your desktop",
       "backToSettings": "Back to settings",
       "openStudio": "Open Studio",
       "save": "Save settings",
       "tabsAria": "Pet settings tabs",
-      "tabs": { "overview": "Overview", "stats": "Status stats", "agent": "Agent", "sleep": "Sleep & dreams", "skins": "Skins", "memory": "Long-term memory", "dream-history": "Dream history", "studio": "Studio" },
+      "tabs": { "overview": "Overview", "stats": "Attributes", "agent": "Agent", "sleep": "Sleep", "skins": "My pets", "memory": "Memory", "dream-history": "Dream history", "studio": "Pet studio" },
       "loading": "Reading pet configuration...",
       "operationFailed": "Settings operation failed: {error}",
       "runtime": { "fallback": "Local preview mode", "backend": "Backend connected", "waiting": "Waiting for connection" },
       "status": { "none": "No status", "working": "Working", "studying": "Studying", "awayRemaining": "{label} - ends in {minutes} minutes", "awayEnding": "{label} - ending soon", "sleepingRemaining": "Sleeping - wakes in {minutes} minutes", "sleeping": "Sleeping", "awake": "Awake and active" },
-      "overview": { "title": "Window & care", "subtitle": "Desktop pet visibility and automatic care thresholds.", "previewUnavailable": "Pet preview unavailable", "basicTitle": "Companion profile", "basicSubtitle": "Rename the companion without touching its progress.", "name": "Name", "namePlaceholder": "Give your companion a name", "rename": "Rename", "summary": "Level {level} · {coins} coins · Together since {date}", "noDate": "Unknown date", "windowEnabled": "Enable desktop pet window", "windowEnabledHint": "The host window manager will show the transparent pet window when enabled.", "autoCare": "Automatic care", "autoCareHint": "Backend rules choose care actions when hunger, cleanliness, or mood falls below the threshold.", "autoCareThreshold": "Automatic care threshold", "insensitive": "Less sensitive", "attentive": "Prompt care", "hint": "Right-click the desktop pet for care and activity actions. You can drag it around, pet it, or show and hide it from the tray menu." },
-      "agent": { "title": "Agent reference", "subtitle": "Only provider/model identifiers are saved; keys and provider configuration are not copied.", "providerPlatform": "Provider platform", "noPlatform": "No platform", "providerId": "Provider ID", "modelId": "Model ID", "modelReference": "Provider / model", "reasoningEffort": "Reasoning effort", "project": "Project", "projectId": "Project ID", "systemPrompt": "System prompt", "platformPlaceholder": "e.g. claude, codex, or gemini", "providerPlaceholder": "e.g. openai-main", "modelPlaceholder": "Choose a configured model", "loadingModels": "Reading configured models...", "noModels": "No enabled models are available for this platform.", "followModel": "Follow model default", "projectPlaceholder": "Optional project reference", "loadingProjects": "Reading projects...", "projectNone": "No project", "providerLoadFailed": "Failed to read providers: {error}", "projectLoadFailed": "Failed to read projects: {error}", "systemPromptPlaceholder": "Leave blank to use the built-in prompt", "resetPrompt": "Reset to built-in", "promptHint": "Supports double-brace placeholders: name (pet name), status (live stats), project (bound project info). Leave the built-in text unchanged to use the default.", "projectHint": "When bound, the pet receives the project's name and working directory as chat context.", "proactive": "Proactive interaction", "proactiveHint": "Allow the pet to start conversations on a schedule; quiet hours can cross midnight.", "proactiveFrequency": "Proactive frequency", "quietStart": "Quiet hours start", "quietEnd": "Quiet hours end", "hour": "h", "to": "to" },
+      "overview": { "title": "Window & care", "subtitle": "Desktop pet visibility and automatic care thresholds.", "previewUnavailable": "Pet preview unavailable", "basicTitle": "Pet profile", "basicSubtitle": "Rename the companion without touching its progress.", "name": "Name", "namePlaceholder": "Pet name", "rename": "Save", "summary": "Lv.{level} · {coins} coins · adopted {date}", "noDate": "Unknown date", "windowEnabled": "Enable desktop pet", "windowEnabledHint": "Show a capybara buddy that wanders along the bottom of your screen. Off by default.", "autoCare": "Automatic care", "autoCareHint": "Automatically feed, clean, or play with the pet when a stat drops below the threshold. Coin costs and level requirements still apply.", "autoCareThreshold": "Care threshold", "insensitive": "Less sensitive", "attentive": "Prompt care", "hint": "Right-click the capybara to feed it, bathe it, play with it, or send it to work and study. Drag it around, or click it to pet it. You can also show or hide it from the tray menu." },
+      "agent": { "title": "Agent reference", "subtitle": "Only provider/model identifiers are saved; keys and provider configuration are not copied.", "description": "The pet is an agent: give it a chat model, a personality prompt, and optionally bind it to a project. Double-click the pet (or use its menu) to talk.", "model": "Chat model", "providerPlatform": "Provider platform", "noPlatform": "No platform", "providerId": "Provider ID", "modelId": "Model ID", "modelReference": "Provider / model", "reasoningEffort": "Reasoning effort", "reasoningUnavailable": "This model does not declare reasoning capabilities.", "project": "Project", "projectId": "Project ID", "systemPrompt": "System prompt", "platformPlaceholder": "e.g. claude, codex, or gemini", "providerPlaceholder": "e.g. openai-main", "modelPlaceholder": "Select a chat model", "loadingModels": "Reading models from the current provider...", "noModels": "The current provider returned no usable models. Check that it is enabled and its model catalog is reachable.", "followModel": "Follow model default", "projectPlaceholder": "Optional project reference", "loadingProjects": "Reading projects...", "projectNone": "No project", "providerLoadFailed": "Failed to read providers: {error}", "projectLoadFailed": "Failed to read projects: {error}", "systemPromptPlaceholder": "Leave blank to use the built-in prompt", "resetPrompt": "Reset to built-in", "promptHint": "Supports double-brace placeholders: name (pet name), status (live stats), project (bound project info). Leave the built-in text unchanged to use the default.", "projectHint": "When bound, the pet receives the project's name and working directory as chat context.", "proactive": "Proactive interaction", "proactiveDesc": "When on, the pet comments in its own words on level-ups, returning from work, and big token meals, and occasionally starts a chat on its own. Off by default.", "proactiveHint": "The pet stays quiet during quiet hours. Each proactive remark is a real model call and uses a small number of tokens.", "proactiveFrequency": "Small-talk frequency", "proactiveQuota": "Up to {count} proactive remarks per day at this frequency.", "quietStart": "Quiet hours start", "quietEnd": "Quiet hours end", "hour": "h", "to": "to" },
       "reasoning": { "none": "none", "minimal": "minimal", "low": "low", "medium": "medium", "high": "high" },
       "frequency": { "low": "Low", "medium": "Medium", "high": "High" },
       "unlocks": { "soak": "Bathe", "work": "Work", "study": "Study" },
-      "voice": { "title": "Voice", "subtitle": "Voice playback is adapted by the backend provider; this page submits references and basic preferences.", "enabled": "Enable voice", "enabledHint": "TTS requests are disabled when this is off.", "providerId": "Voice Provider ID", "modelId": "Voice Model ID", "modelReference": "Voice model", "voice": "Voice", "mode": "Voice mode", "speech": "speech", "chat": "chat", "tag": "Voice tag", "providerPlaceholder": "Optional provider reference", "modelPlaceholder": "Optional model reference", "voicePlaceholder": "Leave blank for the default voice", "auto": "Automatic", "instruction": "Voice style instruction", "instructionPlaceholder": "e.g. gentle, concise", "tagPlaceholder": "MiMo only: dialect or tone, e.g. Cantonese, playful", "default": "Endpoint default", "custom": "Custom voice", "test": "Preview", "testing": "Playing...", "testSample": "Hi there, I'm {name} - let's have a great day!", "hint": "Classic TTS uses /audio/speech; chat-audio models use chat/completions. Auto mode follows the model ID compatibility rule." },
-      "dream": { "title": "Dream", "subtitle": "Sleep-talk settings; length and bubble duration are constrained by the contract.", "enabled": "Enable dreams", "enabledHint": "Allow sleep talk generation; a blank prompt uses backend defaults.", "prompt": "Dream prompt", "promptPlaceholder": "Leave blank for the default dream prompt", "resetPrompt": "Reset to built-in", "promptHint": "This controls dream content and style. Output format and emotion rules remain enforced by the backend.", "keywords": "Keywords", "keywordsPlaceholder": "Separate with semicolons, e.g. seaside;code;stars", "keywordsHint": "Separate items with semicolons; each dream can incorporate these materials.", "sleepTalkMinLength": "Minimum sleep-talk length", "bubbleDuration": "Base bubble duration", "seconds": "{count} sec", "imageModel": "Dream image model", "imageModelHint": "Image provider selection is shared with the application image settings.", "imageModelManaged": "Managed by global image settings" },
+      "voice": { "title": "Voice", "subtitle": "Voice playback is adapted by the backend provider; this page submits references and basic preferences.", "enabled": "Enable voice", "enabledHint": "TTS requests are disabled when this is off.", "providerId": "Voice Provider ID", "modelId": "Voice Model ID", "modelReference": "Voice model", "voice": "Voice", "mode": "Voice mode", "speech": "speech", "chat": "chat", "tag": "Voice tag", "providerPlaceholder": "Optional provider reference", "modelPlaceholder": "Optional model reference", "noModels": "No speech-capable models are configured.", "voicePlaceholder": "Leave blank for the default voice", "auto": "Automatic", "instruction": "Voice style instruction", "instructionPlaceholder": "e.g. gentle, concise", "tagPlaceholder": "MiMo only: dialect or tone, e.g. Cantonese, playful", "default": "Endpoint default", "custom": "Custom voice", "test": "Preview", "testing": "Playing...", "testFailed": "Voice preview failed: {error}", "testSample": "Hi there, I'm {name} - let's have a great day!", "hint": "Classic TTS uses /audio/speech; chat-audio models use chat/completions. Auto mode follows the model ID compatibility rule." },
+      "dream": { "title": "Dream", "subtitle": "Sleep-talk settings; length and bubble duration are constrained by the contract.", "description": "Configure what happens while the pet sleeps. Dream topics remain random by default.", "dreamTalk": "Dream talk", "dreamTalkHint": "While asleep, the pet uses its own Agent to dream, react emotionally, create an image, and murmur about it. Turning this off stops the entire flow.", "enabled": "Enable dreams", "enabledHint": "Allow sleep talk generation; a blank prompt uses backend defaults.", "prompt": "Dream prompt", "promptPlaceholder": "Leave blank for the default dream prompt", "resetPrompt": "Reset to built-in", "promptHint": "This controls dream content and style. Output format and emotion rules remain enforced by the backend.", "keywords": "Keywords", "keywordsPlaceholder": "Separate with semicolons, e.g. seaside;code;stars", "keywordsHint": "Separate items with semicolons; each dream can incorporate these materials.", "sleepTalkMinLength": "Minimum sleep-talk length", "bubbleDuration": "Base bubble duration", "seconds": "{count} sec", "imageModel": "Dream image model", "imageModelHint": "Choose an enabled provider model explicitly; only models categorized as image are shown.", "imageModelPlaceholder": "Select an image model", "noImageModels": "No image-capable models are configured." },
       "skins": { "title": "Skins", "subtitle": "Switch between built-in and backend-scanned atlas skins.", "refresh": "Refresh skins", "current": "Current skin", "default": "Built-in default - Capybara", "builtinHint": "Bundled default skin", "inUse": "In use", "use": "Use", "poseCount": "{count} poses", "delete": "Delete skin", "deleteConfirm": "Delete {name}? This cannot be undone.", "directoryManaged": "Skin files are kept in the application's controlled pet asset directory.", "directoryUnavailable": "The controlled skin directory is unavailable", "openFolder": "Open folder", "displayOn": "Pet window enabled", "displayOff": "Pet window hidden", "dropHint": "Use Pet Studio to import or generate a skin. The runtime only accepts validated atlas.png and pet.json assets.", "emptyHint": "No additional skins yet; backend skin scanning will add them here automatically." },
       "stats": { "title": "Status stats", "subtitle": "Data comes from the current pet snapshot; experience logs are read through a separate backend service.", "refresh": "Refresh status", "loadFailed": "Failed to read stats: {error}", "needs": "Needs", "range": "0 - 100", "hunger": "Hunger", "cleanliness": "Cleanliness", "mood": "Mood", "levelGrowth": "Level & growth", "growthProgress": "{current} / {next} growth", "growthNote": "Current growth combines base growth and accumulated experience; level progress is {progress}%.", "experienceTokens": "Experience & tokens", "logLoading": "Reading logs...", "logUnavailable": "Logs unavailable", "logCount": "{count} logs", "totalExperience": "Total experience", "totalTokens": "Total tokens", "logLoadingDetail": "Reading experience logs...", "logError": "Experience logs unavailable: {error}", "logEmpty": "No experience logs to display.", "premium": "Premium", "base": "Base", "tokenEntry": "{count} tok", "experienceEntry": "+{count}", "coins": "Coins", "token": "Token", "companionDays": "Companion days", "days": "{count} days", "noData": "No data", "currentStatus": "Current status", "plans": "Plans", "memories": "Memories", "count": "{count}", "unlocks": "Feature unlocks", "currentLevel": "Current level Lv.{level}", "unlocked": "Unlocked", "unlockAt": "Unlocks at Lv.{level}", "noSnapshot": "No pet snapshot is available.", "defaultOnly": "The experience log service currently supports only the default pet.", "unknownModel": "Unknown model" }
     },

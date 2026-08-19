@@ -55,10 +55,33 @@ tasks:
       - "**/*.go"
       - go.mod
       - go.sum
+    vars:
+      BINDINGS_STAGING_DIR: '{{.ROOT_DIR}}/.task/bindings-staging'
     generates:
       - frontend/bindings/**/*
     cmds:
-      - wails3 generate bindings -f '{{.BUILD_FLAGS}}' -clean=true -ts
+      # Wails 会在输出目录父级执行目录 rename；Windows 下前端 watcher 或 WebView
+      # 可能占用 frontend 目录，因此先在 frontend 外生成，再逐项同步到最终目录。
+      - wails3 generate bindings -d '{{.BINDINGS_STAGING_DIR}}' -f '{{.BUILD_FLAGS}}' -clean=true -ts
+      - cmd: >-
+          powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command
+          '& {
+          $ErrorActionPreference = "Stop";
+          $source = [System.IO.Path]::GetFullPath("{{.BINDINGS_STAGING_DIR}}");
+          $destination = [System.IO.Path]::GetFullPath("{{.ROOT_DIR}}/frontend/bindings");
+          if (Test-Path -LiteralPath $destination) {
+            Get-ChildItem -LiteralPath $destination -Force | Remove-Item -Recurse -Force
+          };
+          New-Item -ItemType Directory -Path $destination -Force | Out-Null;
+          Get-ChildItem -LiteralPath $source -Force | Copy-Item -Destination $destination -Recurse -Force
+          }'
+        platforms: [windows]
+      - cmd: rm -rf '{{.ROOT_DIR}}/frontend/bindings'
+        platforms: [linux, darwin]
+      - cmd: mkdir -p '{{.ROOT_DIR}}/frontend/bindings'
+        platforms: [linux, darwin]
+      - cmd: cp -R '{{.BINDINGS_STAGING_DIR}}'/.' '{{.ROOT_DIR}}/frontend/bindings'
+        platforms: [linux, darwin]
 
   generate:icons:
     summary: Generates Windows `.ico` and Mac `.icns` files from an image

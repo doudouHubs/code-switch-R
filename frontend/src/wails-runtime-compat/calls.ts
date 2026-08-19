@@ -221,7 +221,23 @@ export function ByName(methodName: string, ...args: any[]): CancellablePromise<a
     // 浏览器预览没有 Wails 消息桥时，仍复用同一套 methodName 契约访问本机 Go
     // 服务；只有宠物页实际调用的白名单会被 bridge 接受，其他能力继续 fail-fast。
     if (!isWailsRuntimeAvailable()) {
-        return CancellablePromise.resolve(callBrowserBridge(methodName, args));
+        const controller = new AbortController();
+        let cancelled = false;
+        // CancellablePromise 的取消回调必须直接控制底层 fetch；仅取消外层
+        // promise 会让上传仍在 bridge/上游运行，前端看似停了，服务端却继续烧请求。
+        return new CancellablePromise<any>((resolve, reject) => {
+            void callBrowserBridge(methodName, args, controller.signal).then(resolve, (error) => {
+                // 取消后的底层 AbortError 是预期收敛路径，不能再制造一个未处理拒绝。
+                if (cancelled) {
+                    resolve(undefined);
+                    return;
+                }
+                reject(error);
+            });
+        }, () => {
+            cancelled = true;
+            controller.abort();
+        });
     }
     return Call({ methodName, args });
 }

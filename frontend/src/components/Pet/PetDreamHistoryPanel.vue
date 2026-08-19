@@ -20,6 +20,7 @@ const PET_DREAM_METHODS = {
 } as const
 const PET_DREAM_PAGE_SIZE = 20
 const PET_DREAM_EMOTIONS = ['pleasant', 'calm', 'tense', 'afraid'] as const
+type PageNumber = number | 'ellipsis'
 
 interface PetDreamHistoryPage {
   records: PetDreamHistoryRecord[]
@@ -91,6 +92,19 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+function buildPageNumbers(totalPageCount: number, currentPage: number): PageNumber[] {
+  if (totalPageCount <= 7) return Array.from({ length: totalPageCount }, (_, index) => index + 1)
+
+  const pages: PageNumber[] = [1]
+  const start = Math.max(2, Math.min(currentPage - 1, totalPageCount - 3))
+  const end = Math.min(totalPageCount - 1, Math.max(currentPage + 1, 4))
+  if (start > 2) pages.push('ellipsis')
+  for (let value = start; value <= end; value += 1) pages.push(value)
+  if (end < totalPageCount - 1) pages.push('ellipsis')
+  pages.push(totalPageCount)
+  return pages
+}
+
 function formatDreamDate(timestamp: number): string {
   if (!Number.isFinite(timestamp) || timestamp <= 0) return t('pet.common.unknownDate')
   return new Intl.DateTimeFormat(locale.value, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(timestamp))
@@ -119,6 +133,7 @@ const selectedRecord = computed(() => records.value.find((record) => record.id =
 const selectedImageUrl = computed(() => (selectedRecord.value ? imageUrls.value[selectedRecord.value.id] ?? '' : ''))
 const selectedImageLoading = computed(() => (selectedRecord.value ? imageLoading.value[selectedRecord.value.id] === true : false))
 const selectedImageError = computed(() => (selectedRecord.value ? imageErrors.value[selectedRecord.value.id] ?? '' : ''))
+const pageNumbers = computed(() => buildPageNumbers(totalPages.value, page.value))
 
 function resetImageStates(): void {
   imageUrls.value = {}
@@ -234,11 +249,13 @@ onUnmounted(() => {
       </div>
       <button
         type="button"
-        class="pet-dream-history-panel__button"
+        class="pet-dream-history-panel__icon-button"
+        :aria-label="t('pet.common.refresh')"
+        :title="t('pet.common.refresh')"
         :disabled="loading"
         @click="refresh"
       >
-        {{ loading ? t('pet.common.loading') : t('pet.common.refresh') }}
+        <span aria-hidden="true" :class="{ 'is-spinning': loading }">↻</span>
       </button>
     </div>
 
@@ -274,9 +291,45 @@ onUnmounted(() => {
           <button type="button" class="pet-dream-history-panel__text-button" @click="retryCurrentPage">{{ t('pet.dreamHistory.retryPage') }}</button>
         </div>
         <div v-if="totalPages > 1" class="pet-dream-history-panel__pagination">
-          <button type="button" :disabled="loading || page <= 1" @click="loadPage(page - 1)">{{ t('pet.dreamHistory.previousPage') }}</button>
-          <span>{{ t('pet.dreamHistory.pagination', { page, totalPages, total }) }}</span>
-          <button type="button" :disabled="loading || page >= totalPages" @click="loadPage(page + 1)">{{ t('pet.dreamHistory.nextPage') }}</button>
+          <div class="pet-dream-history-panel__page-controls">
+            <button
+              type="button"
+              class="pet-dream-history-panel__page-button"
+              :aria-label="t('pet.dreamHistory.previousPage')"
+              :title="t('pet.dreamHistory.previousPage')"
+              :disabled="loading || page <= 1"
+              @click="loadPage(page - 1)"
+            >
+              <span aria-hidden="true">‹</span>
+            </button>
+            <div class="pet-dream-history-panel__page-numbers">
+              <template v-for="(pageNumber, index) in pageNumbers" :key="`${pageNumber}-${index}`">
+                <span v-if="pageNumber === 'ellipsis'" class="pet-dream-history-panel__ellipsis" aria-hidden="true">…</span>
+                <button
+                  v-else
+                  type="button"
+                  :class="['pet-dream-history-panel__page-button', { 'is-current': page === pageNumber }]"
+                  :aria-label="t('pet.dreamHistory.pagination', { page: pageNumber, totalPages, total })"
+                  :title="t('pet.dreamHistory.pagination', { page: pageNumber, totalPages, total })"
+                  :disabled="loading"
+                  @click="loadPage(pageNumber)"
+                >
+                  {{ pageNumber }}
+                </button>
+              </template>
+            </div>
+            <button
+              type="button"
+              class="pet-dream-history-panel__page-button"
+              :aria-label="t('pet.dreamHistory.nextPage')"
+              :title="t('pet.dreamHistory.nextPage')"
+              :disabled="loading || page >= totalPages"
+              @click="loadPage(page + 1)"
+            >
+              <span aria-hidden="true">›</span>
+            </button>
+          </div>
+          <span class="pet-dream-history-panel__page-indicator">{{ t('pet.dreamHistory.pagination', { page, totalPages, total }) }}</span>
         </div>
       </div>
 
@@ -342,8 +395,8 @@ onUnmounted(() => {
   gap: 12px;
   border: 1px solid var(--dream-line);
   border-radius: 8px;
-  padding: 14px;
-  background: color-mix(in srgb, var(--dream-surface) 80%, transparent);
+  padding: 16px;
+  background: color-mix(in srgb, var(--settings-strong-surface, #f5f5f7) 30%, transparent);
   color: var(--dream-ink);
 }
 
@@ -395,7 +448,7 @@ onUnmounted(() => {
 }
 
 .pet-dream-history-panel__button,
-.pet-dream-history-panel__pagination button,
+.pet-dream-history-panel__icon-button,
 .pet-dream-history-panel__text-button {
   border: 1px solid var(--dream-line);
   border-radius: 7px;
@@ -407,10 +460,40 @@ onUnmounted(() => {
   font-size: 11px;
 }
 
-.pet-dream-history-panel__button:disabled,
-.pet-dream-history-panel__pagination button:disabled {
+.pet-dream-history-panel__icon-button {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--dream-muted);
+  font-size: 18px;
+  line-height: 1;
+}
+
+.pet-dream-history-panel__icon-button:hover,
+.pet-dream-history-panel__page-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--dream-muted) 10%, transparent);
+}
+
+.pet-dream-history-panel__icon-button:disabled,
+.pet-dream-history-panel__page-button:disabled {
   cursor: not-allowed;
   opacity: 0.5;
+}
+
+.pet-dream-history-panel__icon-button span.is-spinning {
+  animation: pet-dream-history-spin 0.9s linear infinite;
+}
+
+@keyframes pet-dream-history-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .pet-dream-history-panel__text-button {
@@ -446,15 +529,16 @@ onUnmounted(() => {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 9px;
+  gap: 0;
   border: 1px solid var(--dream-line);
-  border-radius: 9px;
-  padding: 9px;
-  background: color-mix(in srgb, var(--settings-strong-surface, #f5f5f7) 45%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--dream-surface) 30%, transparent);
 }
 
 .pet-dream-history-panel__list-wrap {
-  min-height: 360px;
+  height: min(34rem, 65vh);
+  min-height: 18rem;
+  overflow: hidden;
 }
 
 .pet-dream-history-panel__list {
@@ -490,8 +574,8 @@ onUnmounted(() => {
 
 .pet-dream-history-panel__thumb {
   display: flex;
-  width: 48px;
-  height: 48px;
+  width: 56px;
+  height: 56px;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
@@ -530,14 +614,64 @@ onUnmounted(() => {
 }
 
 .pet-dream-history-panel__pagination {
+  align-items: center;
   flex-wrap: wrap;
   border-top: 1px solid var(--dream-line);
-  padding-top: 8px;
+  padding: 6px;
 }
 
-.pet-dream-history-panel__pagination span {
+.pet-dream-history-panel__page-controls,
+.pet-dream-history-panel__page-numbers {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 2px;
+}
+
+.pet-dream-history-panel__page-controls {
   flex: 1 1 auto;
+}
+
+.pet-dream-history-panel__page-numbers {
+  overflow-x: auto;
+}
+
+.pet-dream-history-panel__page-button {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 6px;
+  padding: 0;
+  background: transparent;
+  color: var(--dream-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.pet-dream-history-panel__page-button.is-current {
+  background: var(--mac-accent, #0a84ff);
+  color: #fff;
+}
+
+.pet-dream-history-panel__ellipsis {
+  width: 12px;
+  flex: 0 0 auto;
+  color: var(--dream-muted);
+  font-size: 10px;
   text-align: center;
+}
+
+.pet-dream-history-panel__page-indicator {
+  flex: 0 0 auto;
+  color: var(--dream-muted);
+  font-size: 10px;
+  white-space: nowrap;
 }
 
 .pet-dream-history-panel__page-error {
@@ -547,8 +681,10 @@ onUnmounted(() => {
 }
 
 .pet-dream-history-panel__detail {
-  min-height: 360px;
+  height: min(34rem, 65vh);
+  min-height: 18rem;
   overflow-y: auto;
+  padding: 12px;
 }
 
 .pet-dream-history-panel__detail-header h4 {
@@ -627,11 +763,7 @@ onUnmounted(() => {
 
   .pet-dream-history-panel__list-wrap,
   .pet-dream-history-panel__detail {
-    min-height: 0;
-  }
-
-  .pet-dream-history-panel__list {
-    max-height: 300px;
+    min-height: 18rem;
   }
 }
 </style>

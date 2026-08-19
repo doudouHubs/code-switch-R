@@ -71,7 +71,7 @@ func TestPetWindowAPIForwardsWindowControls(t *testing.T) {
 	if len(driver.sizeCalls) != 1 || driver.sizeCalls[0] != [2]int{500, 360} {
 		t.Fatalf("size calls = %v", driver.sizeCalls)
 	}
-	if driver.focusCalls != 1 || len(driver.topCalls) != 0 {
+	if driver.focusCalls != 1 || len(driver.topCalls) != 1 || driver.topCalls[0] {
 		t.Fatalf("focus/top calls = %d/%v", driver.focusCalls, driver.topCalls)
 	}
 }

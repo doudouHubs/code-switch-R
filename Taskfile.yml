@@ -13,9 +13,24 @@ vars:
 
 tasks:
   build:
-    summary: Builds the application
+    summary: Builds a production release of the application
     cmds:
+      # 根任务统一走生产构建，避免每次发布时漏传 PRODUCTION=true。
       - task: "{{OS}}:build"
+        vars:
+          PRODUCTION: "true"
+
+  publish:
+    summary: Builds the current platform and pushes the release tag
+    preconditions:
+      - sh: git diff --quiet
+        msg: Working tree has unstaged changes; commit or stash them before publishing.
+      - sh: git diff --cached --quiet
+        msg: Index has staged changes; commit or unstage them before publishing.
+    cmds:
+      - task: build
+      # AppVersion 是发布版本的唯一入口；脚本会创建同名 tag，推送后触发 GitHub Actions。
+      - go run ./scripts/publish.go
 
   package:
     summary: Packages a production build of the application

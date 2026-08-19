@@ -36,6 +36,7 @@ import {
   type PetDreamHistoryRecord,
   type PetSkinRecord,
   type PetSkinSelection,
+  type PetRuntimeSnapshot,
   type PetSnapshot,
   type PetState,
   type PetVoiceMode,
@@ -51,11 +52,15 @@ const PET_WINDOW_SERVICE = 'codeswitch/services.PetWindowAPI'
  */
 export const PET_RUNTIME_METHODS = {
   getSnapshot: 'GetSnapshot',
+  getRuntimeSnapshot: 'GetRuntimeSnapshot',
+  getAtlas: 'GetAtlas',
   performAction: 'PerformAction',
-  petted: 'Petted',
+  endWorkEarly: 'EndWorkEarlyForPet',
+  petted: 'PettedForPet',
   saveSettings: 'SaveSettings',
   updateName: 'UpdateName',
-  recordProactive: 'RecordProactive'
+  recordProactive: 'RecordProactive',
+  recordProactiveState: 'RecordProactiveState'
 } as const
 
 export const PET_WINDOW_RUNTIME_METHODS = {
@@ -84,10 +89,15 @@ export interface PetWindowRuntimeState {
 
 export interface PetApi {
   getSnapshot(petId?: string): Promise<PetSnapshot>
+  getRuntimeSnapshot(petId?: string): Promise<PetRuntimeSnapshot>
+  getAtlas(petId?: string, cacheKey?: string): Promise<PetAtlasAsset | null>
+  invalidateAtlas(petId?: string): void
   performAction(petId: string, action: PetInteractionAction): Promise<PetActionResult>
+  endWorkEarly(petId: string, now?: number): Promise<PetActionResult>
   saveSettings(petId: string, settings: PetSettingsInput): Promise<PetSnapshot>
   updateName(petId: string, name: string): Promise<PetSnapshot>
   recordProactive(petId: string, now?: number): Promise<PetSnapshot>
+  recordProactiveState(petId: string, now?: number): Promise<PetState>
   setWindowEnabled(enabled: boolean): Promise<PetWindowRuntimeState>
   getWindowState(): Promise<PetWindowRuntimeState>
   getRuntimeMode(): PetRuntimeMode
@@ -103,6 +113,9 @@ const wailsRuntimeAdapter: PetRuntimeAdapter = {
 }
 
 const fallbackSnapshots = new Map<string, PetSnapshot>()
+// atlas 是展示资源而不是运行时状态；按宠物和皮肤选择缓存，避免每次状态事件都重新
+// 读取 PNG、生成 data URL 或让 WebView 重新解码同一张图片。
+const atlasCache = new Map<string, PetAtlasAsset | null>()
 let fallbackWindowState = createFallbackWindowState(false)
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -231,8 +244,15 @@ function defaultDreamConfig(petId: string): PetDreamConfig {
     prompt: '',
     keywords: '',
     sleepTalkMinLength: PET_DREAM_DEFAULT_SLEEP_TALK_LENGTH,
-    bubbleMinDurationSeconds: PET_DREAM_DEFAULT_BUBBLE_DURATION_SECONDS
+    bubbleMinDurationSeconds: PET_DREAM_DEFAULT_BUBBLE_DURATION_SECONDS,
+    imageProviderPlatform: null,
+    imageProviderId: null,
+    imageModelId: null
   }
+}
+
+export function normalizePetRuntimeState(value: unknown, petId = DEFAULT_PET_ID): PetState {
+  return normalizeState(value, petId)
 }
 
 function defaultSkinSelection(petId: string): PetSkinSelection {
@@ -254,8 +274,8 @@ function createFallbackWindowState(open: boolean): PetWindowRuntimeState {
     mode: 'passive',
     clickThrough: true,
     focused: false,
-    // 桌宠默认不置顶；fallback 预览状态也必须和真实 Wails 窗口保持同一语义。
-    alwaysOnTop: false
+    // 桌宠默认置顶；fallback 预览状态也必须和真实 Wails 窗口保持同一语义。
+    alwaysOnTop: true
   }
 }
 
@@ -351,7 +371,10 @@ function normalizeDreamConfig(value: unknown, petId: string, fallback = defaultD
       fallback.bubbleMinDurationSeconds,
       PET_DREAM_MIN_BUBBLE_DURATION_SECONDS,
       PET_DREAM_MAX_BUBBLE_DURATION_SECONDS
-    )
+    ),
+    imageProviderPlatform: asNullableString(source.imageProviderPlatform, fallback.imageProviderPlatform),
+    imageProviderId: asNullableString(source.imageProviderId, fallback.imageProviderId),
+    imageModelId: asNullableString(source.imageModelId, fallback.imageModelId)
   }
 }
 
@@ -537,6 +560,11 @@ function hasStatePayload(value: unknown): boolean {
   return isRecord(root.state) || 'hunger' in root || 'cleanliness' in root || 'awayTask' in root
 }
 
+function hasFullSnapshotPayload(value: unknown): boolean {
+  const root = asRecord(value)
+  return hasStatePayload(root) && isRecord(root.experience) && isRecord(root.agent)
+}
+
 function normalizeSnapshot(value: unknown, petId: string): PetSnapshot {
   const root = asRecord(value)
   if (!hasStatePayload(root)) throw new Error('Pet snapshot did not contain a PetState payload.')
@@ -564,6 +592,21 @@ function normalizeSnapshot(value: unknown, petId: string): PetSnapshot {
     ),
     skins,
     atlas: normalizeAtlas(root.atlas ?? root.petAtlas)
+  }
+}
+
+function normalizeRuntimeSnapshot(value: unknown, petId: string): PetRuntimeSnapshot {
+  // 复用完整快照的字段归一化逻辑，保证旧宿主返回缺省字段时仍然沿用同一套默认值；
+  // 这里只投影运行时所需字段，不把历史和资源重新带回 renderer 状态。
+  const full = normalizeSnapshot(value, petId)
+  return {
+    state: full.state,
+    experience: full.experience,
+    window: full.window,
+    care: full.care,
+    agent: full.agent,
+    dream: full.dream,
+    skinSelection: full.skinSelection
   }
 }
 
@@ -739,7 +782,7 @@ function fallbackAction(snapshot: PetSnapshot, action: PetInteractionAction, now
   return { ok: true, snapshot: clone(next) }
 }
 
-function normalizeActionResult(value: unknown): PetActionResult {
+function normalizeActionResult(value: unknown, petId = DEFAULT_PET_ID): PetActionResult {
   if (value === undefined || value === null || value === true) return { ok: true }
   const source = asRecord(value)
   const reason = source.reason
@@ -755,19 +798,51 @@ function normalizeActionResult(value: unknown): PetActionResult {
           growth: rewardSource.growth
         }
       : undefined
+  const state = isRecord(source.state) ? normalizeState(source.state, petId) : undefined
   return {
     ok: source.ok !== false,
     ...(validReasons.includes(reason as PetActionFailureReason)
       ? { reason: reason as PetActionFailureReason }
       : {}),
-    ...(reward ? { reward } : {})
+    ...(reward ? { reward } : {}),
+    ...(state ? { state } : {})
   }
+}
+
+export function settlePetRuntimeState(state: PetState, now = Date.now()): PetState {
+  const current = clone(state)
+  const lastTickAt = current.lastTickAt > 0 ? current.lastTickAt : now
+  if (current.sleeping && current.sleepEndsAt > 0 && now >= current.sleepEndsAt) {
+    // 睡眠跨过结束点时分两段结算，保证恢复心情不会延伸到醒来之后；这与
+    // OpenCowork pet-store 的 tick 规则一致，renderer 可以在后端事件到达前保持稳定显示。
+    const slept = applyDecay({ ...current, lastTickAt }, current.sleepEndsAt - lastTickAt)
+    const awake = applyDecay(
+      { ...slept, sleeping: false, sleepEndsAt: 0, lastTickAt: current.sleepEndsAt },
+      now - current.sleepEndsAt
+    )
+    return { ...awake, sleeping: false, sleepEndsAt: 0, lastTickAt: now }
+  }
+  return { ...applyDecay({ ...current, lastTickAt }, now - lastTickAt), lastTickAt: now }
 }
 
 function isRuntimeUnavailable(error: unknown): boolean {
   if (error instanceof ReferenceError) return true
   const message = error instanceof Error ? error.message : String(error)
   return /failed to fetch|networkerror|unknown method|method .*not found|binding|wails runtime|404/i.test(message)
+}
+
+function fallbackEndWorkEarly(snapshot: PetSnapshot, now = Date.now()): PetActionResult {
+  const settled = settleFallback(snapshot, now)
+  const state = settled.state
+  if (!state.awayTask || state.awayTask.kind !== 'work' || now >= state.awayTask.endsAt) {
+    return { ...failure('busy'), snapshot: settled }
+  }
+  const next = {
+    ...settled,
+    state: { ...state, awayTask: null }
+  }
+  fallbackSnapshots.set(state.id, next)
+  return { ok: true, snapshot: clone(next) }
 }
 
 function shouldUsePreviewFallback(error: unknown): boolean {
@@ -816,6 +891,28 @@ export function createPetApi(adapter: PetRuntimeAdapter = wailsRuntimeAdapter): 
     return normalizeSnapshot(raw, petId)
   }
 
+  async function readRemoteRuntimeSnapshot(petId: string): Promise<PetRuntimeSnapshot> {
+    try {
+      const raw = await adapter.call(PET_RUNTIME_METHODS.getRuntimeSnapshot, [petId])
+      mode = 'backend'
+      return normalizeRuntimeSnapshot(raw, petId)
+    } catch (error) {
+      // 旧宿主尚未提供轻量入口时只在兼容路径回读一次完整快照；新宿主不会
+      // 进入这里，因此不会把历史/atlas 重新带回 30 秒运行时链路。
+      if (!isRuntimeUnavailable(error)) throw error
+      const full = await readRemoteSnapshot(petId)
+      return {
+        state: full.state,
+        experience: full.experience,
+        window: full.window,
+        care: full.care,
+        agent: full.agent,
+        dream: full.dream,
+        skinSelection: full.skinSelection
+      }
+    }
+  }
+
   async function getSnapshot(petId = DEFAULT_PET_ID): Promise<PetSnapshot> {
     if (mode === 'fallback') return settleFallback(getFallbackSnapshot(petId))
     try {
@@ -827,6 +924,71 @@ export function createPetApi(adapter: PetRuntimeAdapter = wailsRuntimeAdapter): 
     }
   }
 
+  async function getRuntimeSnapshot(petId = DEFAULT_PET_ID): Promise<PetRuntimeSnapshot> {
+    if (mode === 'fallback') {
+      const full = settleFallback(getFallbackSnapshot(petId))
+      return {
+        state: full.state,
+        experience: full.experience,
+        window: full.window,
+        care: full.care,
+        agent: full.agent,
+        dream: full.dream,
+        skinSelection: full.skinSelection
+      }
+    }
+    try {
+      return await readRemoteRuntimeSnapshot(petId)
+    } catch (error) {
+      if (!shouldUsePreviewFallback(error)) throw error
+      mode = 'fallback'
+      return getRuntimeSnapshot(petId)
+    }
+  }
+
+  async function getAtlas(petId = DEFAULT_PET_ID, cacheKey = 'default'): Promise<PetAtlasAsset | null> {
+    const key = `${petId}:${cacheKey.trim() || 'default'}`
+    if (atlasCache.has(key)) return atlasCache.get(key) ?? null
+
+    if (mode === 'fallback') {
+      const asset = getFallbackSnapshot(petId).atlas
+      atlasCache.set(key, asset)
+      return asset
+    }
+
+    try {
+      const raw = await adapter.call(PET_RUNTIME_METHODS.getAtlas, [petId])
+      const asset = normalizeAtlas(raw)
+      mode = 'backend'
+      atlasCache.set(key, asset)
+      return asset
+    } catch (error) {
+      // 旧宿主兼容时只回读一次完整快照拿资源；正式实现的皮肤切换不会
+      // 经过这个分支，atlas 仍由独立入口和缓存负责生命周期。
+      if (isRuntimeUnavailable(error)) {
+        const full = await readRemoteSnapshot(petId)
+        atlasCache.set(key, full.atlas)
+        return full.atlas
+      }
+      if (!shouldUsePreviewFallback(error)) throw error
+      mode = 'fallback'
+      const asset = getFallbackSnapshot(petId).atlas
+      atlasCache.set(key, asset)
+      return asset
+    }
+  }
+
+  function invalidateAtlas(petId?: string): void {
+    if (!petId) {
+      atlasCache.clear()
+      return
+    }
+    const prefix = `${petId}:`
+    for (const key of atlasCache.keys()) {
+      if (key.startsWith(prefix)) atlasCache.delete(key)
+    }
+  }
+
   async function performAction(petId: string, action: PetInteractionAction): Promise<PetActionResult> {
     if (mode === 'fallback') return fallbackAction(getFallbackSnapshot(petId), action)
     try {
@@ -834,12 +996,17 @@ export function createPetApi(adapter: PetRuntimeAdapter = wailsRuntimeAdapter): 
         action === 'petted' ? PET_RUNTIME_METHODS.petted : PET_RUNTIME_METHODS.performAction,
         action === 'petted' ? [petId] : [petId, action]
       )
-      const result = normalizeActionResult(raw)
-      const snapshot = hasStatePayload(raw)
+      const result = normalizeActionResult(raw, petId)
+      const snapshot = hasFullSnapshotPayload(raw)
         ? normalizeSnapshot(raw, petId)
-        : await readRemoteSnapshot(petId)
+        : undefined
       mode = 'backend'
-      return { ...result, snapshot }
+      // 旧宿主的动作结果没有 state，保留一次性完整回读兼容；新宿主只返回
+      // 几 KB 的 PetActionResult，renderer 直接用 state 更新本地运行时。
+      if (!result.state && !snapshot) {
+        return { ...result, snapshot: await readRemoteSnapshot(petId) }
+      }
+      return { ...result, ...(snapshot ? { snapshot } : {}) }
     } catch (error) {
       if (!shouldUsePreviewFallback(error)) throw error
       mode = 'fallback'
@@ -886,6 +1053,46 @@ export function createPetApi(adapter: PetRuntimeAdapter = wailsRuntimeAdapter): 
       const next = mergeSettings(current, settings, petId)
       fallbackSnapshots.set(petId, next)
       return clone(next)
+    }
+  }
+
+  async function recordProactiveState(petId: string, now = Date.now()): Promise<PetState> {
+    if (mode === 'fallback') {
+      return recordFallbackProactive(settleFallback(getFallbackSnapshot(petId)), now).state
+    }
+    try {
+      const raw = await adapter.call(PET_RUNTIME_METHODS.recordProactiveState, [petId, Math.round(now)])
+      const state = normalizeState(raw, petId)
+      mode = 'backend'
+      return state
+    } catch (error) {
+      // 旧宿主没有轻量入口时只走一次兼容完整接口；正式链路不会触发大快照回读。
+      if (isRuntimeUnavailable(error)) {
+        return (await recordProactive(petId, now)).state
+      }
+      if (!shouldUsePreviewFallback(error)) throw error
+      mode = 'fallback'
+      return recordFallbackProactive(settleFallback(getFallbackSnapshot(petId)), now).state
+    }
+  }
+
+  async function endWorkEarly(petId: string, now = Date.now()): Promise<PetActionResult> {
+    if (mode === 'fallback') return fallbackEndWorkEarly(getFallbackSnapshot(petId), now)
+    try {
+      const raw = await adapter.call(`${PET_SERVICE}.${PET_RUNTIME_METHODS.endWorkEarly}`, [petId, Math.round(now)])
+      const result = normalizeActionResult(raw, petId)
+      const snapshot = hasFullSnapshotPayload(raw)
+        ? normalizeSnapshot(raw, petId)
+        : undefined
+      mode = 'backend'
+      if (!result.state && !snapshot) {
+        return { ...result, snapshot: await readRemoteSnapshot(petId) }
+      }
+      return { ...result, ...(snapshot ? { snapshot } : {}) }
+    } catch (error) {
+      if (!shouldUsePreviewFallback(error)) throw error
+      mode = 'fallback'
+      return fallbackEndWorkEarly(getFallbackSnapshot(petId), now)
     }
   }
 
@@ -950,10 +1157,15 @@ export function createPetApi(adapter: PetRuntimeAdapter = wailsRuntimeAdapter): 
 
   return {
     getSnapshot,
+    getRuntimeSnapshot,
+    getAtlas,
+    invalidateAtlas,
     performAction,
+    endWorkEarly,
     saveSettings,
     updateName,
     recordProactive,
+    recordProactiveState,
     setWindowEnabled,
     getWindowState,
     getRuntimeMode: () => mode

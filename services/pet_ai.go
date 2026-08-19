@@ -553,10 +553,6 @@ func (s *PetAIService) SynthesizeSpeech(ctx context.Context, request PetSpeechRe
 		return nil, "", newPetAIError(PET_AI_DEPENDENCY_UNAVAILABLE, 0, nil)
 	}
 
-	provider, err := s.resolveProvider(ctx, input.Provider, PetCapabilityTTS)
-	if err != nil {
-		return nil, "", err
-	}
 	requestCtx, cancel := context.WithTimeout(ctx, s.options.Timeout)
 	defer cancel()
 
@@ -567,6 +563,12 @@ func (s *PetAIService) SynthesizeSpeech(ctx context.Context, request PetSpeechRe
 			return nil, "", err
 		}
 		defer s.releaseRequest(input.RequestID, state)
+	}
+	// 同步 TTS 也允许通过 requestId 取消；活动登记必须覆盖 provider 解析阶段，
+	// 否则 CancelSpeech 可能早于 provider 解析完成而失去唯一取消 owner。
+	provider, err := s.resolveProvider(requestCtx, input.Provider, PetCapabilityTTS)
+	if err != nil {
+		return nil, "", err
 	}
 
 	mode, err := resolvePetSpeechMode(input.VoiceMode, provider)
@@ -1034,13 +1036,31 @@ func normalizePetAIProtocol(platform, protocol, upstreamProtocol string) (string
 			raw = "gemini"
 		case "claude", "claude-code", "claude_code", "anthropic":
 			raw = "anthropic"
-		case "openai", "openai-compatible", "openai_compatible", "codex":
+		case "openai", "openai-compatible", "openai_compatible":
+			raw = "openai"
+		case "codex":
+			// Codex 的空协议配置仍然必须落到 Responses；只有显式
+			// openai_chat/openai 才允许调用旧的 Chat Completions 兼容层。
+			raw = "responses"
+		}
+	}
+	if raw == "auto" {
+		// 正常 provider reader 会结合 APIEndpoint 先完成 auto 检测；这里仍
+		// 保留运行时兜底，防止自定义 reader 把 auto 原样传入而让 Codex 误走 Chat。
+		switch platform {
+		case "codex":
+			raw = "responses"
+		case "claude", "claude-code", "claude_code", "anthropic":
+			raw = "anthropic"
+		default:
 			raw = "openai"
 		}
 	}
 	switch raw {
 	case "openai", "openai-chat", "openai_chat", "openai-compatible", "openai_compatible":
 		return "openai", nil
+	case "responses", "openai-responses", "openai_responses", "codex":
+		return "responses", nil
 	case "anthropic", "anthropic-messages", "messages":
 		return "anthropic", nil
 	case "gemini", "google-gemini", "generate-content", "generatecontent":
@@ -1079,6 +1099,12 @@ func (s *PetAIService) executeStreamingText(
 		body, err = buildOpenAIChatBody(provider, input)
 		if err == nil {
 			endpoint, err = providerEndpoint(provider, "chat")
+		}
+		accept = "text/event-stream"
+	case "responses":
+		body, err = buildPetAIResponsesBody(provider, input)
+		if err == nil {
+			endpoint, err = providerEndpoint(provider, "responses")
 		}
 		accept = "text/event-stream"
 	case "anthropic":
@@ -1229,6 +1255,8 @@ func petAgentProtocolForAI(protocol string) PetAgentToolProtocol {
 	switch protocol {
 	case "openai":
 		return PetAgentProtocolOpenAI
+	case "responses":
+		return PetAgentProtocolResponses
 	case "anthropic":
 		return PetAgentProtocolAnthropic
 	case "gemini":
@@ -1549,6 +1577,16 @@ func buildPetAIToolRequest(
 			return nil, "", newPetProviderError(PET_PROVIDER_CONFIG_INVALID, provider.reference, "provider endpoint 无效", nil)
 		}
 		return body, endpoint, nil
+	case "responses":
+		body, err := buildPetAIResponsesBodyWithOptions(provider, input, options)
+		if err != nil {
+			return nil, "", err
+		}
+		endpoint, err := providerEndpoint(provider, "responses")
+		if err != nil {
+			return nil, "", newPetProviderError(PET_PROVIDER_CONFIG_INVALID, provider.reference, "provider endpoint 无效", nil)
+		}
+		return body, endpoint, nil
 	case "anthropic":
 		body, err := buildAnthropicMessagesBodyWithOptions(provider, input, options)
 		if err != nil {
@@ -1614,6 +1652,67 @@ func buildOpenAIChatBodyWithOptions(
 		body["reasoning_effort"] = input.Reasoning
 	}
 	return json.Marshal(body)
+}
+
+func buildPetAIResponsesBody(provider petAIProviderRuntime, input petAIChatInput) ([]byte, error) {
+	return buildPetAIResponsesBodyWithOptions(provider, input, petAIToolRequestOptions{Stream: true})
+}
+
+func buildPetAIResponsesBodyWithOptions(
+	provider petAIProviderRuntime,
+	input petAIChatInput,
+	options petAIToolRequestOptions,
+) ([]byte, error) {
+	items := make([]map[string]any, 0, len(input.History)+2)
+	if input.Persona != "" {
+		items = append(items, petAIResponsesMessage("system", input.Persona, nil))
+	}
+	for _, item := range input.History {
+		items = append(items, petAIResponsesMessage(item.Role, item.Content, item.Images))
+	}
+	items = append(items, petAIResponsesMessage("user", input.UserText, input.Images))
+	var err error
+	items, err = appendPetAINativeMessages(items, options.NativeMessages)
+	if err != nil {
+		return nil, err
+	}
+
+	body := map[string]any{
+		"model":  provider.model,
+		"input":  items,
+		"stream": options.Stream,
+	}
+	if options.IncludeTools {
+		body["tools"] = petAIResponsesTools()
+	}
+	if provider.maxOutputTokens > 0 {
+		body["max_output_tokens"] = provider.maxOutputTokens
+	}
+	if input.Reasoning != "" && input.Reasoning != "none" {
+		body["reasoning"] = map[string]string{"effort": input.Reasoning}
+	}
+	return json.Marshal(body)
+}
+
+func petAIResponsesMessage(role, text string, images []PetAIImage) map[string]any {
+	if len(images) == 0 {
+		return map[string]any{"role": role, "content": text}
+	}
+	parts := make([]map[string]any, 0, len(images)+1)
+	if text != "" {
+		textType := "input_text"
+		if role == "assistant" {
+			textType = "output_text"
+		}
+		parts = append(parts, map[string]any{"type": textType, "text": text})
+	}
+	for _, image := range images {
+		parts = append(parts, map[string]any{
+			"type":      "input_image",
+			"image_url": "data:" + image.MediaType + ";base64," + image.Data,
+		})
+	}
+	return map[string]any{"role": role, "content": parts}
 }
 
 func buildAnthropicMessagesBody(provider petAIProviderRuntime, input petAIChatInput) ([]byte, error) {
@@ -1729,6 +1828,20 @@ func petAIOpenAITools() []map[string]any {
 				"description": definition.Description,
 				"parameters":  definition.InputSchema,
 			},
+		})
+	}
+	return tools
+}
+
+func petAIResponsesTools() []map[string]any {
+	definitions := PetAgentToolDefinitions()
+	tools := make([]map[string]any, 0, len(definitions))
+	for _, definition := range definitions {
+		tools = append(tools, map[string]any{
+			"type":        "function",
+			"name":        string(definition.Name),
+			"description": definition.Description,
+			"parameters":  definition.InputSchema,
 		})
 	}
 	return tools
@@ -1919,7 +2032,7 @@ func providerEndpoint(provider petAIProviderRuntime, kind string) (string, error
 	switch kind {
 	case "speech":
 		override = provider.speechEndpoint
-	case "chat", "messages", "gemini":
+	case "chat", "responses", "messages", "gemini":
 		override = provider.apiEndpoint
 	case "transcription":
 		// 转写默认沿用 provider base URL 的 OpenAI-compatible 路径；TTS 的
@@ -1939,6 +2052,8 @@ func providerEndpoint(provider petAIProviderRuntime, kind string) (string, error
 	switch kind {
 	case "chat":
 		route = "chat/completions"
+	case "responses":
+		route = "responses"
 	case "messages":
 		route = "messages"
 	case "speech":
@@ -1976,7 +2091,7 @@ func joinPetAIEndpointPath(basePath, endpoint string) (string, error) {
 func defaultPetAIEndpointPath(basePath, protocol, route string) string {
 	basePath = strings.TrimRight(basePath, "/")
 	lower := strings.ToLower(basePath)
-	if strings.HasSuffix(lower, "/chat/completions") || strings.HasSuffix(lower, "/messages") || strings.HasSuffix(lower, "/audio/speech") || strings.HasSuffix(lower, ":generatecontent") {
+	if strings.HasSuffix(lower, "/chat/completions") || strings.HasSuffix(lower, "/responses") || strings.HasSuffix(lower, "/messages") || strings.HasSuffix(lower, "/audio/speech") || strings.HasSuffix(lower, ":generatecontent") {
 		return basePath
 	}
 	if strings.HasSuffix(lower, "/v1") || strings.HasSuffix(lower, "/v1beta") {
@@ -2052,6 +2167,10 @@ func parsePetAIUsage(data string, protocol string) (modelpricing.UsageSnapshot, 
 		Message struct {
 			Usage json.RawMessage `json:"usage"`
 		} `json:"message"`
+		Response struct {
+			Usage       json.RawMessage `json:"usage"`
+			ServiceTier string          `json:"service_tier"`
+		} `json:"response"`
 		UsageMetadata json.RawMessage `json:"usageMetadata"`
 		ServiceTier   string          `json:"service_tier"`
 	}
@@ -2067,6 +2186,14 @@ func parsePetAIUsage(data string, protocol string) (modelpricing.UsageSnapshot, 
 	}
 	if protocol == "gemini" {
 		usageData = envelope.UsageMetadata
+	}
+	if protocol == "responses" {
+		// Responses API 的流式事件把累计 usage 放在 response.usage，
+		// 非流响应则通常直接放在 usage；两种形状都交给同一套 max merge。
+		trimmedUsage := bytes.TrimSpace(usageData)
+		if len(trimmedUsage) == 0 || bytes.Equal(trimmedUsage, []byte("null")) {
+			usageData = envelope.Response.Usage
+		}
 	}
 	if len(bytes.TrimSpace(usageData)) == 0 || bytes.Equal(bytes.TrimSpace(usageData), []byte("null")) {
 		return modelpricing.UsageSnapshot{}, false
@@ -2095,6 +2222,32 @@ func parsePetAIUsage(data string, protocol string) (modelpricing.UsageSnapshot, 
 			ReasoningTokens: value.CompletionDetails.ReasoningTokens,
 			CacheReadTokens: value.PromptDetails.CachedTokens,
 			ServiceTier:     modelpricing.NormalizeObservedServiceTier(firstNonEmptyPetAIString(value.ServiceTier, envelope.ServiceTier), nil),
+		}
+	case "responses":
+		var value struct {
+			InputTokens  int `json:"input_tokens"`
+			OutputTokens int `json:"output_tokens"`
+			InputDetails struct {
+				CachedTokens     int `json:"cached_tokens"`
+				CacheWriteTokens int `json:"cache_write_tokens"`
+			} `json:"input_tokens_details"`
+			OutputDetails struct {
+				ReasoningTokens int `json:"reasoning_tokens"`
+			} `json:"output_tokens_details"`
+			ServiceTier string `json:"service_tier"`
+		}
+		if err := json.Unmarshal(usageData, &value); err != nil {
+			return modelpricing.UsageSnapshot{}, false
+		}
+		usage = modelpricing.UsageSnapshot{
+			InputTokens:       value.InputTokens,
+			OutputTokens:      value.OutputTokens,
+			ReasoningTokens:   value.OutputDetails.ReasoningTokens,
+			CacheCreateTokens: value.InputDetails.CacheWriteTokens,
+			CacheReadTokens:   value.InputDetails.CachedTokens,
+			ServiceTier: modelpricing.NormalizeObservedServiceTier(
+				firstNonEmptyPetAIString(value.ServiceTier, envelope.Response.ServiceTier, envelope.ServiceTier), nil,
+			),
 		}
 	case "anthropic":
 		var value struct {
@@ -2250,6 +2403,8 @@ func parsePetAIAssistantTurn(data []byte, protocol string, status int) (PetAgent
 	switch protocol {
 	case "openai":
 		return parsePetAIOpenAIAssistantTurn(data, status)
+	case "responses":
+		return parsePetAIResponsesAssistantTurn(data, status)
 	case "anthropic":
 		return parsePetAIAnthropicAssistantTurn(data, status)
 	case "gemini":
@@ -2310,6 +2465,69 @@ func parsePetAIOpenAIAssistantTurn(data []byte, status int) (PetAgentAssistantTu
 			Name:      PetAgentToolName(name),
 			Arguments: arguments,
 		})
+	}
+	if strings.TrimSpace(turn.Text) == "" && len(turn.ToolCalls) == 0 {
+		return PetAgentAssistantTurn{}, newPetAIError(PET_AI_RESPONSE_INVALID, status, nil)
+	}
+	return turn, nil
+}
+
+func parsePetAIResponsesAssistantTurn(data []byte, status int) (PetAgentAssistantTurn, error) {
+	var response struct {
+		Error      json.RawMessage `json:"error"`
+		OutputText string          `json:"output_text"`
+		Output     []struct {
+			Type      string          `json:"type"`
+			ID        string          `json:"id"`
+			CallID    string          `json:"call_id"`
+			Name      string          `json:"name"`
+			Arguments json.RawMessage `json:"arguments"`
+			Content   []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"output"`
+	}
+	if err := json.Unmarshal(data, &response); err != nil {
+		return PetAgentAssistantTurn{}, newPetAIError(PET_AI_RESPONSE_INVALID, status, nil)
+	}
+	if petAIResponseHasError(response.Error) {
+		return PetAgentAssistantTurn{}, newPetAIError(PET_AI_UPSTREAM_ERROR, status, nil)
+	}
+
+	turn := PetAgentAssistantTurn{}
+	seenIDs := make(map[string]struct{}, len(response.Output))
+	for _, item := range response.Output {
+		switch item.Type {
+		case "message":
+			for _, part := range item.Content {
+				if part.Type == "" || part.Type == "output_text" || part.Type == "text" {
+					turn.Text += part.Text
+				}
+			}
+		case "function_call":
+			callID := strings.TrimSpace(item.CallID)
+			name := strings.TrimSpace(item.Name)
+			if callID == "" || name == "" {
+				return PetAgentAssistantTurn{}, newPetAIError(PET_AI_RESPONSE_INVALID, status, nil)
+			}
+			if _, exists := seenIDs[callID]; exists {
+				return PetAgentAssistantTurn{}, newPetAIError(PET_AI_RESPONSE_INVALID, status, nil)
+			}
+			seenIDs[callID] = struct{}{}
+			arguments, err := normalizePetAIResponsesArguments(item.Arguments)
+			if err != nil {
+				return PetAgentAssistantTurn{}, newPetAIError(PET_AI_RESPONSE_INVALID, status, nil)
+			}
+			turn.ToolCalls = append(turn.ToolCalls, PetAgentToolCall{
+				ID:        callID,
+				Name:      PetAgentToolName(name),
+				Arguments: arguments,
+			})
+		}
+	}
+	if strings.TrimSpace(turn.Text) == "" {
+		turn.Text = response.OutputText
 	}
 	if strings.TrimSpace(turn.Text) == "" && len(turn.ToolCalls) == 0 {
 		return PetAgentAssistantTurn{}, newPetAIError(PET_AI_RESPONSE_INVALID, status, nil)
@@ -2476,6 +2694,21 @@ func normalizePetAIOpenAIArguments(raw json.RawMessage) (json.RawMessage, error)
 	return ParsePetAgentOpenAIArguments(arguments)
 }
 
+func normalizePetAIResponsesArguments(raw json.RawMessage) (json.RawMessage, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return json.RawMessage(`{}`), nil
+	}
+	// Responses function_call.arguments 按协议是 JSON 字符串；保留 object
+	// 形状作为兼容输入，避免 relay 或第三方 Codex 代理把同一字段解码一次后
+	// 让工具调用无故失败。
+	var arguments string
+	if err := json.Unmarshal(trimmed, &arguments); err == nil {
+		return ParsePetAgentOpenAIArguments(arguments)
+	}
+	return normalizePetAIObjectArguments(trimmed)
+}
+
 func normalizePetAIObjectArguments(raw json.RawMessage) (json.RawMessage, error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 {
@@ -2505,7 +2738,7 @@ func parseTextSSE(
 		if data == "" {
 			return nil
 		}
-		if protocol == "openai" && data == "[DONE]" {
+		if (protocol == "openai" || protocol == "responses") && data == "[DONE]" {
 			done = true
 			return errPetAISSEDone
 		}
@@ -2520,6 +2753,8 @@ func parseTextSSE(
 		switch protocol {
 		case "openai":
 			delta, err = parseOpenAITextDelta(data)
+		case "responses":
+			delta, err = parsePetAIResponsesTextDelta(event.Event, data, &done)
 		case "anthropic":
 			delta, err = parseAnthropicTextDelta(event.Event, data, &done)
 		default:
@@ -2652,6 +2887,37 @@ func parseOpenAITextDelta(data string) (string, error) {
 		return "", nil
 	}
 	return *payload.Choices[0].Delta.Content, nil
+}
+
+func parsePetAIResponsesTextDelta(eventName, data string, done *bool) (string, error) {
+	var payload struct {
+		Type  string          `json:"type"`
+		Delta string          `json:"delta"`
+		Error json.RawMessage `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(data), &payload); err != nil {
+		return "", newPetAIError(PET_AI_SSE_INVALID, 0, nil)
+	}
+	typeName := strings.TrimSpace(payload.Type)
+	if typeName == "" {
+		typeName = strings.TrimSpace(eventName)
+	}
+	if typeName == "response.failed" || typeName == "error" || petAIResponseHasError(payload.Error) {
+		return "", newPetAIError(PET_AI_UPSTREAM_ERROR, 0, nil)
+	}
+	if typeName == "response.incomplete" {
+		return "", newPetAIError(PET_AI_RESPONSE_INVALID, 0, nil)
+	}
+	if typeName == "response.completed" {
+		if done != nil {
+			*done = true
+		}
+		return "", nil
+	}
+	if typeName != "response.output_text.delta" {
+		return "", nil
+	}
+	return payload.Delta, nil
 }
 
 func parseAnthropicTextDelta(eventName, data string, done *bool) (string, error) {

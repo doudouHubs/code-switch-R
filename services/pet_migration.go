@@ -470,6 +470,10 @@ func (r *petMigrationReader) readConfigs(settings map[string]any, snapshot *PetM
 			if number, exists := petMigrationNumber(value, "bubbleMinDurationSeconds"); exists {
 				config.BubbleMinDurationSeconds = NormalizePetDreamLength(number, PetDreamDefaultBubbleDurationSeconds, PetDreamMinBubbleDurationSeconds, PetDreamMaxBubbleDurationSeconds)
 			}
+			config.ImageProviderPlatform = petMigrationStringPointer(value, "imageProviderPlatform")
+			config.ImageProviderID = petMigrationStringPointer(value, "imageProviderId")
+			config.ImageModelID = petMigrationStringPointer(value, "imageModelId")
+			config = normalizeDreamConfig(config, r.petID)
 			snapshot.DreamConfig = &config
 			r.imported++
 		}

@@ -96,6 +96,9 @@ export interface PetDreamConfig {
   keywords: string
   sleepTalkMinLength: number
   bubbleMinDurationSeconds: number
+  imageProviderPlatform: string | null
+  imageProviderId: string | null
+  imageModelId: string | null
 }
 
 export type PetPlanScheduleKind = 'now' | 'delay' | 'at' | 'every' | 'cron'
@@ -222,10 +225,22 @@ export interface PetSnapshot extends PetSettingsInput {
   atlas: PetAtlasAsset | null
 }
 
+/** 桌宠运行时 hydration 的轻量契约，不包含历史记录、皮肤列表或 atlas 二进制。 */
+export interface PetRuntimeSnapshot {
+  state: PetState
+  experience: PetExperience
+  window: PetWindowConfig
+  care: PetCareConfig
+  agent: PetAgentConfig
+  dream: PetDreamConfig
+  skinSelection: PetSkinSelection
+}
+
 export interface PetActionResult {
   ok: boolean
   reason?: PetActionFailureReason
   reward?: PetAwayReward
+  state?: PetState
   snapshot?: PetSnapshot
 }
 

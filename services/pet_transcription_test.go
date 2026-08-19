@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 type petSpeechSelectionStub struct {
@@ -80,6 +81,52 @@ func TestPetAITranscribeAudioBuildsOpenAICompatibleMultipartRequest(t *testing.T
 	}
 	if result.Text != "你好，桌宠" {
 		t.Fatalf("transcription text = %q", result.Text)
+	}
+}
+
+func TestPetAITranscribeAudioPreservesCallerCancellation(t *testing.T) {
+	transportStarted := make(chan struct{})
+	transportCancelled := make(chan struct{})
+	transport := petAITestRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		close(transportStarted)
+		<-request.Context().Done()
+		close(transportCancelled)
+		return nil, request.Context().Err()
+	})
+	api := NewPetAIAPIService(NewPetAIService(
+		&petAITestProviderReader{config: petAITestConfig("openai", "openai", "gpt-transcribe")},
+		transport,
+		nil,
+	))
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		_, err := api.transcribeAudio(ctx, PetTranscriptionRequest{
+			PetID:     "pet-1",
+			Provider:  petAITestReference("openai", "pet-provider", "gpt-transcribe", PetCapabilityTranscription),
+			Data:      base64.StdEncoding.EncodeToString([]byte("webm-audio")),
+			MediaType: "audio/webm", FileName: "voice-input.webm",
+		})
+		result <- err
+	}()
+	select {
+	case <-transportStarted:
+	case <-time.After(time.Second):
+		t.Fatal("transcription transport did not start")
+	}
+	cancel()
+	select {
+	case <-transportCancelled:
+	case <-time.After(time.Second):
+		t.Fatal("transcription transport did not observe cancellation")
+	}
+	select {
+	case err := <-result:
+		if got := petAITestErrorCode(t, err); got != string(PET_AI_REQUEST_CANCELLED) {
+			t.Fatalf("transcription cancel error code = %q", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("transcription cancellation did not finish")
 	}
 }
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Call } from '../../wails-runtime-compat'
+import { Call, Events } from '../../wails-runtime-compat'
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
@@ -61,6 +61,25 @@ const PET_VOICE_PRESETS = {
 } as const
 const PET_VOICE_DEFAULT = '__default__'
 const PET_VOICE_CUSTOM = '__custom__'
+const PET_PROACTIVE_DAILY_CAP = { low: 1, medium: 2, high: 4 } as const
+const PET_PROVIDER_PLATFORMS = ['claude', 'codex', 'gemini'] as const
+const PET_HOURS = Array.from({ length: 24 }, (_, hour) => hour)
+
+// 空字符串是后端默认值的持久化协议；设置页只把内置文本展示出来，保存时仍还原为空字符串，
+// 这样用户能看到实际生效的 prompt，又不会把一份容易漂移的默认文本写进用户配置。
+const PET_BUILTIN_AGENT_PROMPT = `你是 {{name}}，一只住在用户电脑桌面上的卡皮巴拉桌宠。你的性格：淡定、温暖、有点贪吃，喜欢泡温泉和发呆。
+
+规则：
+- 用用户的语言回复（用户说中文就用中文，说英文就用英文）。
+- 回复要非常简短（一两句话，不超过 60 字），像宠物气泡对话，可以用一点可爱的语气词，但不要过度卖萌。
+- 你不是全能助手：可以陪聊、安慰、提醒休息、聊聊今天的状态；专业问题可以简单回答，太复杂的就建议主人去主界面找 AI 同事。
+- 永远不要输出 Markdown、代码块或列表，只输出纯文本。
+
+你的当前状态：{{status}}
+{{project}}`
+
+// 与 PetWindow 的默认梦境入口保持同一文案，用户编辑页展示的是空配置实际会使用的内容。
+const PET_BUILTIN_DREAM_PROMPT = '你正在睡觉并处于梦境中，这不是主人发来的消息。请以宠物的第一人称做一个具体、完整的随机短梦。梦境可以温暖、有趣、荒诞、紧张或偶尔令人害怕，但不要每次都做噩梦。'
 
 type PetTab = 'overview' | 'stats' | 'agent' | 'sleep' | 'skins' | 'memory' | 'dream-history' | 'studio'
 
@@ -90,6 +109,23 @@ interface PetProviderModelOption {
   providerName: string
   modelId: string
   modelCategory: string
+  reasoningEffortLevels: PetReasoningEffort[]
+}
+
+interface PetProviderModelGroup {
+  key: string
+  label: string
+  options: PetProviderModelOption[]
+}
+
+interface PetProviderModelCatalogEntry {
+  id?: unknown
+  name?: unknown
+}
+
+interface PetProviderModelLoadResult {
+  options: PetProviderModelOption[]
+  errors: string[]
 }
 
 type PetProjectOption = ProjectSummary
@@ -169,7 +205,10 @@ function createDefaultForm(petId: string): PetSettingsForm {
       prompt: '',
       keywords: '',
       sleepTalkMinLength: 12,
-      bubbleMinDurationSeconds: 12
+      bubbleMinDurationSeconds: 12,
+      imageProviderPlatform: null,
+      imageProviderId: null,
+      imageModelId: null
     },
     skinSelection: { petId, activeSkinId: null }
   }
@@ -214,6 +253,7 @@ const experienceLog = ref<PetExperienceLogEntry[]>([])
 const experienceLogLoading = ref(false)
 const experienceLogError = ref('')
 const voiceTesting = ref(false)
+const voiceErrorMessage = ref('')
 let statsRefreshTimer: number | undefined
 let statsRequestGeneration = 0
 let providerRequestGeneration = 0
@@ -282,26 +322,155 @@ const petStatusLabel = computed(() => {
   return t('pet.settings.status.awake')
 })
 
-const providerPlatformOptions = computed(() => {
-  const current = form.agent.providerPlatform?.trim() ?? ''
-  const standard = ['claude', 'codex', 'gemini']
-  return current && !standard.includes(current) ? [current, ...standard] : standard
+const agentPromptModel = computed({
+  get: () => form.agent.systemPrompt.trim() || PET_BUILTIN_AGENT_PROMPT,
+  set: (value: string) => {
+    form.agent.systemPrompt = value.trim() === PET_BUILTIN_AGENT_PROMPT.trim() ? '' : value
+  }
 })
 
-function providerModelOptions(platform: string, providers: Provider[]): PetProviderModelOption[] {
-  return providers.flatMap((provider) => {
+const dreamPromptModel = computed({
+  get: () => form.dream.prompt.trim() || PET_BUILTIN_DREAM_PROMPT,
+  set: (value: string) => {
+    form.dream.prompt = value.trim() === PET_BUILTIN_DREAM_PROMPT.trim() ? '' : value
+  }
+})
+
+function modelRuleMatches(rule: string, modelId: string): boolean {
+  const normalizedRule = rule.trim()
+  const normalizedModelId = modelId.trim()
+  if (!normalizedRule || !normalizedModelId) return false
+  if (!normalizedRule.includes('*')) return normalizedRule === normalizedModelId
+  // 后端 provider 规则当前只承诺一个“前缀*后缀”通配符；前端不扩展语义，
+  // 避免设置页显示了能力，但请求校验和实际路由却无法命中同一条规则。
+  if (normalizedRule.indexOf('*') !== normalizedRule.lastIndexOf('*')) return false
+
+  // 配置里的星号只代表任意字符；其余字符按字面量匹配，避免模型名中的句点、加号等被当成正则语法。
+  const pattern = normalizedRule
+    .split('*')
+    .map((part) => part.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&'))
+    .join('.*')
+  return new RegExp(`^${pattern}$`).test(normalizedModelId)
+}
+
+function modelRuleSpecificity(rule: string): [number, number, number, number] {
+  const normalizedRule = rule.trim()
+  const wildcardCount = (normalizedRule.match(/\*/g) ?? []).length
+  const literalLength = normalizedRule.replace(/\*/g, '').length
+  // 精确规则优先；通配符规则按字面量长度、通配符数量和总长度稳定排序。
+  return [normalizedRule.includes('*') ? 0 : 1, literalLength, -wildcardCount, normalizedRule.length]
+}
+
+function compareModelRuleSpecificity(left: string, right: string): number {
+  const leftScore = modelRuleSpecificity(left)
+  const rightScore = modelRuleSpecificity(right)
+  for (let index = 0; index < leftScore.length; index += 1) {
+    if (leftScore[index] === rightScore[index]) continue
+    return leftScore[index] > rightScore[index] ? 1 : -1
+  }
+  // Go map 遍历顺序不稳定；相同具体度时用规则文本打破平局，确保能力展示稳定。
+  return left === right ? 0 : (left < right ? 1 : -1)
+}
+
+function resolveModelRule<T>(rules: Record<string, T> | undefined, modelId: string): T | undefined {
+  let matchedKey: string | undefined
+  for (const key of Object.keys(rules ?? {})) {
+    if (!modelRuleMatches(key, modelId)) continue
+    if (!matchedKey || compareModelRuleSpecificity(key, matchedKey) > 0) matchedKey = key
+  }
+  return matchedKey === undefined ? undefined : rules?.[matchedKey]
+}
+
+function providerRuleAllowsModel(provider: Provider, modelId: string): boolean {
+  const rules = Object.entries(provider.supportedModels ?? {}).filter(([rule]) => rule.trim())
+  if (rules.length === 0) return true
+  // false 只表示该条规则未启用；与 Go 端 IsModelSupported 保持一致，命中的任一 true 规则即可通过。
+  return rules.some(([rule, enabled]) => enabled !== false && modelRuleMatches(rule, modelId))
+}
+
+function providerConfiguredModelIds(provider: Provider): string[] {
+  const ids = new Set<string>()
+  for (const [rawModelId, enabled] of Object.entries(provider.supportedModels ?? {})) {
+    const modelId = rawModelId.trim()
+    if (enabled !== false && modelId && !modelId.includes('*')) ids.add(modelId)
+  }
+  // 仅配置 modelMapping 的旧 provider 也要保留其外部模型名作为可选项。
+  for (const rawModelId of Object.keys(provider.modelMapping ?? {})) {
+    const modelId = rawModelId.trim()
+    if (modelId && !modelId.includes('*')) ids.add(modelId)
+  }
+  return [...ids]
+}
+
+function providerModelOption(
+  platform: string,
+  provider: Provider,
+  modelId: string
+): PetProviderModelOption {
+  const providerId = String(provider.id)
+  const capabilities = provider as Provider & {
+    modelReasoningEffortLevels?: Record<string, unknown>
+  }
+  return {
+    platform,
+    providerId,
+    providerName: provider.name.trim() || providerId,
+    modelId,
+    modelCategory: String(resolveModelRule(provider.modelCategories, modelId) ?? '').trim(),
+    reasoningEffortLevels: normalizeReasoningEffortLevels(
+      resolveModelRule(capabilities.modelReasoningEffortLevels, modelId)
+    )
+  }
+}
+
+async function providerModelOptions(platform: string, providers: Provider[]): Promise<PetProviderModelLoadResult> {
+  const results = await Promise.all(providers.map(async (provider): Promise<PetProviderModelLoadResult> => {
     const providerId = String(provider.id)
-    if (!provider.enabled || !providerId.trim()) return []
-    const models = Object.entries(provider.supportedModels ?? {})
-      .filter(([modelId, enabled]) => Boolean(modelId.trim()) && enabled !== false)
-    return models.map(([modelId]) => ({
-      platform,
-      providerId,
-      providerName: provider.name.trim() || providerId,
-      modelId,
-      modelCategory: provider.modelCategories?.[modelId]?.trim() ?? ''
-    }))
-  })
+    if (!provider.enabled || !providerId.trim()) return { options: [], errors: [] }
+
+    const configuredModelIds = providerConfiguredModelIds(provider)
+    const rules = Object.keys(provider.supportedModels ?? {}).filter((rule) => rule.trim())
+    const shouldFetchRemoteModels = rules.length === 0 || rules.some((rule) => rule.includes('*'))
+    const modelIds = new Set(configuredModelIds)
+    const errors: string[] = []
+
+    if (shouldFetchRemoteModels) {
+      try {
+        const discovered = await Call.ByName(
+          'codeswitch/services.ProviderService.FetchModels',
+          platform,
+          provider.id
+        ) as PetProviderModelCatalogEntry[]
+        for (const model of discovered ?? []) {
+          const modelId = typeof model?.id === 'string' ? model.id.trim() : ''
+          if (modelId && providerRuleAllowsModel(provider, modelId)) modelIds.add(modelId)
+        }
+      } catch (error) {
+        // 远端目录失败时保留已配置的精确模型；这样网络抖动不会清空当前宠物引用。
+        errors.push(`${platform}/${provider.name.trim() || providerId}: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+
+    return {
+      options: [...modelIds]
+        .filter((modelId) => providerRuleAllowsModel(provider, modelId))
+        .sort((left, right) => left.localeCompare(right))
+        .map((modelId) => providerModelOption(platform, provider, modelId)),
+      errors
+    }
+  }))
+
+  return {
+    options: results.flatMap((result) => result.options),
+    errors: results.flatMap((result) => result.errors)
+  }
+}
+
+function normalizeReasoningEffortLevels(value: unknown): PetReasoningEffort[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is PetReasoningEffort =>
+    item === 'none' || item === 'minimal' || item === 'low' || item === 'medium' || item === 'high'
+  )
 }
 
 function modelCategory(option: PetProviderModelOption): string {
@@ -312,12 +481,14 @@ function geminiModelOptions(providers: GeminiProvider[]): PetProviderModelOption
   return providers.flatMap((provider) => {
     const modelId = provider.model?.trim() ?? ''
     if (!provider.enabled || !provider.id.trim() || !modelId) return []
+    const capabilities = provider as GeminiProvider & { reasoningEffortLevels?: unknown }
     return [{
       platform: 'gemini',
       providerId: provider.id.trim(),
       providerName: provider.name.trim() || provider.id.trim(),
       modelId,
-      modelCategory: provider.modelCategory?.trim() ?? ''
+      modelCategory: provider.modelCategory?.trim() ?? '',
+      reasoningEffortLevels: normalizeReasoningEffortLevels(capabilities.reasoningEffortLevels)
     }]
   })
 }
@@ -327,24 +498,41 @@ function skinPoseCount(skin: PetSkinRecord): number {
   return isRecord(manifest.animations) ? Object.keys(manifest.animations).length : 0
 }
 
-async function loadProviderOptions(platform: string | null = form.agent.providerPlatform): Promise<void> {
-  const normalized = platform?.trim().toLowerCase() ?? ''
+async function loadProviderOptions(): Promise<void> {
   const generation = ++providerRequestGeneration
   providerLoading.value = true
   providerError.value = ''
   try {
-    if (!normalized) {
-      providerOptions.value = []
-      return
-    }
-    const options = normalized === 'gemini'
-      ? geminiModelOptions(await Call.ByName('codeswitch/services.GeminiService.GetProviders') as GeminiProvider[])
-      : providerModelOptions(
-          normalized,
-          await Call.ByName('codeswitch/services.ProviderService.LoadProviders', normalized) as Provider[]
-        )
+    const platforms = Array.from(new Set([
+      ...PET_PROVIDER_PLATFORMS,
+      form.agent.providerPlatform?.trim().toLowerCase() ?? '',
+      form.dream.imageProviderPlatform?.trim().toLowerCase() ?? ''
+    ].filter(Boolean)))
+    const errors: string[] = []
+    const loaded = await Promise.all(platforms.map(async (platform): Promise<PetProviderModelLoadResult> => {
+      try {
+        if (platform === 'gemini') {
+          return {
+            options: geminiModelOptions(await Call.ByName('codeswitch/services.GeminiService.GetProviders') as GeminiProvider[]),
+            errors: []
+          }
+        }
+        return providerModelOptions(
+              platform,
+              await Call.ByName('codeswitch/services.ProviderService.LoadProviders', platform) as Provider[]
+            )
+      } catch (error) {
+        return {
+          options: [],
+          errors: [`${platform}: ${error instanceof Error ? error.message : String(error)}`]
+        }
+      }
+    }))
+    const options = loaded.flatMap((result) => result.options)
+    errors.push(...loaded.flatMap((result) => result.errors))
     if (generation !== providerRequestGeneration) return
     providerOptions.value = options
+    providerError.value = errors.length > 0 ? errors.join('; ') : ''
   } catch (error) {
     if (generation !== providerRequestGeneration) return
     providerOptions.value = []
@@ -591,13 +779,19 @@ function normalizeNullable(value: string | null): string | null {
   return trimmed ? trimmed : null
 }
 
+function normalizeConcreteModelId(value: string | null): string | null {
+  const normalized = normalizeNullable(value)
+  // supportedModels 的通配符只用于生成候选能力，不能作为 Agent 实际请求的 modelId。
+  return normalized && !normalized.includes('*') ? normalized : null
+}
+
 function normalizeAgentConfig(agent: PetAgentConfig, petId: string): PetAgentConfig {
   return {
     ...agent,
     petId,
     providerPlatform: normalizeNullable(agent.providerPlatform),
     providerId: normalizeNullable(agent.providerId),
-    modelId: normalizeNullable(agent.modelId),
+    modelId: normalizeConcreteModelId(agent.modelId),
     voiceProviderId: normalizeNullable(agent.voiceProviderId),
     voiceModelId: normalizeNullable(agent.voiceModelId),
     quietStart: Math.min(23, Math.max(0, Math.floor(Number(agent.quietStart) || 0))),
@@ -634,7 +828,12 @@ function normalizeForm(value: PetSettingsForm): PetSettingsForm {
         12,
         PET_DREAM_MIN_BUBBLE_DURATION_SECONDS,
         PET_DREAM_MAX_BUBBLE_DURATION_SECONDS
-      )
+      ),
+      // 图片 provider/model 与梦境配置属于同一持久化提交；三元组缺一时保留 null，
+      // 由 Go 端的原子归一化决定是否清空，避免前端拼出不可解析的半引用。
+      imageProviderPlatform: normalizeNullable(value.dream.imageProviderPlatform),
+      imageProviderId: normalizeNullable(value.dream.imageProviderId),
+      imageModelId: normalizeNullable(value.dream.imageModelId)
     },
     skinSelection: {
       petId: props.petId,
@@ -657,7 +856,7 @@ async function loadSettings(): Promise<void> {
     // 外部 v-model 是受控值；没有受控值时才用后端快照初始化表单。
     if (!props.modelValue) assignForm(toForm(next))
     await Promise.all([
-      loadProviderOptions(next.agent.providerPlatform),
+      loadProviderOptions(),
       loadProjectOptions(),
       loadSkinPreviews(next.skins),
       loadSkinRoot()
@@ -685,6 +884,10 @@ async function saveSettings(): Promise<boolean> {
     nameDraft.value = next.state.name
     statsNow.value = Date.now()
     assignForm(toForm(next))
+    // 配置保存是低频边界；通知独立桌宠窗口重新 hydration，避免再依赖高频
+    // 完整快照轮询同步 Agent、梦境配置和当前皮肤。
+    petApi.invalidateAtlas(props.petId)
+    void Events.Emit('pet.settings.updated', { petId: props.petId })
     emit('saved', next)
     return true
   } catch (error) {
@@ -730,37 +933,45 @@ onMounted(() => {
   void loadSettings()
 })
 
-const agentPlatformModel = computed({
-  get: () => form.agent.providerPlatform ?? '',
-  set: (value: string) => {
-    const platform = value.trim() || null
-    if (platform === form.agent.providerPlatform) return
-    form.agent.providerPlatform = platform
-    form.agent.providerId = null
-    form.agent.modelId = null
-    void loadProviderOptions(platform)
-  }
-})
-
 const agentProviderModel = computed({
   // 原生 select 需要一个真正的空值；不能让 JSON 空对象成为 sentinel，
   // 否则没有模型引用时下拉框不会命中任何 option，界面会像丢失配置。
-  get: () => form.agent.providerId && form.agent.modelId
-    ? JSON.stringify({ providerId: form.agent.providerId, modelId: form.agent.modelId })
+  get: () => form.agent.providerPlatform && form.agent.providerId && form.agent.modelId
+    ? JSON.stringify({
+        platform: form.agent.providerPlatform,
+        providerId: form.agent.providerId,
+        modelId: form.agent.modelId
+      })
     : '',
   set: (value: string) => {
     if (!value) {
+      form.agent.providerPlatform = null
       form.agent.providerId = null
       form.agent.modelId = null
+      form.agent.reasoningEffort = null
       return
     }
     try {
-      const selected = JSON.parse(value) as { providerId?: unknown; modelId?: unknown }
+      const selected = JSON.parse(value) as { platform?: unknown; providerId?: unknown; modelId?: unknown }
+      form.agent.providerPlatform = typeof selected.platform === 'string' && selected.platform ? selected.platform : null
       form.agent.providerId = typeof selected.providerId === 'string' && selected.providerId ? selected.providerId : null
       form.agent.modelId = typeof selected.modelId === 'string' && selected.modelId ? selected.modelId : null
+      const selectedOption = visibleProviderOptions.value.find((option) =>
+        option.platform === form.agent.providerPlatform &&
+        option.providerId === form.agent.providerId &&
+        option.modelId === form.agent.modelId
+      )
+      // 切换模型后，旧模型的 reasoning 等级即使新模型没有任何能力声明也必须清空，
+      // 否则保存时会把上一模型的参数带到当前模型，造成“界面已切换、请求仍沿用旧能力”的隐性错配。
+      if (form.agent.reasoningEffort &&
+        (!selectedOption || !selectedOption.reasoningEffortLevels.includes(form.agent.reasoningEffort))) {
+        form.agent.reasoningEffort = null
+      }
     } catch {
+      form.agent.providerPlatform = null
       form.agent.providerId = null
       form.agent.modelId = null
+      form.agent.reasoningEffort = null
     }
   }
 })
@@ -770,8 +981,16 @@ const visibleProviderOptions = computed(() => {
   const currentModelId = form.agent.modelId ?? ''
   const chatOptions = providerOptions.value.filter((item) => modelCategory(item) === 'chat')
   if (!currentProviderId || !currentModelId || !form.agent.providerPlatform) return chatOptions
-  const currentKey = JSON.stringify({ providerId: currentProviderId, modelId: currentModelId })
-  if (chatOptions.some((item) => JSON.stringify({ providerId: item.providerId, modelId: item.modelId }) === currentKey)) {
+  const currentKey = JSON.stringify({
+    platform: form.agent.providerPlatform,
+    providerId: currentProviderId,
+    modelId: currentModelId
+  })
+  if (chatOptions.some((item) => JSON.stringify({
+    platform: item.platform,
+    providerId: item.providerId,
+    modelId: item.modelId
+  }) === currentKey)) {
     return chatOptions
   }
   return [
@@ -780,16 +999,52 @@ const visibleProviderOptions = computed(() => {
       providerId: currentProviderId,
       providerName: currentProviderId,
       modelId: currentModelId,
-      modelCategory: ''
+      modelCategory: 'chat',
+      reasoningEffortLevels: []
     },
     ...chatOptions
   ]
 })
 
+const agentModelGroups = computed<PetProviderModelGroup[]>(() => {
+  const groups = new Map<string, PetProviderModelGroup>()
+  for (const option of visibleProviderOptions.value) {
+    const key = `${option.platform}:${option.providerId}`
+    const group = groups.get(key) ?? {
+      key,
+      label: `${option.platform} · ${option.providerName}`,
+      options: []
+    }
+    group.options.push(option)
+    groups.set(key, group)
+  }
+  return [...groups.values()]
+})
+
+const selectedAgentModel = computed(() => visibleProviderOptions.value.find((option) =>
+  option.platform === form.agent.providerPlatform &&
+  option.providerId === form.agent.providerId &&
+  option.modelId === form.agent.modelId
+))
+
+const visibleReasoningLevels = computed(() => selectedAgentModel.value?.reasoningEffortLevels ?? [])
+
+watch(selectedAgentModel, (model) => {
+  // provider 列表异步加载完成后，如果已保存的等级不在模型声明能力中，
+  // 必须清掉无效值；不能把旧模型的 reasoning 参数偷偷带给新模型。
+  if (providerLoading.value || providerOptions.value.length === 0) return
+  if (form.agent.reasoningEffort &&
+    (!model || !model.reasoningEffortLevels.includes(form.agent.reasoningEffort))) {
+    form.agent.reasoningEffort = null
+  }
+})
+
 const visibleVoiceOptions = computed(() => {
   const currentProviderId = form.agent.voiceProviderId ?? ''
   const currentModelId = form.agent.voiceModelId ?? ''
+  if (!form.agent.providerPlatform) return []
   const options = providerOptions.value.filter((item) => {
+    if (item.platform !== form.agent.providerPlatform) return false
     const category = modelCategory(item)
     return category === 'speech' || /tts|audio/i.test(item.modelId)
   })
@@ -803,13 +1058,97 @@ const visibleVoiceOptions = computed(() => {
     providerId: currentProviderId,
     providerName: currentProviderId,
     modelId: currentModelId,
-    modelCategory: 'speech'
+    modelCategory: 'speech',
+    reasoningEffortLevels: []
   }, ...options]
+})
+
+const voiceModelGroups = computed<PetProviderModelGroup[]>(() => {
+  const groups = new Map<string, PetProviderModelGroup>()
+  for (const option of visibleVoiceOptions.value) {
+    const key = `${option.platform}:${option.providerId}`
+    const group = groups.get(key) ?? {
+      key,
+      label: `${option.platform} · ${option.providerName}`,
+      options: []
+    }
+    group.options.push(option)
+    groups.set(key, group)
+  }
+  return [...groups.values()]
+})
+
+const imageModelValue = computed({
+  get: () => form.dream.imageProviderPlatform && form.dream.imageProviderId && form.dream.imageModelId
+    ? JSON.stringify({
+        platform: form.dream.imageProviderPlatform,
+        providerId: form.dream.imageProviderId,
+        modelId: form.dream.imageModelId
+      })
+    : '',
+  set: (value: string) => {
+    if (!value) {
+      form.dream.imageProviderPlatform = null
+      form.dream.imageProviderId = null
+      form.dream.imageModelId = null
+      return
+    }
+    try {
+      const selected = JSON.parse(value) as { platform?: unknown; providerId?: unknown; modelId?: unknown }
+      form.dream.imageProviderPlatform = typeof selected.platform === 'string' && selected.platform ? selected.platform : null
+      form.dream.imageProviderId = typeof selected.providerId === 'string' && selected.providerId ? selected.providerId : null
+      form.dream.imageModelId = typeof selected.modelId === 'string' && selected.modelId ? selected.modelId : null
+    } catch {
+      form.dream.imageProviderPlatform = null
+      form.dream.imageProviderId = null
+      form.dream.imageModelId = null
+    }
+  }
+})
+
+const visibleImageOptions = computed(() => {
+  const imageOptions = providerOptions.value.filter((item) => modelCategory(item) === 'image')
+  const currentPlatform = form.dream.imageProviderPlatform ?? ''
+  const currentProviderId = form.dream.imageProviderId ?? ''
+  const currentModelId = form.dream.imageModelId ?? ''
+  if (!currentPlatform || !currentProviderId || !currentModelId) return imageOptions
+  if (imageOptions.some((item) => item.platform === currentPlatform && item.providerId === currentProviderId && item.modelId === currentModelId)) {
+    return imageOptions
+  }
+  return [{
+    platform: currentPlatform,
+    providerId: currentProviderId,
+    providerName: currentProviderId,
+    modelId: currentModelId,
+    modelCategory: 'image',
+    reasoningEffortLevels: []
+  }, ...imageOptions]
+})
+
+const imageModelGroups = computed<PetProviderModelGroup[]>(() => {
+  const groups = new Map<string, PetProviderModelGroup>()
+  for (const option of visibleImageOptions.value) {
+    const key = `${option.platform}:${option.providerId}`
+    const group = groups.get(key) ?? {
+      key,
+      label: `${option.platform} · ${option.providerName}`,
+      options: []
+    }
+    group.options.push(option)
+    groups.set(key, group)
+  }
+  return [...groups.values()]
 })
 
 const voiceProviderModel = computed({
   get: () => form.agent.voiceProviderId && form.agent.voiceModelId
-    ? JSON.stringify({ providerId: form.agent.voiceProviderId, modelId: form.agent.voiceModelId })
+    ? JSON.stringify({
+        platform: visibleVoiceOptions.value.find((option) =>
+          option.providerId === form.agent.voiceProviderId && option.modelId === form.agent.voiceModelId
+        )?.platform ?? form.agent.providerPlatform ?? '',
+        providerId: form.agent.voiceProviderId,
+        modelId: form.agent.voiceModelId
+      })
     : '',
   set: (value: string) => {
     if (!value) {
@@ -853,11 +1192,15 @@ function resetDreamPrompt(): void {
 }
 
 async function testVoice(): Promise<void> {
-  const platform = form.agent.providerPlatform?.trim() ?? ''
+  const selectedVoice = visibleVoiceOptions.value.find((option) =>
+    option.providerId === form.agent.voiceProviderId && option.modelId === form.agent.voiceModelId
+  )
+  const platform = selectedVoice?.platform?.trim() || form.agent.providerPlatform?.trim() || ''
   const providerId = form.agent.voiceProviderId?.trim() ?? ''
   const model = form.agent.voiceModelId?.trim() ?? ''
   if (!platform || !providerId || !model || voiceTesting.value) return
   voiceTesting.value = true
+  voiceErrorMessage.value = ''
   try {
     await voicePreviewPlayer.playSentences([{
       petId: props.petId,
@@ -870,7 +1213,8 @@ async function testVoice(): Promise<void> {
       voiceTag: form.agent.voiceTag
     }], { preferStream: form.agent.voiceMode !== 'speech' })
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : String(error)
+    // 试听失败只影响试听动作，不能把整个设置页切换到错误态，导致用户正在编辑的配置消失。
+    voiceErrorMessage.value = error instanceof Error ? error.message : String(error)
   } finally {
     voiceTesting.value = false
   }
@@ -914,6 +1258,7 @@ const companionDateLabel = computed(() => {
 })
 
 const overviewName = computed(() => snapshot.value?.state.name ?? nameDraft.value)
+const proactiveDailyCap = computed(() => PET_PROACTIVE_DAILY_CAP[form.agent.proactiveFreq])
 
 onUnmounted(() => {
   stopStatsRefreshTimer()
@@ -956,8 +1301,8 @@ onUnmounted(() => {
         <PetStudio :pet-id="props.petId" />
       </div>
 
-      <div class="pet-settings__narrow-content">
-        <section v-show="activeTab === 'overview'" class="pet-settings__section">
+      <div class="pet-settings__main-content">
+        <div v-show="activeTab === 'overview'" class="pet-settings__overview-content">
           <div class="pet-settings__overview-preview">
             <PetAtlasFrame
               v-if="defaultAtlas"
@@ -969,50 +1314,52 @@ onUnmounted(() => {
             <div v-else class="pet-settings__overview-placeholder">{{ t('pet.settings.overview.previewUnavailable') }}</div>
           </div>
 
-          <div class="pet-settings__setting-row">
-            <div>
-              <strong>{{ t('pet.settings.overview.windowEnabled') }}</strong>
-              <span>{{ t('pet.settings.overview.windowEnabledHint') }}</span>
+          <section class="pet-settings__section">
+            <div class="pet-settings__setting-row">
+              <div>
+                <strong>{{ t('pet.settings.overview.windowEnabled') }}</strong>
+                <span>{{ t('pet.settings.overview.windowEnabledHint') }}</span>
+              </div>
+              <label class="pet-settings__switch">
+                <input v-model="form.window.enabled" type="checkbox" @change="void saveSettings()" />
+                <span aria-hidden="true"></span>
+              </label>
             </div>
-            <label class="pet-settings__switch">
-              <input v-model="form.window.enabled" type="checkbox" @change="void saveSettings()" />
-              <span aria-hidden="true"></span>
-            </label>
-          </div>
+          </section>
 
-          <div class="pet-settings__setting-row is-stacked">
-            <div class="pet-settings__setting-copy">
-              <strong>{{ t('pet.settings.overview.autoCare') }}</strong>
-              <span>{{ t('pet.settings.overview.autoCareHint') }}</span>
-            </div>
-            <div class="pet-settings__inline-controls">
+          <section class="pet-settings__section pet-settings__auto-care">
+            <div class="pet-settings__setting-row">
+              <div class="pet-settings__setting-copy">
+                <strong>{{ t('pet.settings.overview.autoCare') }}</strong>
+                <span>{{ t('pet.settings.overview.autoCareHint') }}</span>
+              </div>
               <label class="pet-settings__switch">
                 <input v-model="form.care.autoCareEnabled" type="checkbox" @change="void saveSettings()" />
                 <span aria-hidden="true"></span>
               </label>
-              <output>{{ form.care.autoCareThreshold }}%</output>
             </div>
-            <input
-              v-model.number="form.care.autoCareThreshold"
-              class="pet-settings__range"
-              type="range"
-              :min="PET_AUTO_CARE_MIN_THRESHOLD"
-              :max="PET_AUTO_CARE_MAX_THRESHOLD"
-              :step="PET_AUTO_CARE_THRESHOLD_STEP"
-              :disabled="!form.care.autoCareEnabled"
-              :aria-label="t('pet.settings.overview.autoCareThreshold')"
-              @change="void saveSettings()"
-            />
-            <div class="pet-settings__range-hint"><span>{{ t('pet.settings.overview.insensitive') }}</span><span>{{ t('pet.settings.overview.attentive') }}</span></div>
-          </div>
-
-          <section class="pet-settings__overview-profile">
-            <div class="pet-settings__section-title">
-              <div>
-                <h3>{{ t('pet.settings.overview.basicTitle') }}</h3>
-                <p>{{ t('pet.settings.overview.basicSubtitle') }}</p>
+            <div class="pet-settings__auto-care-control">
+              <div class="pet-settings__auto-care-label">
+                <span>{{ t('pet.settings.overview.autoCareThreshold') }}</span>
+                <output>{{ form.care.autoCareThreshold }}%</output>
               </div>
+              <input
+                v-model.number="form.care.autoCareThreshold"
+                class="pet-settings__range"
+                type="range"
+                :min="PET_AUTO_CARE_MIN_THRESHOLD"
+                :max="PET_AUTO_CARE_MAX_THRESHOLD"
+                :step="PET_AUTO_CARE_THRESHOLD_STEP"
+                :disabled="!form.care.autoCareEnabled"
+                :aria-label="t('pet.settings.overview.autoCareThreshold')"
+                @change="void saveSettings()"
+              />
+              <div class="pet-settings__range-hint"><span>{{ PET_AUTO_CARE_MIN_THRESHOLD }}%</span><span>{{ PET_AUTO_CARE_MAX_THRESHOLD }}%</span></div>
             </div>
+          </section>
+
+          <section class="pet-settings__section pet-settings__overview-profile">
+            <p class="pet-settings__overview-profile-title">{{ t('pet.settings.overview.basicTitle') }}</p>
             <div class="pet-settings__name-row">
               <input
                 v-model="nameDraft"
@@ -1038,53 +1385,51 @@ onUnmounted(() => {
           </section>
 
           <p class="pet-settings__hint">{{ t('pet.settings.overview.hint') }}</p>
-        </section>
+        </div>
 
+        <p v-show="activeTab === 'agent'" class="pet-settings__tab-description">
+          {{ t('pet.settings.agent.description') }}
+        </p>
         <section v-show="activeTab === 'agent'" class="pet-settings__section">
           <div class="pet-settings__section-title">
             <div>
-              <h3>{{ t('pet.settings.agent.title') }}</h3>
-              <p>{{ t('pet.settings.agent.subtitle') }}</p>
+              <h3>{{ t('pet.settings.agent.model') }}</h3>
             </div>
           </div>
 
           <div class="pet-settings__field-grid">
-            <label class="pet-settings__field">
-              <span>{{ t('pet.settings.agent.providerPlatform') }}</span>
-              <select v-model="agentPlatformModel">
-                <option value="">{{ t('pet.settings.agent.noPlatform') }}</option>
-                <option v-for="platform in providerPlatformOptions" :key="platform" :value="platform">{{ platform }}</option>
-              </select>
-            </label>
             <label class="pet-settings__field pet-settings__field--wide">
               <span>{{ t('pet.settings.agent.modelReference') }}</span>
-              <select v-model="agentProviderModel" :disabled="providerLoading || !form.agent.providerPlatform">
+              <select v-model="agentProviderModel" :disabled="providerLoading">
                 <option value="">{{ providerLoading ? t('pet.settings.agent.loadingModels') : t('pet.settings.agent.modelPlaceholder') }}</option>
-                <option
-                  v-for="option in visibleProviderOptions"
-                  :key="`${option.platform}:${option.providerId}:${option.modelId}`"
-                  :value="JSON.stringify({ providerId: option.providerId, modelId: option.modelId })"
-                >
-                  {{ option.providerName }} · {{ option.modelId }}
-                </option>
+                <optgroup v-for="group in agentModelGroups" :key="group.key" :label="group.label">
+                  <option
+                    v-for="option in group.options"
+                    :key="`${option.platform}:${option.providerId}:${option.modelId}`"
+                    :value="JSON.stringify({ platform: option.platform, providerId: option.providerId, modelId: option.modelId })"
+                  >
+                    {{ option.modelId }}
+                  </option>
+                </optgroup>
               </select>
             </label>
             <label class="pet-settings__field">
               <span>{{ t('pet.settings.agent.reasoningEffort') }}</span>
-              <select v-model="reasoningEffortModel">
+              <select v-model="reasoningEffortModel" :disabled="!selectedAgentModel">
                 <option value="">{{ t('pet.settings.agent.followModel') }}</option>
-                <option value="none">{{ t('pet.settings.reasoning.none') }}</option>
-                <option value="minimal">{{ t('pet.settings.reasoning.minimal') }}</option>
-                <option value="low">{{ t('pet.settings.reasoning.low') }}</option>
-                <option value="medium">{{ t('pet.settings.reasoning.medium') }}</option>
-                <option value="high">{{ t('pet.settings.reasoning.high') }}</option>
+                <option v-for="level in visibleReasoningLevels" :key="level" :value="level">
+                  {{ t(`pet.settings.reasoning.${level}`) }}
+                </option>
               </select>
             </label>
           </div>
 
           <p v-if="providerError" class="pet-settings__field-error">{{ t('pet.settings.agent.providerLoadFailed', { error: providerError }) }}</p>
-          <p v-else-if="form.agent.providerPlatform && !providerLoading && visibleProviderOptions.length === 0" class="pet-settings__hint">
+          <p v-else-if="!providerLoading && agentModelGroups.length === 0" class="pet-settings__hint">
             {{ t('pet.settings.agent.noModels') }}
+          </p>
+          <p v-else-if="selectedAgentModel && visibleReasoningLevels.length === 0" class="pet-settings__hint">
+            {{ t('pet.settings.agent.reasoningUnavailable') }}
           </p>
         </section>
 
@@ -1096,7 +1441,7 @@ onUnmounted(() => {
             </button>
           </div>
           <label class="pet-settings__field">
-            <textarea v-model="form.agent.systemPrompt" rows="10" :placeholder="t('pet.settings.agent.systemPromptPlaceholder')"></textarea>
+            <textarea v-model="agentPromptModel" rows="10" :placeholder="t('pet.settings.agent.systemPromptPlaceholder')"></textarea>
           </label>
           <p class="pet-settings__hint">{{ t('pet.settings.agent.promptHint') }}</p>
         </section>
@@ -1105,11 +1450,10 @@ onUnmounted(() => {
           <div class="pet-settings__section-title">
             <div>
               <h3>{{ t('pet.settings.agent.project') }}</h3>
-              <p>{{ t('pet.settings.agent.projectHint') }}</p>
             </div>
           </div>
           <label class="pet-settings__field">
-            <span>{{ t('pet.settings.agent.project') }}</span>
+            <span class="pet-settings__visually-hidden">{{ t('pet.settings.agent.project') }}</span>
             <select v-model="agentProjectModel" :disabled="projectLoading">
               <option value="">{{ projectLoading ? t('pet.settings.agent.loadingProjects') : t('pet.settings.agent.projectNone') }}</option>
               <option v-for="project in visibleProjectOptions" :key="project.id" :value="project.id">
@@ -1117,27 +1461,22 @@ onUnmounted(() => {
               </option>
             </select>
           </label>
+          <p class="pet-settings__hint">{{ t('pet.settings.agent.projectHint') }}</p>
           <p v-if="projectError" class="pet-settings__field-error">{{ t('pet.settings.agent.projectLoadFailed', { error: projectError }) }}</p>
         </section>
 
         <section v-show="activeTab === 'agent'" class="pet-settings__section">
-          <div class="pet-settings__section-title">
+          <div class="pet-settings__section-title pet-settings__section-title--setting">
             <div>
               <h3>{{ t('pet.settings.agent.proactive') }}</h3>
-              <p>{{ t('pet.settings.agent.proactiveHint') }}</p>
-            </div>
-          </div>
-          <div class="pet-settings__setting-row">
-            <div class="pet-settings__setting-copy">
-              <strong>{{ t('pet.settings.agent.proactive') }}</strong>
-              <span>{{ t('pet.settings.agent.proactiveHint') }}</span>
+              <p>{{ t('pet.settings.agent.proactiveDesc') }}</p>
             </div>
             <label class="pet-settings__switch">
               <input v-model="form.agent.proactive" type="checkbox" />
               <span aria-hidden="true"></span>
             </label>
           </div>
-          <div class="pet-settings__field-grid">
+          <div v-if="form.agent.proactive" class="pet-settings__field-grid">
             <label class="pet-settings__field">
               <span>{{ t('pet.settings.agent.proactiveFrequency') }}</span>
               <select v-model="form.agent.proactiveFreq">
@@ -1146,31 +1485,27 @@ onUnmounted(() => {
                 <option value="high">{{ t('pet.settings.frequency.high') }}</option>
               </select>
             </label>
-            <label class="pet-settings__number-field">
+            <label class="pet-settings__field">
               <span>{{ t('pet.settings.agent.quietStart') }}</span>
-              <input v-model.number="form.agent.quietStart" type="number" min="0" max="23" />
-              <em>{{ t('pet.settings.agent.hour') }}</em>
+              <select v-model.number="form.agent.quietStart">
+                <option v-for="hour in PET_HOURS" :key="`start:${hour}`" :value="hour">{{ String(hour).padStart(2, '0') }}:00</option>
+              </select>
             </label>
-            <label class="pet-settings__number-field">
+            <label class="pet-settings__field">
               <span>{{ t('pet.settings.agent.quietEnd') }}</span>
-              <input v-model.number="form.agent.quietEnd" type="number" min="0" max="23" />
-              <em>{{ t('pet.settings.agent.hour') }}</em>
+              <select v-model.number="form.agent.quietEnd">
+                <option v-for="hour in PET_HOURS" :key="`end:${hour}`" :value="hour">{{ String(hour).padStart(2, '0') }}:00</option>
+              </select>
             </label>
           </div>
+          <p class="pet-settings__hint">{{ t('pet.settings.agent.proactiveQuota', { count: proactiveDailyCap }) }}</p>
         </section>
 
         <section v-show="activeTab === 'agent'" class="pet-settings__section">
-        <div class="pet-settings__section-title">
+        <div class="pet-settings__section-title pet-settings__section-title--setting">
           <div>
             <h3>{{ t('pet.settings.voice.title') }}</h3>
             <p>{{ t('pet.settings.voice.subtitle') }}</p>
-          </div>
-        </div>
-
-        <div class="pet-settings__setting-row">
-          <div>
-            <strong>{{ t('pet.settings.voice.enabled') }}</strong>
-            <span>{{ t('pet.settings.voice.enabledHint') }}</span>
           </div>
           <label class="pet-settings__switch">
             <input v-model="form.agent.voiceEnabled" type="checkbox" />
@@ -1182,15 +1517,18 @@ onUnmounted(() => {
             <span>{{ t('pet.settings.voice.modelReference') }}</span>
             <select v-model="voiceProviderModel" :disabled="providerLoading || !form.agent.providerPlatform">
               <option value="">{{ providerLoading ? t('pet.settings.agent.loadingModels') : t('pet.settings.voice.modelPlaceholder') }}</option>
-              <option
-                v-for="option in visibleVoiceOptions"
-                :key="`voice:${option.platform}:${option.providerId}:${option.modelId}`"
-                :value="JSON.stringify({ providerId: option.providerId, modelId: option.modelId })"
-              >
-                {{ option.providerName }} · {{ option.modelId }}
-              </option>
+              <optgroup v-for="group in voiceModelGroups" :key="`voice:${group.key}`" :label="group.label">
+                <option
+                  v-for="option in group.options"
+                  :key="`voice:${option.platform}:${option.providerId}:${option.modelId}`"
+                  :value="JSON.stringify({ platform: option.platform, providerId: option.providerId, modelId: option.modelId })"
+                >
+                  {{ option.modelId }}
+                </option>
+              </optgroup>
             </select>
           </label>
+          <p v-if="voiceModelGroups.length === 0" class="pet-settings__hint">{{ t('pet.settings.voice.noModels') }}</p>
           <div class="pet-settings__field-grid">
             <label class="pet-settings__field">
               <span>{{ t('pet.settings.voice.voice') }}</span>
@@ -1207,7 +1545,7 @@ onUnmounted(() => {
             </label>
             <label v-if="voicePresetModel === PET_VOICE_CUSTOM" class="pet-settings__field">
               <span>{{ t('pet.settings.voice.voice') }}</span>
-              <input v-model="form.agent.voice" type="text" :placeholder="t('pet.settings.voice.voicePlaceholder')" />
+            <input v-model="form.agent.voice" type="text" maxlength="80" :placeholder="t('pet.settings.voice.voicePlaceholder')" />
             </label>
             <label class="pet-settings__field">
               <span>{{ t('pet.settings.voice.mode') }}</span>
@@ -1224,14 +1562,15 @@ onUnmounted(() => {
             </button>
           </div>
            <label class="pet-settings__field">
-            <span>{{ t('pet.settings.voice.tag') }}</span>
-            <input v-model="form.agent.voiceTag" type="text" :placeholder="t('pet.settings.voice.tagPlaceholder')" />
-          </label>
-          <label class="pet-settings__field">
-            <span>{{ t('pet.settings.voice.instruction') }}</span>
-            <input v-model="form.agent.voiceInstruction" type="text" :placeholder="t('pet.settings.voice.instructionPlaceholder')" />
-          </label>
-          <p class="pet-settings__hint">{{ t('pet.settings.voice.hint') }}</p>
+             <span>{{ t('pet.settings.voice.tag') }}</span>
+             <input v-model="form.agent.voiceTag" type="text" maxlength="40" :placeholder="t('pet.settings.voice.tagPlaceholder')" />
+           </label>
+           <label class="pet-settings__field">
+             <span>{{ t('pet.settings.voice.instruction') }}</span>
+             <input v-model="form.agent.voiceInstruction" type="text" maxlength="200" :placeholder="t('pet.settings.voice.instructionPlaceholder')" />
+           </label>
+           <p v-if="voiceErrorMessage" class="pet-settings__field-error">{{ t('pet.settings.voice.testFailed', { error: voiceErrorMessage }) }}</p>
+           <p class="pet-settings__hint">{{ t('pet.settings.voice.hint') }}</p>
         </template>
         </section>
 
@@ -1241,18 +1580,14 @@ onUnmounted(() => {
           </button>
         </div>
 
+        <p v-show="activeTab === 'sleep'" class="pet-settings__tab-description">
+          {{ t('pet.settings.dream.description') }}
+        </p>
         <section v-show="activeTab === 'sleep'" class="pet-settings__section">
-          <div class="pet-settings__section-title">
+          <div class="pet-settings__section-title pet-settings__section-title--setting">
             <div>
-              <h3>{{ t('pet.settings.dream.title') }}</h3>
-              <p>{{ t('pet.settings.dream.subtitle') }}</p>
-            </div>
-          </div>
-
-          <div class="pet-settings__setting-row">
-            <div>
-              <strong>{{ t('pet.settings.dream.enabled') }}</strong>
-              <span>{{ t('pet.settings.dream.enabledHint') }}</span>
+              <h3>{{ t('pet.settings.dream.dreamTalk') }}</h3>
+              <p>{{ t('pet.settings.dream.dreamTalkHint') }}</p>
             </div>
             <label class="pet-settings__switch">
               <input v-model="form.dream.dreamEnabled" type="checkbox" />
@@ -1294,7 +1629,7 @@ onUnmounted(() => {
             </button>
           </div>
           <label class="pet-settings__field">
-            <textarea v-model="form.dream.prompt" rows="9" :placeholder="t('pet.settings.dream.promptPlaceholder')"></textarea>
+            <textarea v-model="dreamPromptModel" rows="9" :placeholder="t('pet.settings.dream.promptPlaceholder')"></textarea>
           </label>
           <p class="pet-settings__hint">{{ t('pet.settings.dream.promptHint') }}</p>
           <label class="pet-settings__field">
@@ -1311,7 +1646,21 @@ onUnmounted(() => {
               <p>{{ t('pet.settings.dream.imageModelHint') }}</p>
             </div>
           </div>
-          <span class="pet-settings__managed-value">{{ t('pet.settings.dream.imageModelManaged') }}</span>
+          <select v-model="imageModelValue" :disabled="providerLoading">
+            <option value="">{{ providerLoading ? t('pet.settings.agent.loadingModels') : t('pet.settings.dream.imageModelPlaceholder') }}</option>
+            <optgroup v-for="group in imageModelGroups" :key="`image:${group.key}`" :label="group.label">
+              <option
+                v-for="option in group.options"
+                :key="`image:${option.platform}:${option.providerId}:${option.modelId}`"
+                :value="JSON.stringify({ platform: option.platform, providerId: option.providerId, modelId: option.modelId })"
+              >
+                {{ option.modelId }}
+              </option>
+            </optgroup>
+          </select>
+          <p v-if="!providerLoading && imageModelGroups.length === 0" class="pet-settings__hint">
+            {{ t('pet.settings.dream.noImageModels') }}
+          </p>
         </section>
 
         <div v-show="activeTab === 'sleep'" class="pet-settings__save-row">
@@ -1363,7 +1712,7 @@ onUnmounted(() => {
                   :image-url="defaultAtlas.src"
                   :manifest="defaultAtlas.manifest"
                   action="idle"
-                  :display-height="46"
+                   :display-height="48"
                 />
                 <span v-else aria-hidden="true">·</span>
               </div>
@@ -1382,7 +1731,7 @@ onUnmounted(() => {
                   :image-url="skinPreviews[skin.skinId].src"
                   :manifest="skinPreviews[skin.skinId].manifest"
                   action="idle"
-                  :display-height="46"
+                   :display-height="48"
                 />
                 <span v-else aria-hidden="true">{{ skinPreviewLoading[skin.skinId] ? '…' : '·' }}</span>
               </div>
@@ -1408,21 +1757,6 @@ onUnmounted(() => {
         </div>
 
         <div v-show="activeTab === 'stats'" class="pet-settings__stats-content">
-        <div class="pet-settings__stats-heading">
-          <div>
-            <h3>{{ t('pet.settings.stats.title') }}</h3>
-            <p>{{ t('pet.settings.stats.subtitle') }}</p>
-          </div>
-          <button
-            type="button"
-            class="pet-settings__secondary-button"
-            :disabled="statsRefreshing"
-            @click="refreshStats"
-          >
-            {{ statsRefreshing ? t('pet.common.refreshing') : t('pet.settings.stats.refresh') }}
-          </button>
-        </div>
-
         <div v-if="statsErrorMessage" class="pet-settings__stats-error">
           <span>{{ t('pet.settings.stats.loadFailed', { error: statsErrorMessage }) }}</span>
           <button type="button" class="pet-settings__secondary-button" @click="refreshStats">{{ t('pet.common.retry') }}</button>
@@ -1432,7 +1766,19 @@ onUnmounted(() => {
           <section class="pet-settings__stats-block">
             <div class="pet-settings__stats-block-title">
               <h4>{{ t('pet.settings.stats.needs') }}</h4>
-              <span>{{ t('pet.settings.stats.range') }}</span>
+              <div class="pet-settings__stats-block-actions">
+                <span>{{ t('pet.settings.stats.range') }}</span>
+                <button
+                  type="button"
+                  class="pet-settings__icon-button"
+                  :disabled="statsRefreshing"
+                  :title="t('pet.settings.stats.refresh')"
+                  :aria-label="t('pet.settings.stats.refresh')"
+                  @click="refreshStats"
+                >
+                  {{ statsRefreshing ? '…' : '↻' }}
+                </button>
+              </div>
             </div>
             <div class="pet-settings__stat-row">
               <span class="pet-settings__stat-label"><span class="pet-settings__stat-icon is-hunger" aria-hidden="true"></span>{{ t('pet.settings.stats.hunger') }}</span>
@@ -1512,23 +1858,31 @@ onUnmounted(() => {
           <div class="pet-settings__stats-summary">
             <div class="pet-settings__stats-card">
               <span class="pet-settings__stats-card-icon is-coins" aria-hidden="true"></span>
-              <span>{{ t('pet.settings.stats.coins') }}</span>
-              <strong>{{ formatInteger(snapshot.state.coins) }}</strong>
+              <span class="pet-settings__stats-card-copy">
+                <span>{{ t('pet.settings.stats.coins') }}</span>
+                <strong>{{ formatInteger(snapshot.state.coins) }}</strong>
+              </span>
             </div>
             <div class="pet-settings__stats-card">
               <span class="pet-settings__stats-card-icon is-token" aria-hidden="true"></span>
-              <span>{{ t('pet.settings.stats.token') }}</span>
-              <strong>{{ formatInteger(snapshot.experience.totalTokens) }}</strong>
+              <span class="pet-settings__stats-card-copy">
+                <span>{{ t('pet.settings.stats.token') }}</span>
+                <strong>{{ formatInteger(snapshot.experience.totalTokens) }}</strong>
+              </span>
             </div>
             <div class="pet-settings__stats-card">
               <span class="pet-settings__stats-card-icon is-days" aria-hidden="true"></span>
-              <span>{{ t('pet.settings.stats.companionDays') }}</span>
-              <strong>{{ companionDays > 0 ? t('pet.settings.stats.days', { count: companionDays }) : t('pet.settings.stats.noData') }}</strong>
+              <span class="pet-settings__stats-card-copy">
+                <span>{{ t('pet.settings.stats.companionDays') }}</span>
+                <strong>{{ companionDays > 0 ? t('pet.settings.stats.days', { count: companionDays }) : t('pet.settings.stats.noData') }}</strong>
+              </span>
             </div>
             <div class="pet-settings__stats-card">
               <span class="pet-settings__stats-card-icon is-status" aria-hidden="true"></span>
-              <span>{{ t('pet.settings.stats.currentStatus') }}</span>
-              <strong>{{ petStatusLabel }}</strong>
+              <span class="pet-settings__stats-card-copy">
+                <span>{{ t('pet.settings.stats.currentStatus') }}</span>
+                <strong>{{ petStatusLabel }}</strong>
+              </span>
             </div>
           </div>
 
@@ -1568,6 +1922,9 @@ onUnmounted(() => {
   --settings-line: var(--mac-border, rgba(15, 23, 42, 0.12));
   --settings-surface: var(--mac-surface, #ffffff);
   --settings-strong-surface: var(--mac-surface-strong, #f5f5f7);
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
   width: 100%;
   max-width: none;
   min-width: 0;
@@ -1591,7 +1948,6 @@ onUnmounted(() => {
 .pet-settings__header {
   justify-content: space-between;
   gap: 20px;
-  margin-bottom: 18px;
 }
 
 .pet-settings__heading {
@@ -1606,7 +1962,7 @@ onUnmounted(() => {
 
 .pet-settings h2 {
   font-size: 18px;
-  font-weight: 650;
+  font-weight: 600;
   letter-spacing: 0;
 }
 
@@ -1621,6 +1977,8 @@ onUnmounted(() => {
 
 .pet-settings__heading p {
   margin-top: 4px;
+  font-size: 14px;
+  line-height: 20px;
 }
 
 .pet-settings__header-actions {
@@ -1657,13 +2015,15 @@ onUnmounted(() => {
 .pet-settings__content {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 20px;
 }
 
-/* 普通设置在桌面端放宽到主窗口可用空间，避免表单挤在左侧；Studio 和梦境历史继续使用完整画布。 */
-.pet-settings__narrow-content {
+.pet-settings__main-content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
   width: 100%;
-  max-width: 1024px;
+  min-width: 0;
 }
 
 .pet-settings__wide-content {
@@ -1673,43 +2033,70 @@ onUnmounted(() => {
 
 .pet-settings__tabs {
   display: flex;
-  gap: 6px;
-  margin-bottom: 14px;
-  overflow-x: auto;
-  padding-bottom: 2px;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
+/* 旧版 Wails 模板的 public/style.css 会给所有 button 注入固定宽度和左边距；设置页页签必须由内容决定宽度。 */
 .pet-settings__tab {
   flex: 0 0 auto;
+  width: auto;
+  min-width: 0;
+  height: 32px;
+  white-space: nowrap;
   border: 1px solid var(--settings-line);
   border-radius: 6px;
-  padding: 6px 10px;
-  background: color-mix(in srgb, var(--settings-strong-surface) 72%, transparent);
-  color: var(--settings-muted);
+  margin: 0;
+  padding: 0 12px;
+  background: var(--settings-surface);
+  color: var(--settings-ink);
   cursor: pointer;
   font: inherit;
   font-size: 12px;
-  transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
+  font-weight: 400;
+  line-height: 20px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
 }
 
-.pet-settings__tab:hover,
+.pet-settings__tab:not(.is-active):hover {
+  border-color: var(--settings-line);
+  background: var(--settings-strong-surface);
+  color: var(--settings-ink);
+}
+
 .pet-settings__tab.is-active {
-  border-color: color-mix(in srgb, var(--mac-accent, #0a84ff) 48%, var(--settings-line));
-  background: color-mix(in srgb, var(--mac-accent, #0a84ff) 12%, var(--settings-surface));
-  color: var(--mac-accent, #0a84ff);
+  border-color: var(--mac-accent, #0a84ff);
+  background: var(--mac-accent, #0a84ff);
+  color: #fff;
+  box-shadow: none;
+}
+
+.pet-settings__tab.is-active:hover {
+  border-color: color-mix(in srgb, var(--mac-accent, #0a84ff) 90%, #000);
+  background: color-mix(in srgb, var(--mac-accent, #0a84ff) 90%, #000);
+  color: #fff;
+}
+
+.pet-settings__tab:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--mac-accent, #0a84ff) 55%, transparent);
+  outline-offset: 2px;
 }
 
 .pet-settings__overview-preview {
   display: flex;
-  min-height: 190px;
-  align-items: flex-end;
+  box-sizing: border-box;
+  height: 198px;
+  align-items: center;
   justify-content: center;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--settings-line) 84%, transparent);
-  border-radius: 10px;
-  padding: 18px 16px 14px;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--mac-accent, #0a84ff) 7%, var(--settings-surface)), var(--settings-strong-surface));
+  border-radius: 16px;
+  padding: 24px 16px;
+  background: color-mix(in srgb, var(--settings-strong-surface) 32%, transparent);
 }
 
 .pet-settings__overview-placeholder {
@@ -1718,12 +2105,38 @@ onUnmounted(() => {
   font-size: 11px;
 }
 
-.pet-settings__overview-profile {
+.pet-settings__overview-content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.pet-settings__auto-care {
+  gap: 16px;
+}
+
+.pet-settings__auto-care-control {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  border-top: 1px solid color-mix(in srgb, var(--settings-line) 72%, transparent);
-  padding-top: 14px;
+}
+
+.pet-settings__auto-care-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--settings-muted);
+  font-size: 11px;
+}
+
+.pet-settings__overview-profile {
+  gap: 12px;
+}
+
+.pet-settings__overview-profile-title {
+  font-size: 14px;
+  font-weight: 500;
 }
 
 .pet-settings__name-row {
@@ -1771,10 +2184,9 @@ onUnmounted(() => {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 14px;
+  gap: 20px;
 }
 
-.pet-settings__stats-heading,
 .pet-settings__stats-block-title,
 .pet-settings__growth-row,
 .pet-settings__stat-row,
@@ -1784,31 +2196,16 @@ onUnmounted(() => {
   align-items: center;
 }
 
-.pet-settings__stats-heading {
-  justify-content: space-between;
-  gap: 14px;
-}
-
-.pet-settings__stats-heading h3,
 .pet-settings__stats-block-title h4 {
   margin: 0;
 }
 
-.pet-settings__stats-heading h3 {
-  font-size: 15px;
-}
-
-.pet-settings__stats-heading p,
 .pet-settings__stats-block-title > span,
 .pet-settings__stats-note,
 .pet-settings__stats-empty {
   color: var(--settings-muted);
   font-size: 11px;
   line-height: 1.55;
-}
-
-.pet-settings__stats-heading p {
-  margin-top: 3px;
 }
 
 .pet-settings__secondary-button {
@@ -1874,14 +2271,29 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 12px;
   border: 1px solid var(--settings-line);
-  border-radius: 12px;
-  padding: 14px;
+  border-radius: 8px;
+  padding: 16px;
   background: color-mix(in srgb, var(--settings-surface) 80%, transparent);
 }
 
 .pet-settings__stats-block-title {
   justify-content: space-between;
   gap: 12px;
+}
+
+.pet-settings__stats-block-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pet-settings__visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
 .pet-settings__stats-block-title h4 {
@@ -2100,19 +2512,38 @@ onUnmounted(() => {
 .pet-settings__stats-card {
   display: flex;
   min-width: 0;
-  min-height: 62px;
+  min-height: 60px;
   flex-direction: row;
   align-items: center;
-  justify-content: center;
-  gap: 8px;
+  justify-content: flex-start;
+  gap: 10px;
   border: 1px solid var(--settings-line);
-  border-radius: 10px;
-  padding: 10px;
+  border-radius: 8px;
+  padding: 10px 12px;
   background: color-mix(in srgb, var(--settings-surface) 80%, transparent);
 }
 
-.pet-settings__stats-card strong {
+.pet-settings__stats-card-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 3px;
   overflow: hidden;
+}
+
+.pet-settings__stats-card-copy > span {
+  overflow: hidden;
+  color: var(--settings-muted);
+  font-size: 10px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pet-settings__stats-card-copy strong {
+  overflow: hidden;
+  display: block;
   color: var(--settings-ink);
   font-size: 13px;
   text-overflow: ellipsis;
@@ -2205,9 +2636,9 @@ onUnmounted(() => {
 
 .pet-settings__skin-thumb {
   display: flex;
-  width: 58px;
-  height: 58px;
-  flex: 0 0 58px;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
   align-items: flex-end;
   justify-content: center;
   overflow: hidden;
@@ -2228,14 +2659,8 @@ onUnmounted(() => {
 .pet-settings__skin-copy strong,
 .pet-settings__skin-copy span {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.pet-settings__stats-card > span:nth-child(2) {
-  min-width: 0;
-  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .pet-settings__skin-copy strong {
@@ -2333,9 +2758,8 @@ onUnmounted(() => {
   min-width: 0;
   flex: 1 1 auto;
   margin-top: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .pet-settings__skin-directory-row .pet-settings__field-actions {
@@ -2377,6 +2801,12 @@ onUnmounted(() => {
 
 .pet-settings__section-title p {
   margin-top: 3px;
+}
+
+.pet-settings__tab-description {
+  color: var(--settings-muted);
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 .pet-settings__field-heading,
@@ -2425,6 +2855,8 @@ onUnmounted(() => {
 
 .pet-settings__managed-directory {
   margin-top: -3px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .pet-settings__drop-hint {
@@ -2676,11 +3108,6 @@ onUnmounted(() => {
     justify-content: space-between;
   }
 
-  .pet-settings__stats-heading {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
   .pet-settings__setting-row {
     align-items: flex-start;
     flex-wrap: wrap;
@@ -2715,7 +3142,7 @@ onUnmounted(() => {
   .pet-settings__skin-status,
   .pet-settings__skin-row > .pet-settings__secondary-button,
   .pet-settings__skin-row > .pet-settings__icon-button {
-    margin-left: 68px;
+    margin-left: 0;
   }
 
   .pet-settings__stats-summary {

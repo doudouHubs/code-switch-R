@@ -58,6 +58,12 @@ wails3 task dev
    wails3 task package
    ```
 
+根目录快捷命令：
+```bash
+# 当前平台生产构建
+task build
+```
+
 ### 交叉编译 Windows (macOS 环境)
 1. 安装 `mingw-w64`：
    ```bash
@@ -71,18 +77,18 @@ wails3 task dev
    ```
 
 ## 发布
-脚本 `scripts/publish_release.sh v0.1.0` 将自动打包并上传以下资产（macOS 会分别构建 arm64 与 amd64）：
+发布版本前，先修改并提交 `version_service.go`、`build/config.yml` 和
+`build/linux/nfpm/nfpm.yaml` 中的版本号，再执行：
+```bash
+task publish
+```
+
+`task publish` 会先执行当前平台生产构建，再读取 `version_service.go` 的
+`AppVersion` 创建并推送同名 `v*` tag；GitHub Actions 会据此构建并上传以下资产：
 - `codeswitch-macos-arm64.zip`
 - `codeswitch-macos-amd64.zip`
-- `codeswitch-arm64-installer.exe`
+- `CodeSwitch-amd64-installer.exe`
 - `codeswitch.exe`
-
-若要手动发布，可执行：
-```bash
-wails3 task package
-env ARCH=amd64 wails3 task windows:package
-scripts/publish_release.sh
-```
 
 ## 常见问题
 - 若 `.app` 无法打开，先执行 `wails3 task common:update:build-assets` 后再构建。

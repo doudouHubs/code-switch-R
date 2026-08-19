@@ -180,14 +180,19 @@ func focusProjectManagerBoundTerminalTab(
 
 	windowHandle, windowTitle, err := findProjectManagerTerminalWindowWithProcesses(runtime, session, processes)
 	if err != nil {
+		WriteRuntimeDiagnostic("terminal-tab-focus-find-failed", fmt.Sprintf("session=%q err=%q", session.ID, err.Error()))
 		return err
 	}
+	WriteRuntimeDiagnostic("terminal-tab-focus-start", fmt.Sprintf("session=%q shell_pid=%d hwnd=%#x title=%q tab=%q", session.ID, runtime.ShellPID, uintptr(windowHandle), windowTitle, projectManagerTerminalTabRuntimeIDKey(runtime.TabRuntimeID)))
 	if err := projectManagerActivateWindow(windowHandle); err != nil {
+		WriteRuntimeDiagnostic("terminal-tab-focus-activate-failed", fmt.Sprintf("session=%q err=%q", session.ID, err.Error()))
 		return err
 	}
 	if err := projectManagerSelectTerminalTab(windowHandle, runtime.TabRuntimeID); err != nil {
+		WriteRuntimeDiagnostic("terminal-tab-select-failed", fmt.Sprintf("session=%q hwnd=%#x err=%q", session.ID, uintptr(windowHandle), err.Error()))
 		return fmt.Errorf("按稳定 tab 身份定位失败: %w", err)
 	}
+	WriteRuntimeDiagnostic("terminal-tab-select-success", fmt.Sprintf("session=%q hwnd=%#x", session.ID, uintptr(windowHandle)))
 
 	log.Printf(
 		"[ProjectManager] 已精确恢复 WT 会话 tab session=%s shell_pid=%d hwnd=%#x title=%q tab=%s",

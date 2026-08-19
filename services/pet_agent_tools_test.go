@@ -173,7 +173,7 @@ func TestPetAgentToolsContinuationMapsNativeProtocols(t *testing.T) {
 		},
 	}
 	results := []PetAgentToolResult{{ToolCallID: "call-1", ToolName: "Read", Content: "1\t内容"}}
-	for _, protocol := range []PetAgentToolProtocol{PetAgentProtocolOpenAI, PetAgentProtocolAnthropic, PetAgentProtocolGemini} {
+	for _, protocol := range []PetAgentToolProtocol{PetAgentProtocolOpenAI, PetAgentProtocolResponses, PetAgentProtocolAnthropic, PetAgentProtocolGemini} {
 		request, err := BuildPetAgentContinuationRequest(protocol, assistant, results)
 		if err != nil {
 			t.Fatalf("protocol %q error=%v", protocol, err)
@@ -182,13 +182,21 @@ func TestPetAgentToolsContinuationMapsNativeProtocols(t *testing.T) {
 		if err := json.Unmarshal(request.NativeMessages, &messages); err != nil {
 			t.Fatalf("protocol %q native messages invalid: %v", protocol, err)
 		}
-		if len(messages) != 2 {
-			t.Fatalf("protocol %q message count=%d, want 2", protocol, len(messages))
+		wantMessages := 2
+		if protocol == PetAgentProtocolResponses {
+			wantMessages = 3
+		}
+		if len(messages) != wantMessages {
+			t.Fatalf("protocol %q message count=%d, want %d", protocol, len(messages), wantMessages)
 		}
 		switch protocol {
 		case PetAgentProtocolOpenAI:
 			if messages[0]["role"] != "assistant" || messages[0]["tool_calls"] == nil || messages[1]["role"] != "tool" || messages[1]["tool_call_id"] != "call-1" {
 				t.Fatalf("OpenAI mapping=%#v", messages)
+			}
+		case PetAgentProtocolResponses:
+			if messages[0]["type"] != "message" || messages[1]["type"] != "function_call" || messages[1]["call_id"] != "call-1" || messages[2]["type"] != "function_call_output" || messages[2]["call_id"] != "call-1" {
+				t.Fatalf("Responses mapping=%#v", messages)
 			}
 		case PetAgentProtocolAnthropic:
 			if messages[0]["role"] != "assistant" || messages[1]["role"] != "user" {

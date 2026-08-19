@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -59,6 +60,66 @@ func installProjectManagerCodexHooks() (CodexStatusMonitorInfo, error) {
 		if err := trustProjectManagerCodexHooks(codexHome); err != nil {
 			info.Error = fmt.Sprintf("Hook 已安装，但自动信任失败: %v", err)
 		}
+	}
+	return info, nil
+}
+
+func uninstallProjectManagerCodexHooks() (CodexStatusMonitorInfo, error) {
+	info := CodexStatusMonitorInfo{}
+	codexHome, err := projectManagerCodexHomePath()
+	if err != nil {
+		return info, err
+	}
+	path := filepath.Join(codexHome, "hooks.json")
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) || len(bytes.TrimSpace(data)) == 0 {
+		return info, nil
+	}
+	if err != nil {
+		return info, fmt.Errorf("读取 Codex hooks.json 失败: %w", err)
+	}
+
+	root := map[string]any{}
+	if err := json.Unmarshal(data, &root); err != nil {
+		// 配置损坏时必须 fail-fast，不能为了关闭状态灯覆盖用户的 hooks。
+		return info, fmt.Errorf("解析 Codex hooks.json 失败: %w", err)
+	}
+	hooks, ok := root["hooks"].(map[string]any)
+	if !ok {
+		if root["hooks"] == nil {
+			return info, nil
+		}
+		return info, errors.New("Codex hooks.json 的 hooks 字段不是对象")
+	}
+
+	changed := false
+	for eventName, rawGroups := range hooks {
+		groups, groupsOK := rawGroups.([]any)
+		if !groupsOK {
+			continue
+		}
+		cleaned := removeProjectManagerCodexHookHandlers(groups)
+		if reflect.DeepEqual(groups, cleaned) {
+			continue
+		}
+		changed = true
+		if len(cleaned) == 0 {
+			delete(hooks, eventName)
+		} else {
+			hooks[eventName] = cleaned
+		}
+	}
+	if !changed {
+		return info, nil
+	}
+
+	encoded, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return info, err
+	}
+	encoded = append(encoded, '\n')
+	if err := AtomicWriteBytes(path, encoded); err != nil {
+		return info, err
 	}
 	return info, nil
 }
@@ -178,13 +239,18 @@ func mergeProjectManagerCodexHooks(path, command string, agentHooksSupported boo
 }
 
 func buildProjectManagerCodexHookGroup(eventName, command string) map[string]any {
+	handler := map[string]any{
+		"type":          "command",
+		"command":       command,
+		"timeout":       2,
+		"statusMessage": "Updating CodeSwitch status",
+	}
+	if eventName != "SessionEnd" {
+		// Codex 的异步能力明确排除 SessionEnd；其余生命周期事件统一异步，避免阻塞主流程。
+		handler["async"] = true
+	}
 	group := map[string]any{
-		"hooks": []any{map[string]any{
-			"type":          "command",
-			"command":       command,
-			"timeout":       2,
-			"statusMessage": "Updating CodeSwitch status",
-		}},
+		"hooks": []any{handler},
 	}
 	if eventName == "PreToolUse" {
 		// 只监听 request_user_input，避免每次普通工具调用都额外启动一个 Hook 进程。

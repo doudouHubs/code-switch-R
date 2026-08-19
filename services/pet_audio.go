@@ -117,13 +117,17 @@ func (s *PetAIService) preparePetSpeechStream(
 	if s == nil || s.providerReader == nil || s.transport == nil || emitter == nil {
 		return PetSpeechRequest{}, petAIProviderRuntime{}, nil, nil, nil, newPetAIError(PET_AI_DEPENDENCY_UNAVAILABLE, 0, nil)
 	}
-	provider, err := s.resolveProvider(ctx, input.Provider, PetCapabilityTTS)
-	if err != nil {
-		return PetSpeechRequest{}, petAIProviderRuntime{}, nil, nil, nil, err
-	}
+	// 先登记 request，再解析 provider。provider reader 可能访问数据库或文件系统，
+	// 如果登记晚于解析，用户在这段窗口内发出的取消信号会被静默丢掉，随后请求仍会启动。
 	requestCtx, cancel := context.WithTimeout(ctx, s.options.Timeout)
 	state := &petAIRequestState{cancel: cancel}
 	if err := s.reserveRequest(input.RequestID, state); err != nil {
+		cancel()
+		return PetSpeechRequest{}, petAIProviderRuntime{}, nil, nil, nil, err
+	}
+	provider, err := s.resolveProvider(requestCtx, input.Provider, PetCapabilityTTS)
+	if err != nil {
+		s.releaseRequest(input.RequestID, state)
 		cancel()
 		return PetSpeechRequest{}, petAIProviderRuntime{}, nil, nil, nil, err
 	}

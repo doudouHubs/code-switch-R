@@ -303,6 +303,18 @@ func (b *PetBrowserBridge) dispatch(ctx context.Context, method string, args []j
 			return nil, err
 		}
 		return b.requirePet().GetSnapshot(petID)
+	case "codeswitch/services.PetService.GetRuntimeSnapshot":
+		var petID string
+		if err := decodePetBrowserArg(args, 0, &petID); err != nil {
+			return nil, err
+		}
+		return b.requirePet().GetRuntimeSnapshot(petID)
+	case "codeswitch/services.PetService.GetAtlas":
+		var petID string
+		if err := decodePetBrowserArg(args, 0, &petID); err != nil {
+			return nil, err
+		}
+		return b.requirePet().GetAtlas(petID)
 	case "codeswitch/services.PetService.PerformAction":
 		var petID string
 		var action PetAction
@@ -313,12 +325,28 @@ func (b *PetBrowserBridge) dispatch(ctx context.Context, method string, args []j
 			return nil, err
 		}
 		return b.requirePet().PerformAction(petID, action)
+	case "codeswitch/services.PetService.EndWorkEarlyForPet":
+		var petID string
+		var now int64
+		if err := decodePetBrowserArg(args, 0, &petID); err != nil {
+			return nil, err
+		}
+		if err := decodePetBrowserArg(args, 1, &now); err != nil {
+			return nil, err
+		}
+		return b.requirePet().EndWorkEarlyForPet(petID, now)
 	case "codeswitch/services.PetService.Petted":
 		var petID string
 		if err := decodePetBrowserArg(args, 0, &petID); err != nil {
 			return nil, err
 		}
 		return nil, b.requirePet().Petted(petID)
+	case "codeswitch/services.PetService.PettedForPet":
+		var petID string
+		if err := decodePetBrowserArg(args, 0, &petID); err != nil {
+			return nil, err
+		}
+		return b.requirePet().PettedForPet(petID)
 	case "codeswitch/services.PetService.RecordProactive":
 		var petID string
 		var now int64
@@ -329,6 +357,16 @@ func (b *PetBrowserBridge) dispatch(ctx context.Context, method string, args []j
 			return nil, err
 		}
 		return b.requirePet().RecordProactive(petID, now)
+	case "codeswitch/services.PetService.RecordProactiveState":
+		var petID string
+		var now int64
+		if err := decodePetBrowserArg(args, 0, &petID); err != nil {
+			return nil, err
+		}
+		if err := decodePetBrowserArg(args, 1, &now); err != nil {
+			return nil, err
+		}
+		return b.requirePet().RecordProactiveState(petID, now)
 	case "codeswitch/services.PetService.SaveSettings":
 		var petID string
 		var settings PetSettingsInput
@@ -579,6 +617,17 @@ func (b *PetBrowserBridge) dispatch(ctx context.Context, method string, args []j
 			return nil, err
 		}
 		return sanitizePetBrowserProviders(providers), nil
+	case "codeswitch/services.ProviderService.FetchModels":
+		var kind string
+		var providerID int64
+		if err := decodePetBrowserArg(args, 0, &kind); err != nil {
+			return nil, err
+		}
+		if err := decodePetBrowserArg(args, 1, &providerID); err != nil {
+			return nil, err
+		}
+		// 只返回 ProviderModel 的 id/name，API key 留在后端；浏览器预览也必须走同一条安全边界。
+		return b.requireProvider().FetchModels(kind, providerID)
 	case "codeswitch/services.GeminiService.GetProviders":
 		return sanitizePetBrowserGeminiProviders(b.requireGemini().GetProviders()), nil
 	case "codeswitch/services.ProjectManagerService.GetSnapshot":
@@ -629,7 +678,7 @@ func (b *PetBrowserBridge) dispatch(ctx context.Context, method string, args []j
 		if err := decodePetBrowserArg(args, 0, &input); err != nil {
 			return nil, err
 		}
-		return b.requireAI().TranscribeAudio(input)
+		return b.requireAI().transcribeAudio(ctx, input)
 	case "codeswitch/services.PetSchedulerAPI.SchedulePlan":
 		var input PetSchedulerSchedulePlanInput
 		if err := decodePetBrowserArg(args, 0, &input); err != nil {
@@ -711,44 +760,48 @@ func (b *PetBrowserBridge) writeError(writer http.ResponseWriter, status int, me
 }
 
 type petBrowserProvider struct {
-	ID              int64             `json:"id"`
-	Name            string            `json:"name"`
-	Enabled         bool              `json:"enabled"`
-	SupportedModels map[string]bool   `json:"supportedModels,omitempty"`
-	ModelCategories map[string]string `json:"modelCategories,omitempty"`
+	ID                         int64               `json:"id"`
+	Name                       string              `json:"name"`
+	Enabled                    bool                `json:"enabled"`
+	SupportedModels            map[string]bool     `json:"supportedModels,omitempty"`
+	ModelCategories            map[string]string   `json:"modelCategories,omitempty"`
+	ModelReasoningEffortLevels map[string][]string `json:"modelReasoningEffortLevels,omitempty"`
 }
 
 func sanitizePetBrowserProviders(providers []Provider) []petBrowserProvider {
 	result := make([]petBrowserProvider, 0, len(providers))
 	for _, provider := range providers {
 		result = append(result, petBrowserProvider{
-			ID:              provider.ID,
-			Name:            provider.Name,
-			Enabled:         provider.Enabled,
-			SupportedModels: provider.SupportedModels,
-			ModelCategories: provider.ModelCategories,
+			ID:                         provider.ID,
+			Name:                       provider.Name,
+			Enabled:                    provider.Enabled,
+			SupportedModels:            provider.SupportedModels,
+			ModelCategories:            provider.ModelCategories,
+			ModelReasoningEffortLevels: provider.ModelReasoningEffortLevels,
 		})
 	}
 	return result
 }
 
 type petBrowserGeminiProvider struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Model         string `json:"model,omitempty"`
-	ModelCategory string `json:"modelCategory,omitempty"`
-	Enabled       bool   `json:"enabled"`
+	ID                    string   `json:"id"`
+	Name                  string   `json:"name"`
+	Model                 string   `json:"model,omitempty"`
+	ModelCategory         string   `json:"modelCategory,omitempty"`
+	ReasoningEffortLevels []string `json:"reasoningEffortLevels,omitempty"`
+	Enabled               bool     `json:"enabled"`
 }
 
 func sanitizePetBrowserGeminiProviders(providers []GeminiProvider) []petBrowserGeminiProvider {
 	result := make([]petBrowserGeminiProvider, 0, len(providers))
 	for _, provider := range providers {
 		result = append(result, petBrowserGeminiProvider{
-			ID:            provider.ID,
-			Name:          provider.Name,
-			Model:         provider.Model,
-			ModelCategory: provider.ModelCategory,
-			Enabled:       provider.Enabled,
+			ID:                    provider.ID,
+			Name:                  provider.Name,
+			Model:                 provider.Model,
+			ModelCategory:         provider.ModelCategory,
+			ReasoningEffortLevels: append([]string(nil), provider.ReasoningEffortLevels...),
+			Enabled:               provider.Enabled,
 		})
 	}
 	return result

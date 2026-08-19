@@ -160,20 +160,7 @@ onUnmounted(() => {
 
 <template>
   <section class="pet-memory-panel">
-    <div class="pet-memory-panel__header">
-      <div>
-        <h3>{{ t('pet.memory.title') }}</h3>
-        <p>{{ t('pet.memory.subtitle') }}</p>
-      </div>
-      <button
-        type="button"
-        class="pet-memory-panel__button"
-        :disabled="!isEditable || loading || actionLoading"
-        @click="refresh"
-      >
-        {{ loading ? t('pet.common.loading') : t('pet.common.refresh') }}
-      </button>
-    </div>
+    <p class="pet-memory-panel__description">{{ t('pet.memory.subtitle') }}</p>
 
     <div v-if="!isEditable" class="pet-memory-panel__state">
       {{ t('pet.memory.unavailable', { petId: props.petId }) }}
@@ -181,15 +168,38 @@ onUnmounted(() => {
 
     <template v-else>
       <div class="pet-memory-panel__toolbar">
-        <span>{{ t('pet.memory.count', { count: entries.length }) }}</span>
-        <button
-          type="button"
-          class="pet-memory-panel__danger-button"
-          :disabled="entries.length === 0 || actionLoading"
-          @click="clearAll"
-        >
-          {{ confirmClear ? t('pet.memory.confirmClear') : t('pet.memory.clear') }}
-        </button>
+        <p class="pet-memory-panel__count">{{ t('pet.memory.count', { count: entries.length }) }}</p>
+        <div class="pet-memory-panel__actions">
+          <button
+            type="button"
+            class="pet-memory-panel__button"
+            :disabled="loading || actionLoading"
+            @click="refresh"
+          >
+            <span class="pet-memory-panel__button-icon is-refresh" :class="{ 'is-spinning': loading }" aria-hidden="true">↻</span>
+            {{ loading ? t('pet.common.loading') : t('pet.common.refresh') }}
+          </button>
+          <!-- 记忆当前由 SQLite 统一管理，没有可安全暴露的独立文件路径。 -->
+          <button
+            type="button"
+            class="pet-memory-panel__button"
+            disabled
+            :title="t('pet.memory.openFile')"
+          >
+            <span class="pet-memory-panel__button-icon is-file" aria-hidden="true">□</span>
+            {{ t('pet.memory.openFile') }}
+          </button>
+          <button
+            type="button"
+            class="pet-memory-panel__button pet-memory-panel__button--clear"
+            :class="{ 'is-confirming': confirmClear }"
+            :disabled="entries.length === 0 || actionLoading"
+            @click="clearAll"
+          >
+            <span class="pet-memory-panel__button-icon is-trash" aria-hidden="true">×</span>
+            {{ confirmClear ? t('pet.memory.confirmClear') : t('pet.memory.clear') }}
+          </button>
+        </div>
       </div>
 
       <form class="pet-memory-panel__add" @submit.prevent="addMemory">
@@ -200,7 +210,8 @@ onUnmounted(() => {
           :placeholder="t('pet.memory.inputPlaceholder')"
           :disabled="actionLoading"
         />
-        <button type="submit" class="pet-memory-panel__button" :disabled="!draft.trim() || actionLoading">
+        <button type="submit" class="pet-memory-panel__button pet-memory-panel__button--add" :disabled="!draft.trim() || actionLoading">
+          <span class="pet-memory-panel__button-icon is-plus" aria-hidden="true">+</span>
           {{ actionLoading ? t('pet.common.processing') : t('pet.memory.add') }}
         </button>
       </form>
@@ -210,9 +221,13 @@ onUnmounted(() => {
         <button type="button" class="pet-memory-panel__button" @click="refresh">{{ t('pet.common.retry') }}</button>
       </div>
 
-      <div v-if="loading" class="pet-memory-panel__state">{{ t('pet.memory.loading') }}</div>
-      <div v-else-if="!errorMessage && entries.length === 0" class="pet-memory-panel__state">
-        {{ t('pet.memory.empty') }}
+      <div v-if="loading" class="pet-memory-panel__state pet-memory-panel__state--loading">
+        <span class="pet-memory-panel__state-icon is-spinner" aria-hidden="true"></span>
+        <span>{{ t('pet.memory.loading') }}</span>
+      </div>
+      <div v-else-if="!errorMessage && entries.length === 0" class="pet-memory-panel__state pet-memory-panel__state--empty">
+        <span class="pet-memory-panel__state-icon is-book" aria-hidden="true">▤</span>
+        <span>{{ t('pet.memory.empty') }}</span>
       </div>
       <div v-else class="pet-memory-panel__list">
         <article v-for="entry in entries" :key="entry.id" class="pet-memory-panel__entry">
@@ -225,7 +240,7 @@ onUnmounted(() => {
             :title="t('pet.memory.deleteTitle')"
             @click="removeMemory(entry.id)"
           >
-            {{ t('pet.common.delete') }}
+            <span aria-hidden="true">×</span>
           </button>
         </article>
       </div>
@@ -245,7 +260,6 @@ onUnmounted(() => {
   color: var(--memory-ink);
 }
 
-.pet-memory-panel__header,
 .pet-memory-panel__toolbar,
 .pet-memory-panel__add,
 .pet-memory-panel__error,
@@ -254,56 +268,103 @@ onUnmounted(() => {
   align-items: center;
 }
 
-.pet-memory-panel h3,
 .pet-memory-panel p {
   margin: 0;
 }
 
-.pet-memory-panel__header,
 .pet-memory-panel__toolbar {
   justify-content: space-between;
   gap: 12px;
 }
 
-.pet-memory-panel h3 {
-  font-size: 14px;
-}
-
-.pet-memory-panel__header p,
-.pet-memory-panel__toolbar,
+.pet-memory-panel__description,
+.pet-memory-panel__count,
 .pet-memory-panel__state {
   color: var(--memory-muted);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.55;
 }
 
-.pet-memory-panel__header p {
-  margin-top: 3px;
+.pet-memory-panel__description {
+  max-width: 58ch;
 }
 
 .pet-memory-panel__button,
-.pet-memory-panel__danger-button,
 .pet-memory-panel__delete {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   border: 1px solid var(--memory-line);
-  border-radius: 7px;
-  padding: 7px 10px;
-  background: color-mix(in srgb, var(--mac-accent, #0a84ff) 10%, transparent);
-  color: var(--mac-accent, #0a84ff);
+  border-radius: 6px;
+  padding: 5px 9px;
+  background: transparent;
+  color: var(--memory-ink);
   cursor: pointer;
   font: inherit;
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+.pet-memory-panel__button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--mac-accent, #0a84ff) 42%, var(--memory-line));
+  background: color-mix(in srgb, var(--mac-accent, #0a84ff) 7%, transparent);
+}
+
+.pet-memory-panel__button:focus-visible,
+.pet-memory-panel__delete:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--mac-accent, #0a84ff) 55%, transparent);
+  outline-offset: 1px;
 }
 
 .pet-memory-panel__button:disabled,
-.pet-memory-panel__danger-button:disabled,
 .pet-memory-panel__delete:disabled {
   cursor: not-allowed;
   opacity: 0.5;
 }
 
-.pet-memory-panel__danger-button {
-  background: color-mix(in srgb, #bd4f4f 10%, transparent);
+.pet-memory-panel__button--clear.is-confirming {
+  border-color: color-mix(in srgb, #bd4f4f 42%, var(--memory-line));
+  background: color-mix(in srgb, #bd4f4f 9%, transparent);
   color: #bd4f4f;
+}
+
+.pet-memory-panel__button-icon {
+  display: inline-grid;
+  width: 13px;
+  height: 13px;
+  place-items: center;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.pet-memory-panel__button-icon.is-refresh {
+  font-size: 16px;
+}
+
+.pet-memory-panel__button-icon.is-trash {
+  font-size: 17px;
+  font-weight: 400;
+}
+
+.pet-memory-panel__button-icon.is-plus {
+  font-size: 17px;
+}
+
+.pet-memory-panel__button-icon.is-spinning,
+.pet-memory-panel__state-icon.is-spinner {
+  animation: pet-memory-spin 800ms linear infinite;
+}
+
+.pet-memory-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .pet-memory-panel__add {
@@ -315,12 +376,12 @@ onUnmounted(() => {
   min-width: 0;
   flex: 1 1 auto;
   border: 1px solid var(--memory-line);
-  border-radius: 8px;
-  padding: 8px 9px;
+  border-radius: 6px;
+  padding: 7px 9px;
   background: color-mix(in srgb, var(--settings-strong-surface, #f5f5f7) 74%, transparent);
   color: var(--memory-ink);
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
   outline: none;
 }
 
@@ -334,41 +395,65 @@ onUnmounted(() => {
   gap: 10px;
   border: 1px solid color-mix(in srgb, #bd4f4f 40%, var(--memory-line));
   border-radius: 8px;
-  padding: 9px 10px;
+  padding: 9px 12px;
   color: #bd4f4f;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .pet-memory-panel__state {
+  display: flex;
+  min-height: 112px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   border: 1px dashed var(--memory-line);
-  border-radius: 9px;
-  padding: 22px 12px;
+  border-radius: 8px;
+  padding: 28px 16px;
   text-align: center;
+}
+
+.pet-memory-panel__state-icon {
+  display: inline-grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  color: color-mix(in srgb, var(--memory-muted) 58%, transparent);
+}
+
+.pet-memory-panel__state-icon.is-book {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.pet-memory-panel__state-icon.is-spinner {
+  border: 2px solid color-mix(in srgb, var(--memory-muted) 22%, transparent);
+  border-top-color: var(--mac-accent, #0a84ff);
+  border-radius: 50%;
 }
 
 .pet-memory-panel__list {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 6px;
 }
 
 .pet-memory-panel__entry {
   min-width: 0;
   align-items: flex-start;
-  gap: 9px;
+  gap: 8px;
   border: 1px solid var(--memory-line);
-  border-radius: 9px;
-  padding: 9px 10px;
-  background: color-mix(in srgb, var(--settings-strong-surface, #f5f5f7) 58%, transparent);
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--settings-strong-surface, #f5f5f7) 40%, transparent);
 }
 
 .pet-memory-panel__date {
   flex: 0 0 auto;
-  border-radius: 5px;
+  border-radius: 4px;
   padding: 3px 6px;
   background: color-mix(in srgb, var(--memory-muted) 12%, transparent);
   color: var(--memory-muted);
-  font-size: 10px;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -376,7 +461,7 @@ onUnmounted(() => {
   min-width: 0;
   flex: 1 1 auto;
   color: var(--memory-ink);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.55;
   overflow-wrap: anywhere;
 }
@@ -384,16 +469,34 @@ onUnmounted(() => {
 .pet-memory-panel__delete {
   flex: 0 0 auto;
   border: 0;
-  padding: 3px 5px;
+  min-height: 22px;
+  padding: 2px 5px;
   background: transparent;
   color: var(--memory-muted);
+  font-size: 18px;
 }
 
 .pet-memory-panel__delete:hover {
   color: #bd4f4f;
 }
 
+@keyframes pet-memory-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (max-width: 640px) {
+  .pet-memory-panel__toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .pet-memory-panel__actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
   .pet-memory-panel__add {
     align-items: stretch;
     flex-direction: column;

@@ -31,6 +31,8 @@ type GeminiProvider struct {
 	Model      string `json:"model,omitempty"`
 	// ModelCategory 描述当前 Gemini provider 的模型用途；Category 仍保留 provider 类型语义。
 	ModelCategory       string            `json:"modelCategory,omitempty"`
+	// ReasoningEffortLevels 描述当前 Gemini 模型支持的推理等级；空值兼容旧配置。
+	ReasoningEffortLevels []string        `json:"reasoningEffortLevels,omitempty"`
 	Description         string            `json:"description,omitempty"`
 	Category            string            `json:"category,omitempty"`            // official, third_party, custom
 	PartnerPromotionKey string            `json:"partnerPromotionKey,omitempty"` // 用于识别供应商类型
@@ -48,6 +50,7 @@ type GeminiPreset struct {
 	BaseURL             string            `json:"baseUrl,omitempty"`
 	Model               string            `json:"model,omitempty"`
 	ModelCategory       string            `json:"modelCategory,omitempty"`
+	ReasoningEffortLevels []string        `json:"reasoningEffortLevels,omitempty"`
 	Description         string            `json:"description,omitempty"`
 	Category            string            `json:"category"`
 	PartnerPromotionKey string            `json:"partnerPromotionKey,omitempty"`
@@ -722,6 +725,7 @@ func (s *GeminiService) CreateProviderFromPreset(presetName string, apiKey strin
 		APIKey:              apiKey,
 		Model:               preset.Model,
 		ModelCategory:       preset.ModelCategory,
+		ReasoningEffortLevels: append([]string(nil), preset.ReasoningEffortLevels...),
 		Description:         preset.Description,
 		Category:            preset.Category,
 		PartnerPromotionKey: preset.PartnerPromotionKey,

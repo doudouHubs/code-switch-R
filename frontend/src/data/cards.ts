@@ -14,6 +14,8 @@ export type AutomationCard = {
   modelMapping?: Record<string, string>
   // 模型用途类别：model（或通配符）-> chat/speech/embedding/image/video
   modelCategories?: Record<string, string>
+  // 模型推理等级：model（或通配符）-> none/minimal/low/medium/high
+  modelReasoningEffortLevels?: Record<string, string[]>
   // 优先级分组：数字越小优先级越高（1-10，默认 1）
   level?: number
   // API 端点路径（可选）：覆盖平台默认端点

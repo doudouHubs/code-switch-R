@@ -18,6 +18,12 @@ type wailsPetWindowDriver struct {
 	windowClosedFn func()
 }
 
+// 非 Windows 没有 Wails Windows 消息循环；保留同名 no-op 让主应用可以统一注册
+// application.Options.Windows.WndProcInterceptor，而不会把平台判断扩散到启动编排。
+func PetWindowWndProcInterceptor(hwnd uintptr, msg uint32, wParam, lParam uintptr) (uintptr, bool) {
+	return 0, false
+}
+
 func newPetWindowDriver(app *application.App, options PetWindowOptions) (petWindowDriver, error) {
 	if app == nil || app.Window == nil {
 		return nil, ErrPetWindowNilApplication
@@ -41,10 +47,6 @@ func readPetWindowIdleSeconds() (int, error) {
 
 func (d *wailsPetWindowDriver) Open(config petWindowOpenConfig) error {
 	d.mu.Lock()
-	if d.window != nil {
-		d.mu.Unlock()
-		return nil
-	}
 	if d.app == nil || d.app.Window == nil {
 		d.mu.Unlock()
 		return ErrPetWindowNilApplication
@@ -53,6 +55,18 @@ func (d *wailsPetWindowDriver) Open(config petWindowOpenConfig) error {
 	if err != nil {
 		d.mu.Unlock()
 		return err
+	}
+	if d.window != nil {
+		window := d.window
+		d.mu.Unlock()
+		window.SetAlwaysOnTop(config.AlwaysOnTop)
+		if err := applyPetWindowOpenConfig(window, config); err != nil {
+			return err
+		}
+		if !window.IsVisible() {
+			window.Show()
+		}
+		return nil
 	}
 
 	windowOptions := application.WebviewWindowOptions{

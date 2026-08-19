@@ -106,9 +106,13 @@ func (a *AppService) OpenSecondWindow() {
 // and starts a goroutine that emits a time-based event every second. It subsequently runs the application and
 // logs any error that might occur.
 func main() {
+	services.WriteRuntimeDiagnostic("main-start", fmt.Sprintf("args=%q", os.Args[1:]))
+	defer services.WriteRuntimeDiagnostic("main-exit")
+
 	// Codex Hook 会同步启动当前 EXE；必须在数据库和 Wails 初始化前走轻量分支，
 	// 否则一次状态事件就会拉起一个完整 CodeSwitch 实例并阻塞 Codex。
 	if services.IsProjectManagerCodexHookInvocation(os.Args[1:]) {
+		services.WriteRuntimeDiagnostic("hook-dispatch")
 		if err := services.RunProjectManagerCodexHookReceiver(os.Stdin); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "CodeSwitch Codex hook failed: %v\n", err)
 			// Hook 的失败必须回传给 Codex；继续返回 0 会让状态灯静默丢事件，排障时只剩假成功。
@@ -116,6 +120,11 @@ func main() {
 		}
 		return
 	}
+
+	// GUI 进程需要保留前台窗口变化证据；Hook 子进程在上面的轻量分支直接返回，
+	// 不启动监控，避免每次状态事件都额外写入一条无关的窗口诊断轨迹。
+	stopForegroundMonitor := services.StartRuntimeForegroundMonitor()
+	defer stopForegroundMonitor()
 
 	appservice := &AppService{}
 	// 资源服务必须在首个宠物快照读取前注入 embed.FS；否则开发环境可能正常，
@@ -223,10 +232,17 @@ func main() {
 	mcpService := services.NewMCPService()
 	settingsService := services.NewSettingsService()
 	autoStartService := services.NewAutoStartService()
-	appSettings := services.NewAppSettingsService(autoStartService)
+	projectManagerService := services.NewProjectManagerService()
+	appSettings := services.NewAppSettingsService(autoStartService, projectManagerService)
 	notificationService := services.NewNotificationService(appSettings) // 通知服务
 	blacklistService := services.NewBlacklistService(settingsService, notificationService)
-	geminiService := services.NewGeminiService("127.0.0.1:18100")
+	// 正常启动继续使用固定默认端口；验证副本可以通过环境变量切换到独立端口，
+	// 避免为了测试最新 bundle 去抢占仍在运行的旧实例 relay。
+	providerRelayAddr := strings.TrimSpace(os.Getenv("CODESWITCH_PROVIDER_RELAY_ADDR"))
+	if providerRelayAddr == "" {
+		providerRelayAddr = "127.0.0.1:18100"
+	}
+	geminiService := services.NewGeminiService(providerRelayAddr)
 	petAIProviderReader := services.NewPetAIProviderReader(providerService, geminiService)
 	petAIService := services.NewPetAIServiceWithDependencies(services.PetAIDependencies{
 		ProviderReader:        petAIProviderReader,
@@ -299,7 +315,7 @@ func main() {
 		blacklistService,
 		notificationService,
 		appSettings,
-		":18100",
+		providerRelayAddr,
 	)
 	claudeSettings := services.NewClaudeSettingsService(providerRelay.Addr())
 	codexSettings := services.NewCodexSettingsService(providerRelay.Addr())
@@ -316,7 +332,13 @@ func main() {
 	customCliService := services.NewCustomCliService(providerRelay.Addr())
 	networkService := services.NewNetworkService(providerRelay.Addr(), claudeSettings, codexSettings, geminiService)
 	radarService := services.NewRadarService()
-	projectManagerService := services.NewProjectManagerService()
+	codexHookEnabled := true
+	if settings, settingsErr := appSettings.GetAppSettings(); settingsErr != nil {
+		// 设置文件不可读时保持旧行为，避免启动后静默关闭项目管理状态监控。
+		log.Printf("读取 Codex Hook 设置失败，按默认开启处理: %v", settingsErr)
+	} else {
+		codexHookEnabled = settings.EnableCodexHook
+	}
 
 	go func() {
 		if err := providerRelay.Start(); err != nil {
@@ -352,6 +374,12 @@ func main() {
 	app := application.New(application.Options{
 		Name:        "AI Code Studio",
 		Description: "Claude Code and Codex provier manager",
+		Windows: application.WindowsOptions{
+			// Wails alpha.38 默认会让带 WS_EX_NOACTIVATE 的窗口按普通窗口
+			// 处理 WM_MOUSEACTIVATE；宠物 driver 在这里收敛原生防激活规则，
+			// 不影响主窗口的正常 Focus() 和终端交互。
+			WndProcInterceptor: services.PetWindowWndProcInterceptor,
+		},
 		Services: []application.Service{
 			application.NewService(appservice),
 			application.NewService(suiService),
@@ -394,6 +422,14 @@ func main() {
 		},
 	})
 	petApp = app
+	if runtime.GOOS == "windows" {
+		app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(_ *application.ApplicationEvent) {
+			// SetWinEventHook 的 OUTOFCONTEXT 回调要求注册线程拥有消息循环；
+			// 事件处理器本身跑在后台 goroutine，必须转投 Wails 主线程，
+			// 否则会出现“注册成功但永远收不到前台事件”的假诊断。
+			application.InvokeAsync(services.StartRuntimeForegroundEventMonitor)
+		})
+	}
 
 	// 宠物自动照料由运行时统一编排：先结算离线衰减和 away 奖励，再按规则尝试
 	// 一次动作，并把结果广播给桌宠窗口。心跳间隔与源项目保持 30 秒。
@@ -441,26 +477,30 @@ func main() {
 		Height: services.DefaultPetWindowHeight,
 	})
 	if petWindowErr != nil {
+		services.WriteRuntimeDiagnostic("pet-window-create-failed", fmt.Sprintf("err=%q", petWindowErr.Error()))
 		log.Printf("⚠️ 宠物窗口初始化失败: %v", petWindowErr)
 	} else {
-		// 置顶是运行时策略，不属于宠物配置；先明确关闭，避免透明窗口压住用户当前操作的应用。
-		// 这里必须与配置读取、打开流程分开，设置失败不能短路后续初始化。
-		if topmostErr := petWindow.SetAlwaysOnTop(false); topmostErr != nil {
-			log.Printf("⚠️ 设置宠物窗口非置顶失败: %v", topmostErr)
+		// 置顶仍然是运行时策略，不写入宠物业务配置；当前桌宠恢复为置顶显示。
+		// 设置与窗口打开流程分开，失败只记录日志，不阻断后续初始化。
+		if topmostErr := petWindow.SetAlwaysOnTop(true); topmostErr != nil {
+			log.Printf("⚠️ 设置宠物窗口置顶失败: %v", topmostErr)
 		}
 
 		windowConfig, configErr := petService.GetWindowConfig()
 		if configErr != nil {
+			services.WriteRuntimeDiagnostic("pet-window-config-read-failed", fmt.Sprintf("err=%q", configErr.Error()))
 			log.Printf("⚠️ 读取宠物窗口配置失败: %v", configErr)
 		} else if windowConfig.Enabled {
-			// Wails 的 Screen 缓存要等 app.Run() 初始化平台后才可靠；在 ApplicationStarted
-			// 后再打开窗口。具体 WorkArea 几何由 PetWindow driver 的唯一 Open owner 计算，
-			// 这样启动和设置页重新开启不会各自维护一套贴底规则。
+			services.WriteRuntimeDiagnostic("pet-window-enabled", "enabled=true")
+			// 与稳定主线保持一致：等 Wails 应用进入 Started 状态后直接打开桌宠。
+			// 不把桌宠绑定到主窗口导航完成事件，避免两个 WebView 的生命周期互相等待。
 			app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(_ *application.ApplicationEvent) {
 				if err := petWindow.Open(); err != nil {
 					log.Printf("⚠️ 打开宠物窗口失败: %v", err)
 				}
 			})
+		} else {
+			services.WriteRuntimeDiagnostic("pet-window-enabled", "enabled=false")
 		}
 	}
 	// PetWindow 依赖已经创建好的原生窗口，故在 app 创建后再注册；服务仍在
@@ -471,6 +511,10 @@ func main() {
 	// 浏览器预览没有 Wails 原生消息桥；loopback bridge 让设置页能够复用同一套
 	// PetService/SQLite，而不是退回到只存在于当前 tab 内存里的 fallback 快照。
 	// 只监听 127.0.0.1，且 handler 内部仍按宠物页面白名单分发，不暴露通用 Wails RPC。
+	petBrowserBridgeAddr := strings.TrimSpace(os.Getenv("CODESWITCH_PET_BRIDGE_ADDR"))
+	if petBrowserBridgeAddr == "" {
+		petBrowserBridgeAddr = services.DefaultPetBrowserBridgeAddr
+	}
 	petBrowserBridge = services.NewPetBrowserBridge(services.PetBrowserBridgeDependencies{
 		Pet:         petService,
 		Memory:      petMemoryService,
@@ -486,7 +530,7 @@ func main() {
 		AppSettings: appSettings,
 		Scheduler:   petSchedulerAPI,
 		Events:      petBrowserEvents,
-	})
+	}, services.PetBrowserBridgeOptions{Addr: petBrowserBridgeAddr})
 	if err := petBrowserBridge.Start(); err != nil {
 		log.Printf("⚠️ 宠物浏览器 bridge 启动失败: %v", err)
 	} else {
@@ -499,7 +543,7 @@ func main() {
 	updateService.SetApp(app)
 	// 状态监控只在 GUI 主进程中运行；Hook 子进程只负责落盘事件。
 	projectManagerService.SetApp(app)
-	projectManagerService.StartCodexStatusMonitor()
+	projectManagerService.StartCodexStatusMonitor(codexHookEnabled)
 
 	app.OnShutdown(func() {
 		log.Println("🛑 应用正在关闭，停止后台服务...")
@@ -594,6 +638,7 @@ func main() {
 		handleDockVisibility(dockService, true)
 	}
 
+	// 首屏保持主线启动时序：创建窗口后立即交给 Wails 显示，不插入隐藏或导航接管。
 	showMainWindow(false)
 
 	mainWindow.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
@@ -713,12 +758,21 @@ func main() {
 	}()
 
 	// Run the application. This blocks until the application has been exited.
+	services.WriteRuntimeDiagnostic("app-run-enter")
 	err = app.Run()
+	services.WriteRuntimeDiagnostic("app-run-return", fmt.Sprintf("err=%q", errString(err)))
 
 	// If an error occurred while running the application, log it and exit.
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 func loadTrayIcon(path string) []byte {

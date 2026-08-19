@@ -19,6 +19,7 @@ type PetAgentToolProtocol string
 
 const (
 	PetAgentProtocolOpenAI    PetAgentToolProtocol = "openai"
+	PetAgentProtocolResponses PetAgentToolProtocol = "responses"
 	PetAgentProtocolAnthropic PetAgentToolProtocol = "anthropic"
 	PetAgentProtocolGemini    PetAgentToolProtocol = "gemini"
 )
@@ -32,7 +33,7 @@ const (
 
 type PetAgentToolName string
 
-// PetAgentToolCall 是三个 provider 协议共同使用的 canonical tool call。
+// PetAgentToolCall 是各 provider 协议共同使用的 canonical tool call。
 // Arguments 必须是 JSON object；绝不能把 JSON 字符串当作普通 assistant 文本。
 type PetAgentToolCall struct {
 	ID        string           `json:"id"`
@@ -852,7 +853,7 @@ func safePathError(err error) string {
 }
 
 // PetAgentContinuationRequest 保存 canonical 结构和已经序列化的 native messages。
-// NativeMessages 是 provider 请求层直接追加到 messages/contents 的协议片段。
+// NativeMessages 是 provider 请求层直接追加到 messages/contents/input 的协议片段。
 type PetAgentContinuationRequest struct {
 	Protocol       PetAgentToolProtocol
 	Assistant      PetAgentAssistantTurn
@@ -881,6 +882,8 @@ func BuildPetAgentContinuationRequest(protocol PetAgentToolProtocol, assistant P
 	switch protocol {
 	case PetAgentProtocolOpenAI:
 		messages = buildOpenAIContinuationMessages(assistant, results)
+	case PetAgentProtocolResponses:
+		messages = buildResponsesContinuationMessages(assistant, results)
 	case PetAgentProtocolAnthropic:
 		messages = buildAnthropicContinuationMessages(assistant, results)
 	case PetAgentProtocolGemini:
@@ -897,6 +900,8 @@ func normalizePetAgentProtocol(protocol PetAgentToolProtocol) PetAgentToolProtoc
 	switch strings.ToLower(strings.TrimSpace(string(protocol))) {
 	case "openai", "openai-chat", "openai-compatible":
 		return PetAgentProtocolOpenAI
+	case "responses", "openai-responses", "codex":
+		return PetAgentProtocolResponses
 	case "anthropic", "messages":
 		return PetAgentProtocolAnthropic
 	case "gemini", "google-gemini", "generate-content":
@@ -920,6 +925,40 @@ func buildOpenAIContinuationMessages(assistant PetAgentAssistantTurn, results []
 		messages = append(messages, map[string]any{"role": "tool", "tool_call_id": result.ToolCallID, "content": result.Content})
 	}
 	return messages
+}
+
+func buildResponsesContinuationMessages(assistant PetAgentAssistantTurn, results []PetAgentToolResult) []map[string]any {
+	items := make([]map[string]any, 0, len(assistant.ToolCalls)*2+1)
+	if assistant.Text != "" {
+		items = append(items, map[string]any{
+			"type": "message",
+			"role": "assistant",
+			"content": []map[string]any{{
+				"type": "output_text",
+				"text": assistant.Text,
+			}},
+		})
+	}
+	for _, call := range assistant.ToolCalls {
+		arguments := strings.TrimSpace(string(call.Arguments))
+		if arguments == "" {
+			arguments = "{}"
+		}
+		items = append(items, map[string]any{
+			"type":      "function_call",
+			"call_id":   call.ID,
+			"name":      string(call.Name),
+			"arguments": arguments,
+		})
+	}
+	for _, result := range results {
+		items = append(items, map[string]any{
+			"type":    "function_call_output",
+			"call_id": result.ToolCallID,
+			"output":  result.Content,
+		})
+	}
+	return items
 }
 
 func buildAnthropicContinuationMessages(assistant PetAgentAssistantTurn, results []PetAgentToolResult) []map[string]any {

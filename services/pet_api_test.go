@@ -86,6 +86,104 @@ func TestPetServiceGetSnapshotReturnsStableJSONContract(t *testing.T) {
 	}
 }
 
+func TestPetServiceGetRuntimeSnapshotExcludesHeavyPayloads(t *testing.T) {
+	imagePath := `C:\\Users\\X1\\AppData\\Local\\pet\\dream.png`
+	repository := &memoryPetRepository{
+		snapshot: PetMigrationSnapshot{
+			PetID:      DefaultPetID,
+			State:      &PetState{PetID: DefaultPetID, Name: "Kapi"},
+			Experience: &PetExperience{PetID: DefaultPetID, TotalExp: 12},
+			Window:     &PetWindowConfig{PetID: DefaultPetID, Enabled: true},
+			Care:       &PetCareConfig{PetID: DefaultPetID},
+			Agent:      &PetAgentConfig{PetID: DefaultPetID, ProjectFolder: &imagePath},
+			DreamConfig: &PetDreamConfig{
+				PetID: DefaultPetID,
+			},
+			PlanRecords: []PetPlanRecord{{PetID: DefaultPetID, PlanID: "plan-1"}},
+			Dreams:      []PetDreamHistoryRecord{{PetID: DefaultPetID, ID: "dream-1", ImagePath: &imagePath}},
+			Memories:    []PetMemoryRecord{{PetID: DefaultPetID, ID: "memory-1", Text: "keep me out of runtime"}},
+		},
+	}
+
+	runtimeSnapshot, err := NewPetService(repository).GetRuntimeSnapshot(DefaultPetID)
+	if err != nil {
+		t.Fatalf("GetRuntimeSnapshot() error = %v", err)
+	}
+	if runtimeSnapshot.State.Name != "Kapi" || runtimeSnapshot.Experience.TotalExp != 12 {
+		t.Fatalf("runtime snapshot state = %#v, want hydrated runtime fields", runtimeSnapshot)
+	}
+	if runtimeSnapshot.Agent.ProjectFolder != nil {
+		t.Fatalf("runtime snapshot leaked project folder: %#v", runtimeSnapshot.Agent.ProjectFolder)
+	}
+
+	raw, err := json.Marshal(runtimeSnapshot)
+	if err != nil {
+		t.Fatalf("marshal runtime snapshot: %v", err)
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("decode runtime snapshot JSON: %v", err)
+	}
+	for _, field := range []string{"state", "experience", "window", "care", "agent", "dream", "skinSelection"} {
+		if _, ok := payload[field]; !ok {
+			t.Fatalf("runtime snapshot JSON missing field %q: %s", field, raw)
+		}
+	}
+	for _, field := range []string{"plans", "dreams", "memories", "skins", "atlas"} {
+		if _, ok := payload[field]; ok {
+			t.Fatalf("runtime snapshot JSON contains heavy field %q: %s", field, raw)
+		}
+	}
+	if strings.Contains(string(raw), "dream.png") || strings.Contains(string(raw), "keep me out of runtime") {
+		t.Fatalf("runtime snapshot JSON contains persisted history/path data: %s", raw)
+	}
+}
+
+func TestPetServiceGetAtlasKeepsResourceOutOfRuntimeSnapshot(t *testing.T) {
+	service := NewPetService(&memoryPetRepository{})
+
+	runtimeSnapshot, err := service.GetRuntimeSnapshot(DefaultPetID)
+	if err != nil {
+		t.Fatalf("GetRuntimeSnapshot() error = %v", err)
+	}
+	atlas, err := service.GetAtlas(DefaultPetID)
+	if err != nil {
+		t.Fatalf("GetAtlas() error = %v", err)
+	}
+	if atlas == nil || !strings.HasPrefix(atlas.Src, petAtlasDataURLPrefix) {
+		t.Fatalf("GetAtlas() = %#v, want controlled PNG data URL", atlas)
+	}
+
+	runtimeJSON, err := json.Marshal(runtimeSnapshot)
+	if err != nil {
+		t.Fatalf("marshal runtime snapshot: %v", err)
+	}
+	if strings.Contains(string(runtimeJSON), "data:image/png") {
+		t.Fatalf("runtime snapshot unexpectedly contains atlas data: %s", runtimeJSON)
+	}
+}
+
+func TestPetServiceLightweightActionsReturnStateWithoutFullSnapshot(t *testing.T) {
+	const now = int64(1_750_000_000_000)
+	service := NewPetService(&memoryPetRepository{})
+
+	petted, err := service.PettedForPet(DefaultPetID)
+	if err != nil {
+		t.Fatalf("PettedForPet() error = %v", err)
+	}
+	if !petted.OK || petted.State == nil || petted.State.Mood <= 70 {
+		t.Fatalf("PettedForPet() = %#v, want success with updated state", petted)
+	}
+
+	state, err := service.RecordProactiveState(DefaultPetID, now)
+	if err != nil {
+		t.Fatalf("RecordProactiveState() error = %v", err)
+	}
+	if state.ProactiveCount != 1 || state.LastProactiveAt != now {
+		t.Fatalf("RecordProactiveState() = %#v, want lightweight counter update", state)
+	}
+}
+
 func TestPetSnapshotExposesPersistedRecordsWithoutSensitivePaths(t *testing.T) {
 	imagePath := `C:\\Users\\X1\\AppData\\Local\\pet\\dream.png`
 	repository := &memoryPetRepository{
@@ -170,6 +268,9 @@ func TestPetServicePerformActionSeparatesBusinessAndPersistenceErrors(t *testing
 		if result.OK || result.Reason != PetActionFailureFull {
 			t.Fatalf("PerformAction() result = %#v, want full failure", result)
 		}
+		if result.State == nil || result.State.Hunger != 100 {
+			t.Fatalf("business failure state = %#v, want current lightweight state", result.State)
+		}
 	})
 
 	t.Run("persistence failure is error", func(t *testing.T) {
@@ -196,6 +297,100 @@ func TestPetServicePerformActionSeparatesBusinessAndPersistenceErrors(t *testing
 			t.Fatalf("PerformAction() result = %#v, want zero result on parameter error", result)
 		}
 	})
+}
+
+func TestPetServiceEndWorkEarlyForPetContract(t *testing.T) {
+	const (
+		petID = "pet-early-end"
+		now   = int64(1_700_000_000_000)
+	)
+
+	tests := []struct {
+		name            string
+		kind            PetAwayKind
+		endsAt          int64
+		wantOK          bool
+		wantReason      PetActionFailureReason
+		wantTaskAfter   bool
+		wantCoinsAfter  int64
+		wantGrowthAfter float64
+		wantSaveCount   int
+	}{
+		{
+			name:            "unfinished work can end early",
+			kind:            PetAwayWork,
+			endsAt:          now + time.Minute.Milliseconds(),
+			wantOK:          true,
+			wantTaskAfter:   false,
+			wantCoinsAfter:  37,
+			wantGrowthAfter: 11,
+			wantSaveCount:   1,
+		},
+		{
+			name:            "study cannot end early",
+			kind:            PetAwayStudy,
+			endsAt:          now + time.Minute.Milliseconds(),
+			wantReason:      PetActionFailureBusy,
+			wantTaskAfter:   true,
+			wantCoinsAfter:  37,
+			wantGrowthAfter: 11,
+			wantSaveCount:   0,
+		},
+		{
+			name:            "expired work is handled by normal settlement",
+			kind:            PetAwayWork,
+			endsAt:          now,
+			wantReason:      PetActionFailureBusy,
+			wantTaskAfter:   true,
+			wantCoinsAfter:  37,
+			wantGrowthAfter: 11,
+			wantSaveCount:   0,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repository := &memoryPetRepository{
+				snapshot: PetMigrationSnapshot{
+					PetID: petID,
+					State: &PetState{
+						PetID:  petID,
+						Coins:  37,
+						Growth: 11,
+						Hunger: 80,
+						AwayTask: &PetAwayTask{
+							Kind:      test.kind,
+							StartedAt: now - time.Minute.Milliseconds(),
+							EndsAt:    test.endsAt,
+						},
+					},
+				},
+			}
+			service := NewPetServiceForPet(repository, petID)
+
+			result, err := service.EndWorkEarlyForPet(petID, now)
+			if err != nil {
+				t.Fatalf("EndWorkEarlyForPet() error = %v", err)
+			}
+			if result.OK != test.wantOK || result.Reason != test.wantReason {
+				t.Fatalf("EndWorkEarlyForPet() result = %#v, want ok=%v reason=%q", result, test.wantOK, test.wantReason)
+			}
+
+			persisted := repository.getSnapshot()
+			if persisted.State == nil {
+				t.Fatal("persisted state = nil")
+			}
+			if (persisted.State.AwayTask != nil) != test.wantTaskAfter {
+				t.Fatalf("persisted away task = %#v, want present=%v", persisted.State.AwayTask, test.wantTaskAfter)
+			}
+			if persisted.State.Coins != test.wantCoinsAfter || persisted.State.Growth != test.wantGrowthAfter {
+				t.Fatalf("persisted rewards = coins:%d growth:%f, want coins:%d growth:%f", persisted.State.Coins, persisted.State.Growth, test.wantCoinsAfter, test.wantGrowthAfter)
+			}
+			if repository.saveCount != test.wantSaveCount {
+				t.Fatalf("save count = %d, want %d", repository.saveCount, test.wantSaveCount)
+			}
+		})
+	}
 }
 
 func TestPetServiceExplicitPetLifecycleCountersPersist(t *testing.T) {
@@ -254,9 +449,9 @@ func TestPetServiceSaveSettingsMergesAndValidatesPetID(t *testing.T) {
 	providerID := "provider-before"
 	repository := &memoryPetRepository{
 		snapshot: PetMigrationSnapshot{
-			State: &PetState{Name: "kept-state", Hunger: 42},
+			State:  &PetState{Name: "kept-state", Hunger: 42},
 			Window: &PetWindowConfig{PetID: "pet-1", Enabled: true},
-			Agent: &PetAgentConfig{ProviderID: &providerID, ProactiveFreq: PetProactiveHigh},
+			Agent:  &PetAgentConfig{ProviderID: &providerID, ProactiveFreq: PetProactiveHigh},
 		},
 	}
 	service := NewPetService(repository)

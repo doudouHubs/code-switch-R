@@ -44,11 +44,18 @@ type AppSettings struct {
 	EnableSwitchNotify        bool    `json:"enable_switch_notify"`   // 供应商切换通知开关
 	EnableRoundRobin          bool    `json:"enable_round_robin"`     // 同 Level 轮询负载均衡开关（默认关闭）
 	EnableRequestCapture      bool    `json:"enable_request_capture"` // 代理请求捕获开关
+	EnableCodexHook           bool    `json:"enable_codex_hook"`      // 项目管理 Codex Hook 开关
 	RequestCaptureDir         string  `json:"request_capture_dir"`    // 请求捕获存储根目录，留空使用默认目录
 	// 语音识别选择是应用级配置，和宠物的 TTS/chat 引用分离；空值表示明确未配置。
 	SpeechProviderPlatform *string `json:"speech_provider_platform"`
 	SpeechProviderID       *string `json:"speech_provider_id"`
 	SpeechModelID          string  `json:"speech_model_id"`
+}
+
+// CodexHookRuntimeApplier 让设置服务只依赖 Hook 生命周期能力，避免直接耦合项目管理实现。
+// 应用设置落盘前必须先应用运行时状态，失败时不能留下“配置显示关闭、Hook 仍在运行”的半状态。
+type CodexHookRuntimeApplier interface {
+	ApplyCodexHookEnabled(enabled bool) error
 }
 
 // PetSpeechProviderSelection 是语音输入解析器读取的无凭据选择快照。
@@ -60,19 +67,25 @@ type PetSpeechProviderSelection struct {
 }
 
 type AppSettingsService struct {
-	path             string
-	initErr          error
-	mu               sync.Mutex
-	autoStartService *AutoStartService
+	path                    string
+	initErr                 error
+	mu                      sync.Mutex
+	autoStartService        *AutoStartService
+	codexHookRuntimeApplier CodexHookRuntimeApplier
 }
 
-func NewAppSettingsService(autoStartService *AutoStartService) *AppSettingsService {
+func NewAppSettingsService(autoStartService *AutoStartService, runtimeAppliers ...CodexHookRuntimeApplier) *AppSettingsService {
+	var codexHookRuntimeApplier CodexHookRuntimeApplier
+	if len(runtimeAppliers) > 0 {
+		codexHookRuntimeApplier = runtimeAppliers[0]
+	}
 	home, err := getUserHomeDir()
 	if err != nil {
 		// 用户目录不可用时不能回退到工作目录，否则便携版或开发命令会把配置写进仓库。
 		return &AppSettingsService{
-			autoStartService: autoStartService,
-			initErr:          err,
+			autoStartService:        autoStartService,
+			codexHookRuntimeApplier: codexHookRuntimeApplier,
+			initErr:                 err,
 		}
 	}
 
@@ -94,8 +107,9 @@ func NewAppSettingsService(autoStartService *AutoStartService) *AppSettingsServi
 	}
 
 	return &AppSettingsService{
-		path:             newPath,
-		autoStartService: autoStartService,
+		path:                    newPath,
+		autoStartService:        autoStartService,
+		codexHookRuntimeApplier: codexHookRuntimeApplier,
 	}
 }
 
@@ -199,6 +213,7 @@ func (as *AppSettingsService) defaultSettings() AppSettings {
 		EnableSwitchNotify:        true,  // 默认开启切换通知
 		EnableRoundRobin:          false, // 默认关闭轮询（使用顺序降级）
 		EnableRequestCapture:      true,  // 默认开启请求捕获
+		EnableCodexHook:           true,  // 默认开启 Codex Hook，保持升级前的行为
 		RequestCaptureDir:         "",
 		SpeechProviderPlatform:    nil,
 		SpeechProviderID:          nil,
@@ -224,6 +239,14 @@ func (as *AppSettingsService) SaveAppSettings(settings AppSettings) (AppSettings
 	as.mu.Lock()
 	defer as.mu.Unlock()
 
+	// 旧版本配置没有该字段，loadLocked 会从默认值补成 true；这保证升级后不意外关闭已有监控。
+	previousHookEnabled := true
+	if previous, loadErr := as.loadLocked(); loadErr == nil {
+		previousHookEnabled = previous.EnableCodexHook
+	}
+	hookChanged := previousHookEnabled != settings.EnableCodexHook
+	hookApplier := as.codexHookRuntimeApplier
+
 	normalizedCaptureDir, err := NormalizeRequestCaptureDirForSettings(settings.RequestCaptureDir)
 	if err != nil {
 		return settings, err
@@ -244,7 +267,19 @@ func (as *AppSettingsService) SaveAppSettings(settings AppSettings) (AppSettings
 		}
 	}
 
+	if hookChanged && hookApplier != nil {
+		if err := hookApplier.ApplyCodexHookEnabled(settings.EnableCodexHook); err != nil {
+			return settings, fmt.Errorf("应用 Codex Hook 设置失败: %w", err)
+		}
+	}
+
 	if err := as.saveLocked(settings); err != nil {
+		if hookChanged && hookApplier != nil {
+			// 配置文件写入失败时尽力恢复运行时状态，避免下次启动读取到旧配置却继续使用新状态。
+			if rollbackErr := hookApplier.ApplyCodexHookEnabled(previousHookEnabled); rollbackErr != nil {
+				fmt.Printf("[AppSettings] Codex Hook 状态回滚失败: %v\n", rollbackErr)
+			}
+		}
 		return settings, err
 	}
 	return settings, nil

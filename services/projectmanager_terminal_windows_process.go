@@ -362,6 +362,8 @@ func projectManagerActivateWindow(hwnd windows.HWND) error {
 	if hwnd == 0 {
 		return errors.New("无效的窗口句柄")
 	}
+	foregroundBefore := windows.GetForegroundWindow()
+	WriteRuntimeDiagnostic("terminal-activate-start", fmt.Sprintf("target_hwnd=%#x foreground_before=%#x", uintptr(hwnd), uintptr(foregroundBefore)))
 
 	// 先恢复窗口，避免目标 Terminal 最小化后只在任务栏闪烁。
 	_ = projectManagerShowWindowAsync(hwnd, projectManagerWindowRestoreCommand)
@@ -369,19 +371,23 @@ func projectManagerActivateWindow(hwnd windows.HWND) error {
 	// Windows 对前台窗口切换限制挺多，单次 SetForegroundWindow 经常抽风。
 	// 这里按“直接前台 -> 抬到顶层 -> topmost 脉冲”逐级兜底，尽量把真正的 WT 窗口拉回用户眼前。
 	if err := projectManagerSetForegroundWindow(hwnd); err == nil || projectManagerForegroundWindowMatches(hwnd) {
+		WriteRuntimeDiagnostic("terminal-activate-success", fmt.Sprintf("stage=set-foreground foreground_after=%#x", uintptr(windows.GetForegroundWindow())))
 		return nil
 	}
 
 	_ = projectManagerBringWindowToTop(hwnd)
 	if err := projectManagerSetForegroundWindow(hwnd); err == nil || projectManagerForegroundWindowMatches(hwnd) {
+		WriteRuntimeDiagnostic("terminal-activate-success", fmt.Sprintf("stage=bring-to-top foreground_after=%#x", uintptr(windows.GetForegroundWindow())))
 		return nil
 	}
 
 	_ = projectManagerPulseWindowToFront(hwnd)
 	if err := projectManagerSetForegroundWindow(hwnd); err == nil || projectManagerForegroundWindowMatches(hwnd) {
+		WriteRuntimeDiagnostic("terminal-activate-success", fmt.Sprintf("stage=topmost-pulse foreground_after=%#x", uintptr(windows.GetForegroundWindow())))
 		return nil
 	}
 
+	WriteRuntimeDiagnostic("terminal-activate-failed", fmt.Sprintf("target_hwnd=%#x foreground_after=%#x", uintptr(hwnd), uintptr(windows.GetForegroundWindow())))
 	return errors.New("切换 Terminal 窗口到前台失败")
 }
 

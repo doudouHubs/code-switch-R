@@ -183,6 +183,22 @@
           "video": "视频",
           "auto": "自动（兼容旧配置）"
         }
+      },
+      "modelReasoning": {
+        "label": "Reasoning 等级",
+        "tooltip": "声明模型支持的推理等级。支持精确模型名和通配符；未声明的模型不会携带 reasoning 参数。",
+        "modelPlaceholder": "输入模型名或通配符，如 gpt-5*",
+        "select": "选择模型 {model} 的 {level} 等级",
+        "add": "添加等级规则",
+        "remove": "删除 reasoning 规则",
+        "hint": "只有明确声明的等级会出现在宠物 Agent 设置中；清空所有等级会删除该规则。",
+        "options": {
+          "none": "关闭",
+          "minimal": "最小",
+          "low": "低",
+          "medium": "中",
+          "high": "高"
+        }
       }
     },
     "main": {
@@ -711,6 +727,9 @@
         "roundRobinHint": "启用后同 Level 的供应商轮流处理请求，关闭则始终从第一个开始",
         "requestCapture": "捕获 Agent 请求",
         "requestCaptureHint": "将每次经本地代理发送的请求接口和参数保存到本地缓存目录，不包含返回值",
+        "codexHook": "Codex Hook",
+        "codexHookHint": "控制项目管理的 Codex 状态 Hook；关闭后移除 CodeSwitch 自有 Hook，用户自定义 Hook 不受影响",
+        "codexHookSaveFailed": "Codex Hook 设置保存失败",
         "requestCaptureDir": "捕获存储路径",
         "requestCaptureDirHint": "留空则使用默认目录 ~/.code-switch/request-captures，可手动输入或选择目录",
         "requestCaptureDirPlaceholder": "留空使用默认目录，或输入自定义目录路径",
@@ -1007,6 +1026,7 @@
       "defaultName": "Kapi",
       "coins": "金币",
       "dreamImageAlt": "梦境画面",
+      "dreamImageOpen": "打开梦境原图",
       "petStageLabel": "摸摸宠物",
       "atlasWaiting": "等待图集",
       "awayMark": "出门中",
@@ -1020,17 +1040,18 @@
         "ready": "状态正常 · 点一下宠物摸摸它"
       },
       "stats": {
-        "hunger": "饥饿",
+        "hunger": "饱食",
         "cleanliness": "清洁",
         "mood": "心情"
       },
       "actions": {
         "feed": "喂食",
         "bathe": "洗澡",
-        "soak": "泡澡",
+        "soak": "泡温泉",
         "play": "玩耍",
-        "sleep": "睡眠",
-        "work": "工作",
+        "sleep": "睡觉",
+        "wake": "叫醒",
+        "work": "打工",
         "study": "学习",
         "petted": "摸摸",
         "generic": "动作"
@@ -1052,15 +1073,22 @@
       "ambient": {
         "welcome": "欢迎回来。",
         "night": "夜深了，陪你安静休息一会儿。",
-        "time": "现在是 {time}。"
+        "time": "现在是 {time}。",
+        "hungry": ["肚子好饿……", "喂喂我吧~", "肚子咕咕叫了……"],
+        "dirty": ["身上好痒……", "是不是该洗澡啦？", "我想泡澡……"],
+        "lateNight": ["夜深了，早点休息吧~", "眼睛要休息一下啦", "困了的话就去睡吧，我也困了……"],
+        "gloomy": ["有点无聊……", "陪我玩一会儿嘛……", "唉……"],
+        "snack": ["偷偷吃个小零食~", "咔嚓咔嚓……", "这片叶子真好吃"],
+        "happyIdle": ["今天心情真好~", "耶！", "开心得想蹦一蹦"],
+        "zen": ["……", "发呆中。", "岁月静好……"]
       },
       "contextMenu": {
         "label": "宠物快捷菜单",
         "title": "快捷操作",
-        "chat": "打开聊天",
+        "chat": "聊天",
         "settings": "打开设置",
-        "studio": "打开 Studio",
-        "hide": "隐藏窗口"
+        "studio": "形象工坊",
+        "hide": "隐藏宠物"
       },
       "loading": "正在连接宠物状态...",
       "loadFailed": "状态读取失败：{error}",
@@ -1068,7 +1096,9 @@
       "dashboardLabel": "宠物状态",
       "experience": "经验",
       "actionsLabel": "宠物动作",
+      "requiresLevel": "{level}级解锁",
       "feedback": {
+        "imageOpenBlocked": "浏览器阻止了打开原图，请允许弹出窗口后重试。",
         "scheduledActionFailed": "计划动作执行失败，请重试",
         "workCompleted": "你刚完成工作，获得了 {coins} 金币。",
         "studyCompleted": "你刚完成学习，成长增加了 {growth}。",
@@ -1090,11 +1120,14 @@
         },
         "success": {
           "petted": "心情变好了一点",
+          "happy": ["嘿嘿~", "好舒服！", "再摸摸我嘛~"],
+          "zenPetted": ["好安静……", "禅意 +1", "小鸟也很喜欢你哦"],
           "sleep": "晚安",
           "wake": "醒啦",
-          "work": "出发工作啦",
-          "study": "出发学习啦",
-          "reward": "完成任务 · 金币 +{coins} · 成长 +{growth}",
+        "work": "出发工作啦",
+        "study": "出发学习啦",
+        "workEndedEarly": "已结束工作任务",
+        "reward": "完成任务 · 金币 +{coins} · 成长 +{growth}",
           "action": "{action}完成"
         }
       }
@@ -1147,7 +1180,9 @@
         "providerUnsupported": "当前 provider 不支持语音转写",
         "bindingUnavailable": "语音识别服务尚未接入",
         "timeout": "语音识别超时，请重试",
-        "failed": "语音识别失败，请重试"
+        "failed": "语音识别失败，请重试",
+        "tooLong": "录音已达到 60 秒上限",
+        "tooLarge": "录音已达到大小上限，请缩短后重试"
       },
       "errors": {
         "cancelled": "回复已取消",
@@ -1252,6 +1287,7 @@
       "subtitle": "管理会注入宠物对话上下文的长期事实。",
       "unavailable": "当前宠物（{petId}）的记忆能力暂不可用。目标 Wails 服务当前固定绑定 default，已禁用读写以避免串宠物。",
       "count": "共 {count} 条记忆",
+      "openFile": "打开文件",
       "confirmClear": "再次点击确认清空",
       "clear": "清空记忆",
       "inputPlaceholder": "添加一条值得长期记住的事实",
@@ -1263,24 +1299,24 @@
     },
     "settings": {
       "eyebrow": "DESKTOP PET",
-      "title": "宠物设置",
-      "subtitle": "管理桌宠窗口、照料节奏、智能体引用和梦境偏好。",
+      "title": "桌面宠物",
+      "subtitle": "住在你桌面上的小卡皮巴拉",
       "backToSettings": "返回设置",
       "openStudio": "打开形象工坊",
       "save": "保存设置",
       "tabsAria": "宠物设置页签",
-      "tabs": { "overview": "总览", "stats": "状态统计", "agent": "Agent", "sleep": "睡眠与梦境", "skins": "皮肤", "memory": "长期记忆", "dream-history": "梦境历史", "studio": "形象工坊" },
+      "tabs": { "overview": "总览", "stats": "属性", "agent": "Agent", "sleep": "睡眠", "skins": "我的宠物", "memory": "记忆", "dream-history": "历史梦境", "studio": "形象工坊" },
       "loading": "正在读取宠物配置...",
       "operationFailed": "设置操作失败：{error}",
       "runtime": { "fallback": "本地预览模式", "backend": "已连接后端", "waiting": "等待连接" },
       "status": { "none": "暂无状态", "working": "工作中", "studying": "学习中", "awayRemaining": "{label} · {minutes} 分钟后结束", "awayEnding": "{label} · 即将结束", "sleepingRemaining": "睡眠中 · {minutes} 分钟后醒来", "sleeping": "睡眠中", "awake": "清醒活动中" },
-      "overview": { "title": "窗口与照料", "subtitle": "桌宠的显示开关和自动照料阈值。", "previewUnavailable": "暂时无法预览宠物", "basicTitle": "宠物档案", "basicSubtitle": "改名不会影响已有成长进度。", "name": "名称", "namePlaceholder": "给宠物起个名字", "rename": "改名", "summary": "Lv.{level} · {coins} 金币 · 陪伴始于 {date}", "noDate": "时间未知", "windowEnabled": "启用桌宠窗口", "windowEnabledHint": "启用后由宿主窗口管理器显示透明宠物窗。", "autoCare": "自动照料", "autoCareHint": "当饥饿、清洁或心情低于阈值时，由后端规则选择照料动作。", "autoCareThreshold": "自动照料阈值", "insensitive": "不敏感", "attentive": "及时照料", "hint": "右键桌宠可以喂食、洗澡、玩耍、工作和学习；也可以拖动它、摸摸它，或从托盘菜单显示和隐藏宠物。" },
-      "agent": { "title": "Agent 引用", "subtitle": "仅保存 provider/model 标识，不复制密钥或 provider 配置。", "providerPlatform": "Provider platform", "noPlatform": "不指定平台", "providerId": "Provider ID", "modelId": "Model ID", "modelReference": "Provider / model", "reasoningEffort": "Reasoning effort", "project": "项目", "projectId": "Project ID", "systemPrompt": "System prompt", "platformPlaceholder": "例如 claude、codex 或 gemini", "providerPlaceholder": "例如 openai-main", "modelPlaceholder": "选择已配置的模型", "loadingModels": "正在读取已配置模型...", "noModels": "该平台没有可用的启用模型。", "followModel": "跟随模型默认", "projectPlaceholder": "可选项目引用", "loadingProjects": "正在读取项目...", "projectNone": "不绑定项目", "providerLoadFailed": "读取 provider 失败：{error}", "projectLoadFailed": "读取项目失败：{error}", "systemPromptPlaceholder": "留空使用内置提示词", "resetPrompt": "恢复内置", "promptHint": "支持双大括号占位符：name（宠物名字）、status（实时状态）、project（绑定项目信息）。保持内置文本不动即使用默认人设。", "projectHint": "绑定后，宠物会把项目名称和工作目录作为聊天上下文。", "proactive": "主动互动", "proactiveHint": "允许宠物按频率主动发起对话；免打扰时间支持跨午夜区间。", "proactiveFrequency": "主动频率", "quietStart": "免打扰开始", "quietEnd": "免打扰结束", "hour": "时", "to": "至" },
+      "overview": { "title": "窗口与照料", "subtitle": "桌宠的显示开关和自动照料阈值。", "previewUnavailable": "暂时无法预览宠物", "basicTitle": "宠物档案", "basicSubtitle": "改名不会影响已有成长进度。", "name": "名称", "namePlaceholder": "宠物名字", "rename": "保存", "summary": "Lv.{level} · {coins} 金币 · {date} 领养", "noDate": "时间未知", "windowEnabled": "启用桌面宠物", "windowEnabledHint": "在屏幕底部显示一只会散步的卡皮巴拉，默认关闭。", "autoCare": "自动照料", "autoCareHint": "属性低于阈值时，自动喂食、清洁或陪宠物玩耍，仍会消耗金币并遵守等级限制。", "autoCareThreshold": "照料阈值", "insensitive": "不敏感", "attentive": "及时照料", "hint": "右键点击卡皮巴拉可以喂食、洗澡、玩耍、打工和学习；可以拖拽它，点一下它会很开心。也可以在托盘菜单中显示或隐藏宠物。" },
+      "agent": { "title": "Agent 引用", "subtitle": "仅保存 provider/model 标识，不复制密钥或 provider 配置。", "description": "宠物本身就是一个 Agent：给它配一个对话模型、一段人设提示词，还可以绑定一个项目。双击宠物（或右键菜单选「聊天」）即可对话。", "model": "对话模型", "providerPlatform": "Provider platform", "noPlatform": "不指定平台", "providerId": "Provider ID", "modelId": "Model ID", "modelReference": "Provider / model", "reasoningEffort": "Reasoning effort", "reasoningUnavailable": "当前模型没有声明 reasoning 能力。", "project": "项目", "projectId": "Project ID", "systemPrompt": "System prompt", "platformPlaceholder": "例如 claude、codex 或 gemini", "providerPlaceholder": "例如 openai-main", "modelPlaceholder": "选择对话模型", "loadingModels": "正在读取当前 provider 的模型目录...", "noModels": "当前 provider 没有返回可用模型，请确认已启用且模型目录可访问。", "followModel": "跟随模型默认", "projectPlaceholder": "可选项目引用", "loadingProjects": "正在读取项目...", "projectNone": "不绑定项目", "providerLoadFailed": "读取 provider 失败：{error}", "projectLoadFailed": "读取项目失败：{error}", "systemPromptPlaceholder": "留空使用内置提示词", "resetPrompt": "恢复内置", "promptHint": "支持双大括号占位符：name（宠物名字）、status（实时状态）、project（绑定项目信息）。保持内置文本不动即使用默认人设。", "projectHint": "绑定后，宠物会把项目名称和工作目录作为聊天上下文。", "proactive": "主动互动", "proactiveDesc": "开启后宠物会在升级、打工回来、饱餐 token 等时刻用自己的话跟你说两句，偶尔还会主动找你搭话（点击气泡即可接话）。默认关闭。", "proactiveHint": "免打扰时段内宠物不会主动说话；每次主动发言都是一次真实的模型调用，会消耗少量 token。", "proactiveFrequency": "主动搭话频率", "proactiveQuota": "当前频率每天最多主动搭话 {count} 次。", "quietStart": "免打扰开始", "quietEnd": "免打扰结束", "hour": "时", "to": "至" },
       "reasoning": { "none": "none", "minimal": "minimal", "low": "low", "medium": "medium", "high": "high" },
       "frequency": { "low": "低频", "medium": "中频", "high": "高频" },
       "unlocks": { "soak": "泡澡", "work": "工作", "study": "学习" },
-      "voice": { "title": "Voice", "subtitle": "语音播放仍由后端 provider 适配，页面只提交引用和基础偏好。", "enabled": "启用语音", "enabledHint": "关闭时不触发 TTS 请求。", "providerId": "Voice Provider ID", "modelId": "Voice Model ID", "modelReference": "语音模型", "voice": "Voice", "mode": "Voice mode", "speech": "speech", "chat": "chat", "tag": "Voice tag", "providerPlaceholder": "可选 provider 引用", "modelPlaceholder": "可选 model 引用", "voicePlaceholder": "留空使用默认音色", "auto": "自动", "instruction": "语音风格指令", "instructionPlaceholder": "例如 温柔、简短", "tagPlaceholder": "仅 MiMo：方言或语气，例如 粤语、撒娇", "default": "接口默认", "custom": "自定义音色", "test": "试听", "testing": "播放中...", "testSample": "你好呀，我是{name}，今天也要加油哦！", "hint": "传统 TTS 走 /audio/speech；chat-audio 模型走 chat/completions。自动模式会按模型 ID 的兼容规则选择接口。" },
-      "dream": { "title": "Dream", "subtitle": "睡眠中的梦话配置，长度和气泡时长由契约边界约束。", "enabled": "启用梦境", "enabledHint": "允许睡眠时生成梦话；留空提示词使用后端内置内容。", "prompt": "梦境提示词", "promptPlaceholder": "留空使用默认梦境提示词", "resetPrompt": "恢复内置", "promptHint": "这里只控制梦境内容和风格；输出格式、情绪判定等规则仍由后端强制处理。", "keywords": "关键词", "keywordsPlaceholder": "用分号分隔，例如 海边;代码;星星", "keywordsHint": "使用分号分隔；每次梦境都可以自然融入这些素材。", "sleepTalkMinLength": "梦话最少字数", "bubbleDuration": "气泡基础时长", "seconds": "{count} 秒", "imageModel": "梦境图片模型", "imageModelHint": "图片 provider 选择与应用级图片设置共享。", "imageModelManaged": "由全局图片设置管理" },
+      "voice": { "title": "Voice", "subtitle": "语音播放仍由后端 provider 适配，页面只提交引用和基础偏好。", "enabled": "启用语音", "enabledHint": "关闭时不触发 TTS 请求。", "providerId": "Voice Provider ID", "modelId": "Voice Model ID", "modelReference": "语音模型", "voice": "Voice", "mode": "Voice mode", "speech": "speech", "chat": "chat", "tag": "Voice tag", "providerPlaceholder": "可选 provider 引用", "modelPlaceholder": "可选 model 引用", "noModels": "当前没有配置支持语音的模型。", "voicePlaceholder": "留空使用默认音色", "auto": "自动", "instruction": "语音风格指令", "instructionPlaceholder": "例如 温柔、简短", "tagPlaceholder": "仅 MiMo：方言或语气，例如 粤语、撒娇", "default": "接口默认", "custom": "自定义音色", "test": "试听", "testing": "播放中...", "testFailed": "试听失败：{error}", "testSample": "你好呀，我是{name}，今天也要加油哦！", "hint": "传统 TTS 走 /audio/speech；chat-audio 模型走 chat/completions。自动模式会按模型 ID 的兼容规则选择接口。" },
+      "dream": { "title": "Dream", "subtitle": "睡眠中的梦话配置，长度和气泡时长由契约边界约束。", "description": "配置宠物睡着后的梦境行为；梦境主题默认随机。", "dreamTalk": "开启梦话", "dreamTalkHint": "睡着后调用宠物自己的 Agent 做梦，并根据梦境影响心情、生成图片和说出梦话。关闭后整条流程停止。", "enabled": "启用梦境", "enabledHint": "允许睡眠时生成梦话；留空提示词使用后端内置内容。", "prompt": "梦境提示词", "promptPlaceholder": "留空使用默认梦境提示词", "resetPrompt": "恢复内置", "promptHint": "这里只控制梦境内容和风格；输出格式、情绪判定等规则仍由后端强制处理。", "keywords": "关键词", "keywordsPlaceholder": "用分号分隔，例如 海边;代码;星星", "keywordsHint": "使用分号分隔；每次梦境都可以自然融入这些素材。", "sleepTalkMinLength": "梦话最少字数", "bubbleDuration": "气泡基础时长", "seconds": "{count} 秒", "imageModel": "梦境图片模型", "imageModelHint": "请明确选择一个启用的 provider 模型；这里只展示用途类别为 image 的模型。", "imageModelPlaceholder": "选择图片模型", "noImageModels": "当前没有配置支持图片的模型。" },
       "skins": { "title": "皮肤", "subtitle": "切换内置或后端扫描到的 atlas 皮肤。", "refresh": "刷新皮肤", "current": "当前皮肤", "default": "内置默认 · Capybara", "builtinHint": "随应用内置的默认皮肤", "inUse": "使用中", "use": "使用", "poseCount": "{count} 个动作", "delete": "删除皮肤", "deleteConfirm": "确定删除 {name}？此操作不可撤销。", "directoryManaged": "皮肤文件保存在应用受控的宠物资源目录中。", "directoryUnavailable": "受控皮肤目录暂不可用", "openFolder": "打开目录", "displayOn": "桌宠窗口已启用", "displayOff": "桌宠窗口已隐藏", "dropHint": "请通过形象工坊导入或生成皮肤；运行时只接受经过校验的 atlas.png 和 pet.json 资源。", "emptyHint": "当前没有额外皮肤；后端接入皮肤扫描后会自动出现在这里。" },
       "stats": { "title": "状态统计", "subtitle": "数据来自当前宠物快照；经验日志通过后端独立服务读取。", "refresh": "刷新状态", "loadFailed": "统计读取失败：{error}", "needs": "需求状态", "range": "0 - 100", "hunger": "饥饿", "cleanliness": "清洁", "mood": "心情", "levelGrowth": "等级与成长", "growthProgress": "{current} / {next} 成长", "growthNote": "当前成长由基础成长与累计经验共同计算，当前等级进度为 {progress}%。", "experienceTokens": "经验与 Token", "logLoading": "日志读取中...", "logUnavailable": "日志不可用", "logCount": "{count} 条日志", "totalExperience": "累计经验", "totalTokens": "累计 Token", "logLoadingDetail": "正在读取经验日志...", "logError": "经验日志暂不可用：{error}", "logEmpty": "当前没有可展示的经验日志记录。", "premium": "Premium", "base": "Base", "tokenEntry": "{count} tok", "experienceEntry": "+{count}", "coins": "金币", "token": "Token", "companionDays": "陪伴天数", "days": "{count} 天", "noData": "暂无数据", "currentStatus": "当前状态", "plans": "计划", "memories": "记忆", "count": "{count} 条", "unlocks": "功能解锁", "currentLevel": "当前等级 Lv.{level}", "unlocked": "已解锁", "unlockAt": "Lv.{level} 解锁", "noSnapshot": "当前没有可用的宠物快照。", "defaultOnly": "当前经验日志服务仅支持 default 宠物。", "unknownModel": "未知模型" }
     },

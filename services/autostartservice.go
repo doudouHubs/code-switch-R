@@ -3,9 +3,9 @@ package services
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 type AutoStartService struct{}
@@ -57,11 +57,69 @@ func (as *AutoStartService) Disable() error {
 }
 
 // Windows 实现
+const (
+	windowsRunKey             = `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
+	windowsStartupApprovedKey = `HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run`
+	windowsAutoStartValue     = "CodeSwitch"
+)
+
+func windowsRegExe() string {
+	if windir := os.Getenv("WINDIR"); windir != "" {
+		candidate := filepath.Join(windir, "System32", "reg.exe")
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	return "reg.exe"
+}
+
 func (as *AutoStartService) isEnabledWindows() (bool, error) {
-	key := `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
-	cmd := exec.Command("reg", "query", key, "/v", "CodeSwitch")
-	err := cmd.Run()
-	return err == nil, nil
+	regExe := windowsRegExe()
+
+	// GUI 进程不能让 reg.exe 继承 WT 控制台；否则子进程退出时 Windows
+	// 可能把前台短暂落到 Wails 的隐藏消息窗口，表现为 WT 窗口闪烁置顶。
+	cmd := hideWindowCmd(regExe, "query", windowsRunKey, "/v", windowsAutoStartValue)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		lowerOut := strings.ToLower(string(out))
+		if strings.Contains(lowerOut, "unable to find") ||
+			strings.Contains(lowerOut, "无法找到") ||
+			strings.Contains(lowerOut, "找不到") {
+			return false, nil
+		}
+		return false, fmt.Errorf("查询 Windows 自启动注册表失败: %w, 输出: %s",
+			err, strings.TrimSpace(string(out)))
+	}
+
+	// 注册表里的启动项可能已经指向旧版 EXE；读取状态时必须确认它仍然属于当前程序。
+	if exePath, exeErr := os.Executable(); exeErr == nil {
+		if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
+			exePath = resolved
+		}
+		exePath = strings.TrimPrefix(exePath, `\\?\`)
+		if !strings.Contains(strings.ToLower(string(out)), strings.ToLower(exePath)) {
+			return false, nil
+		}
+	}
+
+	// Windows 10/11 在任务管理器禁用启动项时会写入 StartupApproved 标记。
+	approvedCmd := hideWindowCmd(regExe, "query", windowsStartupApprovedKey, "/v", windowsAutoStartValue)
+	approvedOut, err := approvedCmd.CombinedOutput()
+	if err == nil {
+		outStr := string(approvedOut)
+		if idx := strings.Index(strings.ToUpper(outStr), "REG_BINARY"); idx != -1 {
+			hexPart := strings.TrimSpace(outStr[idx+len("REG_BINARY"):])
+			if spaceIdx := strings.IndexAny(hexPart, " \t\r\n"); spaceIdx != -1 {
+				hexPart = hexPart[:spaceIdx]
+			}
+			if len(hexPart) >= 2 && strings.EqualFold(hexPart[:2], "03") {
+				return false, nil
+			}
+		}
+	}
+
+	// StartupApproved 不存在或解析失败时，沿用主线兼容策略，视为启用。
+	return true, nil
 }
 
 func (as *AutoStartService) enableWindows() error {
@@ -70,17 +128,28 @@ func (as *AutoStartService) enableWindows() error {
 		return fmt.Errorf("failed to get executable path: %w", err)
 	}
 
-	key := `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
-	cmd := exec.Command("reg", "add", key, "/v", "CodeSwitch", "/t", "REG_SZ", "/d", exePath, "/f")
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to add registry key: %w", err)
+	if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
+		exePath = resolved
 	}
+	exePath = strings.TrimPrefix(exePath, `\\?\`)
+
+	quotedPath := fmt.Sprintf(`"%s"`, exePath)
+	regExe := windowsRegExe()
+	cmd := hideWindowCmd(regExe, "add", windowsRunKey, "/v", windowsAutoStartValue,
+		"/t", "REG_SZ", "/d", quotedPath, "/f")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to add registry key: %w, output: %s",
+			err, strings.TrimSpace(string(out)))
+	}
+
+	// 清理系统曾经写入的禁用标记，避免“已添加但任务管理器仍禁用”的假状态。
+	_ = hideWindowCmd(regExe, "delete", windowsStartupApprovedKey, "/v", windowsAutoStartValue, "/f").Run()
 	return nil
 }
 
 func (as *AutoStartService) disableWindows() error {
-	key := `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
-	cmd := exec.Command("reg", "delete", key, "/v", "CodeSwitch", "/f")
+	regExe := windowsRegExe()
+	cmd := hideWindowCmd(regExe, "delete", windowsRunKey, "/v", windowsAutoStartValue, "/f")
 	// 忽略不存在的错误
 	_ = cmd.Run()
 	return nil

@@ -220,6 +220,23 @@ func (s *PetService) Petted(petID string) error {
 	return service.petted()
 }
 
+// PettedForPet 是桌宠窗口使用的轻量动作入口。旧的 Petted 保留 error-only
+// 签名给兼容调用方；新入口额外返回状态，避免每次抚摸都回读完整快照。
+func (s *PetService) PettedForPet(petID string) (PetActionResult, error) {
+	service, err := s.apiServiceForPet(petID)
+	if err != nil {
+		return PetActionResult{}, err
+	}
+	if err := service.petted(); err != nil {
+		return PetActionResult{}, err
+	}
+	state, err := service.GetState()
+	if err != nil {
+		return PetActionResult{}, err
+	}
+	return PetActionResult{OK: true, State: &state}, nil
+}
+
 func (s *PetService) petted() error {
 	if err := s.validate(); err != nil {
 		return err
@@ -650,8 +667,28 @@ func normalizeDreamConfig(config PetDreamConfig, petID string) PetDreamConfig {
 			PetDreamMaxBubbleDurationSeconds,
 		)
 	}
+	config.ImageProviderPlatform = normalizePetReferenceString(config.ImageProviderPlatform)
+	config.ImageProviderID = normalizePetReferenceString(config.ImageProviderID)
+	config.ImageModelID = normalizePetReferenceString(config.ImageModelID)
+	// 图片引用必须作为一个整体存在；缺一项时清空，避免运行时拿半截配置误判为可用。
+	if config.ImageProviderPlatform == nil || config.ImageProviderID == nil || config.ImageModelID == nil {
+		config.ImageProviderPlatform = nil
+		config.ImageProviderID = nil
+		config.ImageModelID = nil
+	}
 	config.PetID = petID
 	return config
+}
+
+func normalizePetReferenceString(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
 }
 
 func normalizeExpEntry(entry PetExpLogEntry, petID string, now int64) (PetExpLogEntry, error) {

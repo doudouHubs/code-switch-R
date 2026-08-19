@@ -591,6 +591,43 @@ func TestPetServiceNormalizesTimeAndConfigs(t *testing.T) {
 	}
 }
 
+func TestPetServiceNormalizesDreamImageReferenceAsAnAtomicTuple(t *testing.T) {
+	providerPlatform := "  openai  "
+	providerID := "  image-provider  "
+	modelID := "  image-model  "
+	repository := &memoryPetRepository{}
+	service := NewPetService(repository)
+
+	if err := service.SaveDreamConfig(PetDreamConfig{
+		DreamEnabled:          true,
+		ImageProviderPlatform: &providerPlatform,
+		ImageProviderID:       &providerID,
+		ImageModelID:          &modelID,
+	}); err != nil {
+		t.Fatalf("SaveDreamConfig() with image reference error = %v", err)
+	}
+	snapshot := repository.getSnapshot()
+	if snapshot.DreamConfig.ImageProviderPlatform == nil || *snapshot.DreamConfig.ImageProviderPlatform != "openai" ||
+		snapshot.DreamConfig.ImageProviderID == nil || *snapshot.DreamConfig.ImageProviderID != "image-provider" ||
+		snapshot.DreamConfig.ImageModelID == nil || *snapshot.DreamConfig.ImageModelID != "image-model" {
+		t.Fatalf("normalized image reference = %#v", snapshot.DreamConfig)
+	}
+
+	missingModel := ""
+	if err := service.SaveDreamConfig(PetDreamConfig{
+		DreamEnabled:          true,
+		ImageProviderPlatform: &providerPlatform,
+		ImageProviderID:       &providerID,
+		ImageModelID:          &missingModel,
+	}); err != nil {
+		t.Fatalf("SaveDreamConfig() with incomplete image reference error = %v", err)
+	}
+	snapshot = repository.getSnapshot()
+	if snapshot.DreamConfig.ImageProviderPlatform != nil || snapshot.DreamConfig.ImageProviderID != nil || snapshot.DreamConfig.ImageModelID != nil {
+		t.Fatalf("incomplete image reference was not cleared = %#v", snapshot.DreamConfig)
+	}
+}
+
 func TestPetServiceListExpLogNormalizesPaging(t *testing.T) {
 	repository := &memoryPetRepository{}
 	service := NewPetService(repository)

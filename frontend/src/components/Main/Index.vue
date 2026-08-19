@@ -748,6 +748,10 @@
                 </div>
 
                 <div class="form-field">
+                  <ModelReasoningEffortEditor v-model="modalState.form.modelReasoningEffortLevels" />
+                </div>
+
+                <div class="form-field">
                   <CLIConfigEditor
                     :platform="activeTab as CLIPlatform"
                     v-model="modalState.form.cliConfig"
@@ -992,6 +996,7 @@ import BaseInput from '../common/BaseInput.vue'
 import ModelWhitelistEditor from '../common/ModelWhitelistEditor.vue'
 import ModelMappingEditor from '../common/ModelMappingEditor.vue'
 import ModelCategoryEditor from '../common/ModelCategoryEditor.vue'
+import ModelReasoningEffortEditor from '../common/ModelReasoningEffortEditor.vue'
 import CLIConfigEditor from '../common/CLIConfigEditor.vue'
 import CustomCliConfigEditor from '../common/CustomCliConfigEditor.vue'
 import { LoadProviders, SaveProviders, DuplicateProvider, RenameProvider } from '../../../bindings/codeswitch/services/providerservice'
@@ -1422,6 +1427,7 @@ interface GeminiProvider {
   apiKey?: string
   model?: string
   modelCategory?: string
+  reasoningEffortLevels?: string[]
   description?: string
   category?: string
   partnerPromotionKey?: string
@@ -1466,6 +1472,9 @@ const geminiToCard = (provider: GeminiProvider, index: number): AutomationCard =
   modelCategories: provider.model && provider.modelCategory
     ? { [provider.model]: provider.modelCategory }
     : {},
+  modelReasoningEffortLevels: provider.model && provider.reasoningEffortLevels?.length
+    ? { [provider.model]: [...provider.reasoningEffortLevels] }
+    : {},
 })
 
 // AutomationCard 到 Gemini Provider 的转换
@@ -1480,6 +1489,9 @@ const cardToGemini = (card: AutomationCard, original: GeminiProvider): GeminiPro
   modelCategory: Object.prototype.hasOwnProperty.call(card.modelCategories ?? {}, original.model ?? '')
     ? card.modelCategories?.[original.model ?? '']
     : original.modelCategory,
+  reasoningEffortLevels: Object.prototype.hasOwnProperty.call(card.modelReasoningEffortLevels ?? {}, original.model ?? '')
+    ? card.modelReasoningEffortLevels?.[original.model ?? '']
+    : original.reasoningEffortLevels,
 })
 
 const serializeProviders = (providers: AutomationCard[]) =>
@@ -1533,6 +1545,7 @@ const persistProviders = async (tabId: ProviderTab): Promise<{ ok: boolean; erro
             websiteUrl: card.officialSite,
             enabled: card.enabled,
             modelCategory: Object.values(card.modelCategories ?? {})[0] || undefined,
+            reasoningEffortLevels: Object.values(card.modelReasoningEffortLevels ?? {})[0] || undefined,
           }
           await AddGeminiProvider(newProvider)
         }
@@ -2239,6 +2252,7 @@ type VendorForm = {
   supportedModels?: Record<string, boolean>
   modelMapping?: Record<string, string>
   modelCategories?: Record<string, string>
+  modelReasoningEffortLevels?: Record<string, string[]>
   level?: number
   apiEndpoint?: string
   cliConfig?: Record<string, any>
@@ -2270,6 +2284,7 @@ const defaultFormValues = (): VendorForm => ({
   supportedModels: {},
   modelMapping: {},
   modelCategories: {},
+  modelReasoningEffortLevels: {},
   cliConfig: {},
   apiEndpoint: '', // API 端点（可选）
   upstreamProtocol: 'auto', // 上游协议类型（anthropic/openai_chat/auto）
@@ -2372,6 +2387,7 @@ const openEditModal = (card: AutomationCard) => {
     supportedModels: card.supportedModels || {},
     modelMapping: card.modelMapping || {},
     modelCategories: card.modelCategories || {},
+    modelReasoningEffortLevels: card.modelReasoningEffortLevels || {},
     cliConfig: card.cliConfig || {},
     apiEndpoint: card.apiEndpoint || '',
     upstreamProtocol: card.upstreamProtocol || 'auto',
@@ -2459,6 +2475,7 @@ const submitModal = async (): Promise<boolean> => {
       supportedModels: modalState.form.supportedModels || {},
       modelMapping: modalState.form.modelMapping || {},
       modelCategories: modalState.form.modelCategories || {},
+      modelReasoningEffortLevels: modalState.form.modelReasoningEffortLevels || {},
       cliConfig: modalState.form.cliConfig || {},
       apiEndpoint: modalState.form.apiEndpoint || '',
       upstreamProtocol: modalState.form.upstreamProtocol || 'auto',
@@ -2487,6 +2504,7 @@ const submitModal = async (): Promise<boolean> => {
       supportedModels: modalState.form.supportedModels || {},
       modelMapping: modalState.form.modelMapping || {},
       modelCategories: modalState.form.modelCategories || {},
+      modelReasoningEffortLevels: modalState.form.modelReasoningEffortLevels || {},
       cliConfig: modalState.form.cliConfig || {},
       apiEndpoint: modalState.form.apiEndpoint || '',
       upstreamProtocol: modalState.form.upstreamProtocol || 'auto',

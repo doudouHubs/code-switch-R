@@ -17,6 +17,8 @@ import { fetchModelInstructionsFile, saveModelInstructionsFile } from '../../ser
 import { getBlacklistSettings, updateBlacklistSettings, getLevelBlacklistEnabled, setLevelBlacklistEnabled, getBlacklistEnabled, setBlacklistEnabled, type BlacklistSettings } from '../../services/settings'
 import { fetchConfigImportStatus, importFromPath, type ConfigImportStatus } from '../../services/configImport'
 import { useI18n } from 'vue-i18n'
+import { extractErrorMessage } from '../../utils/error'
+import { showToast } from '../../utils/toast'
 
 const { t } = useI18n()
 
@@ -42,6 +44,8 @@ const switchNotifyEnabled = ref(getCachedValue('switchNotify', true)) // 切换�
 const roundRobinEnabled = ref(getCachedValue('roundRobin', false))    // 同 Level 轮询开关
 const autoUpdateEnabled = ref(getCachedValue('autoUpdate', true))     // 自动更新开关
 const requestCaptureEnabled = ref(getCachedValue('requestCapture', true)) // 请求捕获开关
+const codexHookEnabled = ref(getCachedValue('codexHook', true)) // Codex Hook 开关
+const lastPersistedCodexHookEnabled = ref(codexHookEnabled.value)
 const requestCaptureDir = ref(getCachedString('requestCaptureDir', ''))   // 请求捕获存储目录
 const modelInstructionsFile = ref(getCachedString('modelInstructionsFile', '')) // Codex model_instructions_file
 const speechProviderPlatform = ref(getCachedString('speechProviderPlatform', ''))
@@ -123,6 +127,8 @@ const loadAppSettings = async () => {
     roundRobinEnabled.value = data?.enable_round_robin ?? false
     autoUpdateEnabled.value = data?.auto_update ?? true
     requestCaptureEnabled.value = data?.enable_request_capture ?? true
+    codexHookEnabled.value = data?.enable_codex_hook ?? true
+    lastPersistedCodexHookEnabled.value = codexHookEnabled.value
     requestCaptureDir.value = data?.request_capture_dir ?? ''
     const speechSelection = getSpeechProviderSelection(data)
     speechProviderPlatform.value = speechSelection.speech_provider_platform ?? ''
@@ -154,6 +160,7 @@ const loadAppSettings = async () => {
     localStorage.setItem('app-settings-roundRobin', String(roundRobinEnabled.value))
     localStorage.setItem('app-settings-autoUpdate', String(autoUpdateEnabled.value))
     localStorage.setItem('app-settings-requestCapture', String(requestCaptureEnabled.value))
+    localStorage.setItem('app-settings-codexHook', String(codexHookEnabled.value))
     localStorage.setItem('app-settings-requestCaptureDir', requestCaptureDir.value)
     localStorage.setItem('app-settings-speechProviderPlatform', speechProviderPlatform.value)
     localStorage.setItem('app-settings-speechProviderId', speechProviderId.value)
@@ -183,6 +190,8 @@ const loadAppSettings = async () => {
     switchNotifyEnabled.value = true
     roundRobinEnabled.value = false
     requestCaptureEnabled.value = true
+    codexHookEnabled.value = true
+    lastPersistedCodexHookEnabled.value = true
     requestCaptureDir.value = ''
     speechProviderPlatform.value = ''
     speechProviderId.value = ''
@@ -257,6 +266,7 @@ const persistAppSettings = async () => {
       enable_round_robin: roundRobinEnabled.value,
       auto_update: autoUpdateEnabled.value,
       enable_request_capture: requestCaptureEnabled.value,
+      enable_codex_hook: codexHookEnabled.value,
       request_capture_dir: requestCaptureDir.value.trim(),
       speech_provider_platform: speechProviderPlatform.value || null,
       speech_provider_id: speechProviderId.value || null,
@@ -267,7 +277,9 @@ const persistAppSettings = async () => {
       speech_provider_id: speechProviderId.value,
       speech_model_id: speechModelId.value,
     })
-    await saveAppSettings(payloadWithSpeech)
+    const savedSettings = await saveAppSettings(payloadWithSpeech)
+    codexHookEnabled.value = savedSettings.enable_codex_hook
+    lastPersistedCodexHookEnabled.value = savedSettings.enable_codex_hook
 
     // 更新缓存
     localStorage.setItem('app-settings-heatmap', String(heatmapEnabled.value))
@@ -294,6 +306,7 @@ const persistAppSettings = async () => {
     localStorage.setItem('app-settings-roundRobin', String(roundRobinEnabled.value))
     localStorage.setItem('app-settings-autoUpdate', String(autoUpdateEnabled.value))
     localStorage.setItem('app-settings-requestCapture', String(requestCaptureEnabled.value))
+    localStorage.setItem('app-settings-codexHook', String(codexHookEnabled.value))
     localStorage.setItem('app-settings-requestCaptureDir', requestCaptureDir.value)
     localStorage.setItem('app-settings-speechProviderPlatform', speechProviderPlatform.value)
     localStorage.setItem('app-settings-speechProviderId', speechProviderId.value)
@@ -302,6 +315,13 @@ const persistAppSettings = async () => {
     window.dispatchEvent(new CustomEvent('app-settings-updated'))
   } catch (error) {
     console.error('failed to save app settings', error)
+    if (codexHookEnabled.value !== lastPersistedCodexHookEnabled.value) {
+      codexHookEnabled.value = lastPersistedCodexHookEnabled.value
+      showToast(
+        `${t('components.general.label.codexHookSaveFailed')}: ${extractErrorMessage(error)}`,
+        'error'
+      )
+    }
   } finally {
     saveBusy.value = false
   }
@@ -613,6 +633,20 @@ onMounted(async () => {
                 <span></span>
               </label>
               <span class="hint-text">{{ $t('components.general.label.requestCaptureHint') }}</span>
+            </div>
+          </ListItem>
+          <ListItem :label="$t('components.general.label.codexHook')">
+            <div class="toggle-with-hint">
+              <label class="mac-switch">
+                <input
+                  type="checkbox"
+                  :disabled="settingsLoading || saveBusy"
+                  v-model="codexHookEnabled"
+                  @change="persistAppSettings"
+                />
+                <span></span>
+              </label>
+              <span class="hint-text">{{ $t('components.general.label.codexHookHint') }}</span>
             </div>
           </ListItem>
           <ListItem :label="$t('components.general.label.requestCaptureDir')">

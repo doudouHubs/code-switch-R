@@ -1,16 +1,15 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Call, Events } from '../../wails-runtime-compat'
 import { fetchAppSettings } from '../../services/appSettings'
+import { ImagePlus, Loader2, Mic, SendHorizontal, Square, X } from '@lucide/vue'
 import { petApi } from './petApi'
 import {
   buildPetPlanInstructions,
   cleanPetAssistantText,
   extractPetPlan,
-  formatPlanDate,
   formatPlanError,
-  formatPlanStep,
   localPetTimeZone
 } from './petPlan'
 import type {
@@ -36,7 +35,14 @@ const props = withDefaults(defineProps<PetChatProps>(), {
   dreams: () => [],
   providerPlatform: ''
 })
-const { t, locale } = useI18n()
+const emit = defineEmits<{
+  (event: 'close'): void
+  // PetWindow 用这些事件把聊天状态同步到跟随宠物的气泡；会话历史只留在组件内
+  // 供下一次请求构造 history，不再复制到聊天浮层中。
+  (event: 'status-change', payload: { text: string; tone: 'muted' | 'error' }): void
+  (event: 'bubble', payload: { text: string; tone: 'muted' | 'error'; duration?: number }): void
+}>()
+const { t } = useI18n()
 
 type ChatRole = 'user' | 'assistant'
 type ChatMessageStatus = 'complete' | 'streaming' | 'cancelled' | 'error'
@@ -146,10 +152,6 @@ const messages = ref<ChatMessage[]>([])
 const inputText = ref('')
 const phase = ref<ChatPhase>('idle')
 const failureMessage = ref('')
-const showDreams = ref(false)
-const showPlans = ref(false)
-const selectedDreamId = ref('')
-const messageListRef = ref<HTMLElement | null>(null)
 const plans = ref<PetPlanRecord[]>([])
 const plansPhase = ref<PlanPhase>('idle')
 const plansError = ref('')
@@ -169,6 +171,12 @@ const PET_CHAT_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/web
 const PET_CHAT_MAX_IMAGES = 4
 const PET_CHAT_MAX_IMAGE_BYTES = 128 * 1024
 const PET_CHAT_MAX_TOTAL_IMAGE_BYTES = 192 * 1024
+const PET_CHAT_MAX_VOICE_DURATION_MS = 60_000
+// 默认 Go multipart 请求上限是 256 KiB；预留表单字段和边界开销，前端在
+// 录音阶段先停住，避免用户录完才收到一个必然失败的上传请求。
+const PET_CHAT_MAX_VOICE_BYTES = 240 * 1024
+// Go 端默认请求超时为 90s；前端多留 5s 只负责把失联的 UI 收口，实际取消仍由后端 context 执行。
+const PET_CHAT_REQUEST_WATCHDOG_MS = 95_000
 
 const configuredProviderPlatform = computed(() =>
   props.agent?.providerPlatform?.trim() || props.providerPlatform.trim()
@@ -191,8 +199,12 @@ let activeRecorderChunks: Blob[] = []
 let activeRecorderPetId = ''
 let activeRecorderMimeType = 'audio/webm'
 let activeRecorderShouldSubmit = false
+let activeRecorderByteLength = 0
+let activeRecorderStopTimer: number | undefined
+let activeRecorderStopReason: 'duration' | 'size' | '' = ''
 let stoppingRecorder: MediaRecorder | null = null
 let activeTranscriptionCall: ReturnType<typeof Call.ByName> | null = null
+let activeRequestWatchdog: number | undefined
 let componentMounted = false
 
 const chatAvailability = computed<ChatAvailability>(() => {
@@ -218,8 +230,9 @@ const isComposerBusy = computed(() =>
   isBusy.value || isStartingRecording.value || isRecording.value || isStoppingRecording.value || isTranscribing.value
 )
 
+// 配置缺失不能把发送入口直接锁死，否则 sendMessage 内已有的可读配置提示永远无法触发；
+// 真正发起请求前仍由 chatAvailability 做硬校验，避免静默调用错误的 provider/model。
 const canSend = computed(() =>
-  chatAvailability.value.ready &&
   !isComposerBusy.value &&
   (inputText.value.trim().length > 0 || pendingImages.value.length > 0)
 )
@@ -247,21 +260,6 @@ const statusTone = computed(() => {
   return 'ready'
 })
 
-const selectedDream = computed(() => {
-  if (!selectedDreamId.value) return null
-  return props.dreams.find((dream) => dream.id === selectedDreamId.value) ?? null
-})
-
-const dreamCountLabel = computed(() => {
-  const count = props.dreams.length
-  return count > 99 ? '99+' : String(count)
-})
-
-const planCountLabel = computed(() => {
-  const count = plans.value.length
-  return count > 99 ? '99+' : String(count)
-})
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
@@ -275,13 +273,20 @@ function asPositiveNumber(value: unknown): number {
 }
 
 function decodeEventData(value: unknown): Record<string, unknown> {
-  if (isRecord(value)) return value
-  if (typeof value !== 'string' || !value.trim()) return {}
+  // Wails v3 的 app.Event.Emit 接收的是 variadic data，单个事件会在
+  // WebView 侧变成 [event]；浏览器 bridge 则直接发送 event。两条入口必须
+  // 在这里统一解包，否则桌面端只会显示发送前写入的“正在连接宠物”。
+  const unwrapped = Array.isArray(value) && value.length === 1 ? value[0] : value
+  if (isRecord(unwrapped)) return unwrapped
+  if (typeof unwrapped !== 'string' || !unwrapped.trim()) return {}
   try {
-    const parsed: unknown = JSON.parse(value)
-    return isRecord(parsed) ? parsed : { text: typeof parsed === 'string' ? parsed : '' }
+    const parsed: unknown = JSON.parse(unwrapped)
+    const parsedValue = Array.isArray(parsed) && parsed.length === 1 ? parsed[0] : parsed
+    return isRecord(parsedValue)
+      ? parsedValue
+      : { text: typeof parsedValue === 'string' ? parsedValue : '' }
   } catch {
-    return { text: value }
+    return { text: unwrapped }
   }
 }
 
@@ -517,6 +522,33 @@ function cancelActiveTranscription(): void {
   }
 }
 
+function clearActiveRecorderStopTimer(): void {
+  if (activeRecorderStopTimer === undefined) return
+  window.clearTimeout(activeRecorderStopTimer)
+  activeRecorderStopTimer = undefined
+}
+
+function voiceRecordingLimitMessage(reason: 'duration' | 'size'): string {
+  return reason === 'duration'
+    ? t('pet.chat.voice.tooLong')
+    : t('pet.chat.voice.tooLarge')
+}
+
+function stopRecorderForLimit(recorder: MediaRecorder, reason: 'duration' | 'size'): void {
+  if (activeRecorder !== recorder || !activeRecorderShouldSubmit) return
+  activeRecorderShouldSubmit = false
+  activeRecorderStopReason = reason
+  stoppingRecorder = recorder
+  isStoppingRecording.value = true
+  try {
+    if (recorder.state !== 'inactive') recorder.stop()
+  } catch {
+    // 设备可能在限制触发时已经断开；丢弃当前捕获并释放轨道，不能上传半段数据。
+    voiceInputMessage.value = voiceRecordingLimitMessage(reason)
+    discardVoiceCapture()
+  }
+}
+
 function discardVoiceCapture(): void {
   // generation 让 getUserMedia/MediaRecorder 的晚到回调失去提交资格，
   // 这是切换宠物、卸载组件时避免误发上一只宠物语音的核心边界。
@@ -526,11 +558,14 @@ function discardVoiceCapture(): void {
   const recorder = activeRecorder
   const stream = activeRecorderStream
   const recorderAlreadyStopping = stoppingRecorder === recorder
+  clearActiveRecorderStopTimer()
   stoppingRecorder = null
   activeRecorder = null
   activeRecorderStream = null
   activeRecorderChunks = []
   activeRecorderPetId = ''
+  activeRecorderByteLength = 0
+  activeRecorderStopReason = ''
   isStartingRecording.value = false
   isRecording.value = false
   isStoppingRecording.value = false
@@ -556,6 +591,12 @@ async function transcribeVoiceCapture(
 ): Promise<void> {
   let transcriptionCall: ReturnType<typeof Call.ByName> | null = null
   try {
+    if (blob.size > PET_CHAT_MAX_VOICE_BYTES) {
+      if (session === voiceSessionGeneration && componentMounted && props.petId === petId) {
+        voiceInputMessage.value = t('pet.chat.voice.tooLarge')
+      }
+      return
+    }
     const data = bytesToBase64(new Uint8Array(await blob.arrayBuffer()))
     if (session !== voiceSessionGeneration || !componentMounted || props.petId !== petId) return
 
@@ -688,8 +729,16 @@ async function toggleVoiceInput(): Promise<void> {
     activeRecorderPetId = petId
     activeRecorderMimeType = recorder.mimeType || mimeType || 'audio/webm'
     activeRecorderShouldSubmit = true
+    activeRecorderByteLength = 0
+    activeRecorderStopReason = ''
     recorder.ondataavailable = (event) => {
-      if (activeRecorder === recorder && event.data.size > 0) activeRecorderChunks.push(event.data)
+      if (activeRecorder !== recorder || !activeRecorderShouldSubmit || event.data.size <= 0) return
+      if (activeRecorderByteLength + event.data.size > PET_CHAT_MAX_VOICE_BYTES) {
+        stopRecorderForLimit(recorder, 'size')
+        return
+      }
+      activeRecorderChunks.push(event.data)
+      activeRecorderByteLength += event.data.size
     }
     recorder.onerror = () => {
       if (activeRecorder !== recorder) return
@@ -700,6 +749,7 @@ async function toggleVoiceInput(): Promise<void> {
       const isCurrentRecorder = activeRecorder === recorder
       const ownsStoppingState = stoppingRecorder === recorder
       const chunks = isCurrentRecorder ? activeRecorderChunks.slice() : []
+      const stopReason = isCurrentRecorder ? activeRecorderStopReason : ''
       const shouldSubmit = isCurrentRecorder &&
         activeRecorderShouldSubmit &&
         session === voiceSessionGeneration &&
@@ -713,6 +763,9 @@ async function toggleVoiceInput(): Promise<void> {
         activeRecorderChunks = []
         activeRecorderPetId = ''
         activeRecorderShouldSubmit = false
+        activeRecorderByteLength = 0
+        activeRecorderStopReason = ''
+        clearActiveRecorderStopTimer()
       }
       if (ownsStoppingState) {
         stoppingRecorder = null
@@ -721,7 +774,10 @@ async function toggleVoiceInput(): Promise<void> {
       stopMediaStream(stream)
       // 旧 recorder 的晚到 onstop 只能释放自己的 stream，不能改写当前 recorder 的 UI 状态。
       if (isCurrentRecorder) isRecording.value = false
-      if (!shouldSubmit) return
+      if (!shouldSubmit) {
+        if (stopReason) voiceInputMessage.value = voiceRecordingLimitMessage(stopReason)
+        return
+      }
 
       const blob = new Blob(chunks, { type: recordedMimeType })
       // 源项目同样丢弃极短录音；它们通常是误触或静音，不应触发一次网络请求。
@@ -734,6 +790,9 @@ async function toggleVoiceInput(): Promise<void> {
     }
     recorder.start()
     activeRecorderMimeType = recorder.mimeType || mimeType || 'audio/webm'
+    activeRecorderStopTimer = window.setTimeout(() => {
+      if (activeRecorder === recorder && activeRecorderShouldSubmit) stopRecorderForLimit(recorder, 'duration')
+    }, PET_CHAT_MAX_VOICE_DURATION_MS)
     isStartingRecording.value = false
     isRecording.value = true
   } catch (error) {
@@ -817,7 +876,6 @@ async function handleImageSelection(event: Event): Promise<void> {
   }
   if (generation !== imageSelectionGeneration) return
   pendingImages.value = [...pendingImages.value, ...additions]
-  await scrollToLatest()
 }
 
 function removePendingImage(imageId: string): void {
@@ -839,7 +897,32 @@ function isCurrentEvent(event: ChatEvent): boolean {
   return true
 }
 
+function clearRequestWatchdog(): void {
+  if (activeRequestWatchdog === undefined) return
+  window.clearTimeout(activeRequestWatchdog)
+  activeRequestWatchdog = undefined
+}
+
+function cancelBackendRequest(requestId: string): void {
+  if (!requestId) return
+  // 取消是幂等的；组件切换/卸载时不再等待 IPC，避免旧页面生命周期被挂住。
+  void Call.ByName(PET_AI_METHODS.cancelChat, requestId).catch(() => undefined)
+}
+
+function armRequestWatchdog(requestId: string, userText: string): void {
+  clearRequestWatchdog()
+  activeRequestWatchdog = window.setTimeout(() => {
+    activeRequestWatchdog = undefined
+    if (!componentMounted || activeRequestId !== requestId) return
+    // 先撤销后端请求，再丢掉前端 ownership；晚到的 SSE/Wails 事件会因 requestId
+    // 不再匹配而被丢弃，超时错误也不会被后续 cancelled 事件覆盖。
+    cancelBackendRequest(requestId)
+    settleFailure(requestId, userText, 'PET_AI_TIMEOUT')
+  }, PET_CHAT_REQUEST_WATCHDOG_MS)
+}
+
 function settleRequest(): void {
+  clearRequestWatchdog()
   activeRequestId = ''
   activeAssistantId = ''
   activeRawAssistantText = ''
@@ -971,6 +1054,7 @@ function settleFailure(requestId: string, userText: string, errorCode = ''): voi
   failureMessage.value = safeErrorMessage(errorCode)
   settleRequest()
   phase.value = 'error'
+  emit('status-change', { text: failureMessage.value, tone: 'error' })
 }
 
 function handleChatEvent(value: unknown): void {
@@ -979,6 +1063,8 @@ function handleChatEvent(value: unknown): void {
 
   if (event.type === 'started') {
     phase.value = 'streaming'
+    emit('status-change', { text: t('pet.chat.status.connecting'), tone: 'muted' })
+    emit('bubble', { text: t('pet.chat.status.connecting'), tone: 'muted', duration: 60_000 })
     return
   }
   if (event.type === 'delta') {
@@ -990,7 +1076,12 @@ function handleChatEvent(value: unknown): void {
     assistant.content = cleanPetAssistantText(activeRawAssistantText)
     assistant.status = 'streaming'
     phase.value = 'streaming'
-    void scrollToLatest()
+    emit('status-change', { text: t('pet.chat.status.replying'), tone: 'muted' })
+    emit('bubble', {
+      text: assistant.content || t('pet.chat.status.replying'),
+      tone: 'muted',
+      duration: assistant.content ? undefined : 60_000
+    })
     return
   }
   if (event.type === 'completed') {
@@ -1007,7 +1098,8 @@ function handleChatEvent(value: unknown): void {
     settleRequest()
     phase.value = 'idle'
     failureMessage.value = ''
-    void scrollToLatest()
+    emit('status-change', { text: '', tone: 'muted' })
+    if (assistant?.content) emit('bubble', { text: assistant.content, tone: 'muted' })
     if (extractedPlan.error) {
       showPlanError(extractedPlan.error)
     } else if (extractedPlan.plan) {
@@ -1025,6 +1117,7 @@ function handleChatEvent(value: unknown): void {
     }
     settleRequest()
     phase.value = 'idle'
+    emit('status-change', { text: '', tone: 'muted' })
     return
   }
 
@@ -1055,8 +1148,10 @@ async function sendMessage(textOverride?: string, imagesOverride?: PetChatImage[
   activeAssistantId = assistantMessage.id
   activeRawAssistantText = ''
   lastEventSequence = 0
+  armRequestWatchdog(requestId, text)
   phase.value = 'starting'
-  await scrollToLatest()
+  emit('status-change', { text: t('pet.chat.status.connecting'), tone: 'muted' })
+  emit('bubble', { text: t('pet.chat.status.connecting'), tone: 'muted', duration: 60_000 })
 
   try {
     const request = buildChatRequest(requestId, text, images, userMessage.id)
@@ -1084,10 +1179,12 @@ async function cancelMessage(): Promise<void> {
   if (!requestId || !isBusy.value) return
 
   phase.value = 'cancelling'
+  clearRequestWatchdog()
   // 先让 UI 失去这条 request 的所有权，再请求后端取消；这样晚到的 delta
   // 即便已经排进 runtime 事件队列，也无法污染下一次会话。
   activeRequestId = ''
   activeAssistantId = ''
+  activeRawAssistantText = ''
   lastEventSequence = 0
   const assistant = findMessage(assistantId)
   if (assistant) {
@@ -1115,66 +1212,6 @@ function retryLastMessage(): void {
   void sendMessage(text, images)
 }
 
-function showChat(): void {
-  showDreams.value = false
-  showPlans.value = false
-}
-
-function toggleDreams(): void {
-  showDreams.value = !showDreams.value
-  showPlans.value = false
-  if (showDreams.value && !selectedDreamId.value) {
-    selectedDreamId.value = props.dreams[0]?.id ?? ''
-  }
-}
-
-function togglePlans(): void {
-  showPlans.value = !showPlans.value
-  showDreams.value = false
-  if (showPlans.value && plansPhase.value === 'idle') void loadPlans()
-}
-
-function selectDream(id: string): void {
-  selectedDreamId.value = id
-}
-
-function previewDream(dream: PetDreamHistoryRecord): string {
-  const text = dream.sleepTalk || dream.dream || dream.effectivePrompt
-  const compact = text.replace(/\s+/g, ' ').trim()
-  return compact.length > 70 ? compact.slice(0, 70) + '...' : compact || t('pet.chat.dream.noText')
-}
-
-function formatDreamDate(createdAt: number): string {
-  if (!createdAt) return t('pet.common.unknownDate')
-  try {
-    return new Intl.DateTimeFormat(locale.value, {
-      month: 'numeric',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    }).format(createdAt)
-  } catch {
-    return t('pet.common.unknownDate')
-  }
-}
-
-function formatMessageTime(createdAt: number): string {
-  try {
-    return new Intl.DateTimeFormat(locale.value, {
-      hour: '2-digit',
-      minute: '2-digit'
-    }).format(createdAt)
-  } catch {
-    return ''
-  }
-}
-
-async function scrollToLatest(): Promise<void> {
-  await nextTick()
-  const element = messageListRef.value
-  if (element) element.scrollTop = element.scrollHeight
-}
-
 function handleInputKeydown(event: KeyboardEvent): void {
   if (event.isComposing || event.key !== 'Enter' || event.shiftKey) return
   event.preventDefault()
@@ -1182,22 +1219,15 @@ function handleInputKeydown(event: KeyboardEvent): void {
 }
 
 watch(
-  () => props.dreams,
-  (dreams) => {
-    if (selectedDreamId.value && dreams.some((dream) => dream.id === selectedDreamId.value)) return
-    selectedDreamId.value = dreams[0]?.id ?? ''
-  },
-  { immediate: true }
-)
-
-watch(
   () => props.petId,
   () => {
+    const requestId = activeRequestId
     // 宠物切换时必须清空会话内历史，避免把上一只宠物的上下文串进下一条请求。
     imageSelectionGeneration += 1
     discardVoiceCapture()
     isTranscribing.value = false
     voiceInputMessage.value = ''
+    clearRequestWatchdog()
     activeRequestId = ''
     activeAssistantId = ''
     lastEventSequence = 0
@@ -1214,6 +1244,7 @@ watch(
     planNotice.value = ''
     cancelledPlanIds.value = new Set()
     phase.value = 'idle'
+    cancelBackendRequest(requestId)
     void loadPlans()
   }
 )
@@ -1234,12 +1265,13 @@ onBeforeUnmount(() => {
   stopChatEvent?.()
   stopChatEvent = null
   const requestId = activeRequestId
+  clearRequestWatchdog()
   activeRequestId = ''
   activeAssistantId = ''
   lastEventSequence = 0
   if (requestId) {
     // 组件销毁时只发取消信号，不等待结果，也不把 runtime 错误写入新页面状态。
-    void Call.ByName(PET_AI_METHODS.cancelChat, requestId).catch(() => undefined)
+    cancelBackendRequest(requestId)
   }
   pendingImages.value = []
   lastFailedImages = []
@@ -1247,256 +1279,107 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="pet-chat" :class="{ 'is-busy': isBusy, 'is-dreams': showDreams, 'is-plans': showPlans }" :aria-label="t('pet.chat.aria.chatPanel')">
-    <header class="pet-chat__header">
-      <div class="pet-chat__heading">
-        <span class="pet-chat__eyebrow">{{ t('pet.chat.eyebrow') }}</span>
-        <strong>{{ petName }}</strong>
-      </div>
-      <nav class="pet-chat__tabs" :aria-label="t('pet.chat.aria.contentTabs')">
-        <button
-          type="button"
-          class="pet-chat__tab"
-          :class="{ 'is-active': !showDreams && !showPlans }"
-          :aria-selected="!showDreams && !showPlans"
-          @click="showChat"
-        >
-          {{ t('pet.chat.tabs.chat') }}
-        </button>
-        <button
-          type="button"
-          class="pet-chat__tab"
-          :class="{ 'is-active': showDreams }"
-          :aria-selected="showDreams"
-          @click="toggleDreams"
-        >
-          {{ t('pet.chat.tabs.dreams') }} <span class="pet-chat__count">{{ dreamCountLabel }}</span>
-        </button>
-        <button
-          type="button"
-          class="pet-chat__tab"
-          :class="{ 'is-active': showPlans }"
-          :aria-selected="showPlans"
-          @click="togglePlans"
-        >
-          {{ t('pet.chat.tabs.plans') }} <span class="pet-chat__count">{{ planCountLabel }}</span>
-        </button>
-      </nav>
-    </header>
+  <section class="pet-chat" :class="{ 'is-busy': isBusy }" :aria-label="t('pet.chat.aria.chatPanel')">
+    <div
+      v-if="attachmentMessage || voiceInputMessage || failureMessage || (phase === 'unavailable' && !chatAvailability.ready)"
+      class="pet-chat__status"
+      :class="'is-' + statusTone"
+      aria-live="polite"
+    >
+      <span class="pet-chat__status-dot" aria-hidden="true"></span>
+      <span>{{ statusText }}</span>
+      <button
+        v-if="phase === 'error' && (lastFailedText || lastFailedImages.length > 0) && chatAvailability.ready"
+        type="button"
+        class="pet-chat__retry"
+        @click="retryLastMessage"
+      >
+        {{ t('pet.common.retry') }}
+      </button>
+    </div>
 
-    <template v-if="showDreams">
-      <div class="pet-chat__dream-layout">
-        <div class="pet-chat__dream-list" :aria-label="t('pet.chat.aria.dreamHistory')">
-          <div v-if="props.dreams.length === 0" class="pet-chat__empty-state">
-            <span class="pet-chat__empty-glyph" aria-hidden="true">✦</span>
-            <span>{{ t('pet.chat.dream.empty') }}</span>
-            <small>{{ t('pet.chat.dream.emptyHint') }}</small>
-          </div>
+    <form class="pet-chat__composer" @submit.prevent="sendMessage()">
+      <input
+        ref="imageInputRef"
+        class="pet-chat__file-input"
+        type="file"
+        accept="image/png,image/jpeg,image/gif,image/webp"
+        multiple
+        :aria-label="t('pet.chat.attachments.selectImage')"
+        @change="handleImageSelection"
+      />
+      <div v-if="pendingImages.length > 0" class="pet-chat__attachment-strip" :aria-label="t('pet.chat.attachments.pendingImages')">
+        <div v-for="image in pendingImages" :key="image.id" class="pet-chat__attachment">
+          <img :src="image.previewUrl" :alt="t('pet.chat.attachments.pendingImageAlt')" />
           <button
-            v-for="dream in props.dreams"
-            :key="dream.id"
             type="button"
-            class="pet-chat__dream-item"
-            :class="{ 'is-selected': selectedDreamId === dream.id }"
-            @click="selectDream(dream.id)"
+            class="pet-chat__attachment-remove"
+            :disabled="isComposerBusy"
+            :aria-label="t('pet.chat.attachments.removeImage', { id: image.id })"
+            :title="t('pet.chat.attachments.removeImageTitle')"
+            @click="removePendingImage(image.id)"
           >
-            <span class="pet-chat__dream-date">{{ formatDreamDate(dream.createdAt) }}</span>
-            <strong>{{ dream.title || t('pet.chat.dream.untitled') }}</strong>
-            <span>{{ previewDream(dream) }}</span>
+            ×
           </button>
         </div>
-
-        <article v-if="selectedDream" class="pet-chat__dream-detail" aria-live="polite">
-          <header class="pet-chat__dream-detail-header">
-            <div>
-              <span class="pet-chat__dream-date">{{ formatDreamDate(selectedDream.createdAt) }}</span>
-              <h3>{{ selectedDream.title || t('pet.chat.dream.untitled') }}</h3>
-            </div>
-            <span v-if="selectedDream.emotion" class="pet-chat__emotion">{{ t(`pet.dreamHistory.emotions.${selectedDream.emotion}`) }}</span>
-          </header>
-          <div class="pet-chat__dream-body">
-            <p v-if="selectedDream.dream"><strong>{{ t('pet.chat.dream.dream') }}</strong>{{ selectedDream.dream }}</p>
-            <p v-if="selectedDream.sleepTalk"><strong>{{ t('pet.chat.dream.sleepTalk') }}</strong>{{ selectedDream.sleepTalk }}</p>
-            <p v-if="!selectedDream.dream && !selectedDream.sleepTalk">{{ t('pet.chat.dream.noText') }}</p>
-          </div>
-        </article>
-        <div v-else-if="props.dreams.length > 0" class="pet-chat__empty-detail">
-          {{ t('pet.chat.dream.selectHint') }}
-        </div>
       </div>
-    </template>
-
-    <template v-else-if="showPlans">
-      <div class="pet-chat__plan-layout" :aria-label="t('pet.chat.aria.planList')">
-        <header class="pet-chat__plan-header">
-          <div>
-            <strong>{{ t('pet.chat.plan.title') }}</strong>
-            <span>{{ t('pet.chat.plan.subtitle') }}</span>
-          </div>
-          <button type="button" class="pet-chat__retry" :disabled="plansPhase === 'loading'" @click="loadPlans()">
-            {{ t('pet.common.refresh') }}
-          </button>
-        </header>
-
-        <div v-if="plansPhase === 'loading'" class="pet-chat__plan-state" aria-live="polite">
-          {{ t('pet.chat.plan.loading') }}
-        </div>
-        <div v-else-if="plansPhase === 'error'" class="pet-chat__plan-state is-error" aria-live="assertive">
-          <span>{{ plansError || t('pet.chat.plan.loadFailed') }}</span>
-          <button type="button" class="pet-chat__retry" @click="loadPlans()">{{ t('pet.common.retry') }}</button>
-        </div>
-        <div v-else-if="plans.length === 0" class="pet-chat__empty-state">
-          <span class="pet-chat__empty-glyph" aria-hidden="true">◇</span>
-          <span>{{ t('pet.chat.plan.empty') }}</span>
-          <small>{{ t('pet.chat.plan.emptyHint') }}</small>
-        </div>
-        <div v-else class="pet-chat__plans">
-          <article v-for="plan in plans" :key="plan.planId" class="pet-chat__plan-item">
-            <header>
-              <div>
-                <strong>{{ plan.title || t('pet.chat.plan.defaultTitle') }}</strong>
-                <span class="pet-chat__plan-date">{{ formatPlanDate(plan.updatedAt) }}</span>
-              </div>
-              <span class="pet-chat__plan-status" :class="{ 'is-cancelled': isPlanCancelled(plan.planId) }">
-                {{ isPlanCancelled(plan.planId) ? t('pet.chat.plan.cancelled') : t('pet.chat.plan.queued') }}
-              </span>
-            </header>
-            <ul>
-              <li v-for="(step, index) in plan.script.steps" :key="plan.planId + '-' + index">
-                {{ formatPlanStep(step) }}
-              </li>
-            </ul>
-            <button
-              type="button"
-              class="pet-chat__plan-cancel"
-              :disabled="Boolean(planBusyId) || isPlanCancelled(plan.planId)"
-              @click="cancelPetPlan(plan)"
-            >
-              {{ planBusyId === plan.planId ? t('pet.chat.plan.cancelling') : t('pet.chat.plan.cancel') }}
-            </button>
-          </article>
-        </div>
-        <p v-if="planNotice" class="pet-chat__plan-notice" aria-live="polite">{{ planNotice }}</p>
-      </div>
-    </template>
-
-    <template v-else>
-      <div ref="messageListRef" class="pet-chat__messages" role="log" aria-live="polite" :aria-label="t('pet.chat.aria.messages')">
-        <div v-if="messages.length === 0" class="pet-chat__empty-state">
-          <span class="pet-chat__empty-glyph" aria-hidden="true">◌</span>
-          <span>{{ t('pet.chat.empty') }}</span>
-          <small>{{ t('pet.chat.emptyHint') }}</small>
-        </div>
-        <article
-          v-for="message in messages"
-          :key="message.id"
-          class="pet-chat__message"
-          :class="['is-' + message.role, 'is-' + message.status]"
-        >
-          <div class="pet-chat__message-meta">
-            <span>{{ message.role === 'user' ? t('pet.chat.you') : petName }}</span>
-            <time :datetime="new Date(message.createdAt).toISOString()">{{ formatMessageTime(message.createdAt) }}</time>
-          </div>
-          <div v-if="message.images.length > 0" class="pet-chat__message-images">
-            <img
-              v-for="image in message.images"
-              :key="image.id"
-              :src="image.previewUrl"
-              class="pet-chat__message-image"
-              :alt="message.role === 'user' ? t('pet.chat.attachments.sentImageAlt') : t('pet.chat.attachments.imageAlt')"
-            />
-          </div>
-          <p>{{ message.content }}</p>
-          <span v-if="message.status === 'streaming'" class="pet-chat__typing" :aria-label="t('pet.chat.message.generating')">...</span>
-          <span v-else-if="message.status === 'error'" class="pet-chat__message-state">{{ t('pet.chat.message.incomplete') }}</span>
-          <span v-else-if="message.status === 'cancelled'" class="pet-chat__message-state">{{ t('pet.chat.message.cancelledShort') }}</span>
-        </article>
-      </div>
-
-      <div class="pet-chat__status" :class="'is-' + statusTone" aria-live="polite">
-        <span class="pet-chat__status-dot" aria-hidden="true"></span>
-        <span>{{ statusText }}</span>
+      <div class="pet-chat__composer-row">
         <button
-          v-if="phase === 'error' && (lastFailedText || lastFailedImages.length > 0) && chatAvailability.ready"
           type="button"
-          class="pet-chat__retry"
-          @click="retryLastMessage"
+          class="pet-chat__attach"
+          :disabled="isComposerBusy || pendingImages.length >= PET_CHAT_MAX_IMAGES"
+          :aria-label="t('pet.chat.attachments.addImage')"
+          :title="t('pet.chat.attachments.addImage')"
+          @click="openImagePicker"
         >
-          {{ t('pet.common.retry') }}
+          <ImagePlus class="pet-chat__control-icon" :size="15" :stroke-width="1.8" aria-hidden="true" />
         </button>
-      </div>
-
-      <form class="pet-chat__composer" @submit.prevent="sendMessage()">
-        <input
-          ref="imageInputRef"
-          class="pet-chat__file-input"
-          type="file"
-          accept="image/png,image/jpeg,image/gif,image/webp"
-          multiple
-          :aria-label="t('pet.chat.attachments.selectImage')"
-          @change="handleImageSelection"
-        />
-        <div v-if="pendingImages.length > 0" class="pet-chat__attachment-strip" :aria-label="t('pet.chat.attachments.pendingImages')">
-          <div v-for="image in pendingImages" :key="image.id" class="pet-chat__attachment">
-            <img :src="image.previewUrl" :alt="t('pet.chat.attachments.pendingImageAlt')" />
-            <button
-              type="button"
-              class="pet-chat__attachment-remove"
-           :disabled="isComposerBusy"
-              :aria-label="t('pet.chat.attachments.removeImage', { id: image.id })"
-              :title="t('pet.chat.attachments.removeImageTitle')"
-              @click="removePendingImage(image.id)"
-            >
-              ×
-            </button>
-          </div>
-        </div>
+        <button
+          type="button"
+          class="pet-chat__voice"
+          :class="{ 'is-recording': isRecording }"
+          :disabled="isBusy || isStartingRecording || isStoppingRecording || isTranscribing || !chatAvailability.ready"
+          :aria-label="isRecording ? t('pet.chat.voice.stop') : t('pet.chat.voice.input')"
+          :title="isRecording ? t('pet.chat.voice.stop') : t('pet.chat.voice.input')"
+          @click="toggleVoiceInput"
+        >
+          <Loader2 v-if="isStartingRecording || isTranscribing" class="pet-chat__control-icon is-spinning" :size="15" :stroke-width="1.8" aria-hidden="true" />
+          <Square v-else-if="isRecording" class="pet-chat__control-icon is-pulsing" :size="14" :stroke-width="1.8" aria-hidden="true" />
+          <Mic v-else class="pet-chat__control-icon" :size="15" :stroke-width="1.8" aria-hidden="true" />
+        </button>
         <textarea
           v-model="inputText"
-          rows="2"
+          rows="1"
           maxlength="16000"
-           :disabled="isComposerBusy"
+          :disabled="isComposerBusy"
           :placeholder="t('pet.chat.composer.placeholder')"
           :aria-label="t('pet.chat.aria.input')"
           @keydown="handleInputKeydown"
         ></textarea>
-        <div class="pet-chat__composer-actions">
-          <button
-            type="button"
-            class="pet-chat__voice"
-            :class="{ 'is-recording': isRecording }"
-            :disabled="isBusy || isStartingRecording || isStoppingRecording || isTranscribing || !chatAvailability.ready"
-            :aria-label="isRecording ? t('pet.chat.voice.stop') : t('pet.chat.voice.input')"
-            :title="isRecording ? t('pet.chat.voice.stop') : t('pet.chat.voice.input')"
-            @click="toggleVoiceInput"
-          >
-            {{ isStartingRecording ? t('pet.chat.voice.startingShort') : isTranscribing ? t('pet.chat.voice.transcribingShort') : isRecording ? t('pet.chat.voice.stopShort') : t('pet.chat.voice.inputShort') }}
-          </button>
-          <button
-            type="button"
-            class="pet-chat__attach"
-            :disabled="isComposerBusy || pendingImages.length >= PET_CHAT_MAX_IMAGES"
-            :aria-label="t('pet.chat.attachments.addImage')"
-            :title="t('pet.chat.attachments.addImage')"
-            @click="openImagePicker"
-          >
-            {{ t('pet.chat.attachments.imageButton') }}
-          </button>
-          <button
-            v-if="isBusy"
-            type="button"
-            class="pet-chat__send pet-chat__send--cancel"
-            :disabled="phase === 'cancelling'"
-            @click="cancelMessage"
-          >
-            {{ phase === 'cancelling' ? t('pet.chat.composer.stopping') : t('pet.chat.composer.stop') }}
-          </button>
-          <button v-else type="submit" class="pet-chat__send" :disabled="!canSend || isComposerBusy">
-            {{ t('pet.chat.composer.send') }}
-          </button>
-        </div>
-      </form>
-    </template>
+        <button
+          v-if="isBusy"
+          type="button"
+          class="pet-chat__send pet-chat__send--cancel"
+          :disabled="phase === 'cancelling'"
+          @click="cancelMessage"
+        >
+          <Loader2 v-if="phase === 'cancelling'" class="pet-chat__control-icon is-spinning" :size="15" :stroke-width="1.8" aria-hidden="true" />
+          <Square v-else class="pet-chat__control-icon" :size="14" :stroke-width="1.8" aria-hidden="true" />
+        </button>
+        <button v-else type="submit" class="pet-chat__send" :disabled="!canSend || isComposerBusy">
+          <SendHorizontal class="pet-chat__control-icon" :size="15" :stroke-width="1.8" aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          class="pet-chat__close"
+          :aria-label="t('update.close')"
+          :title="t('update.close')"
+          @click="emit('close')"
+        >
+          <X class="pet-chat__control-icon" :size="15" :stroke-width="1.8" aria-hidden="true" />
+        </button>
+      </div>
+    </form>
   </section>
 </template>
 
@@ -1506,217 +1389,31 @@ onBeforeUnmount(() => {
   --pet-chat-muted: var(--pet-muted, var(--mac-text-secondary, #6e6e73));
   --pet-chat-line: var(--pet-line, var(--mac-border, rgba(15, 23, 42, 0.12)));
   --pet-chat-surface: var(--pet-surface, rgba(255, 255, 255, 0.78));
-  display: flex;
+  display: block;
   width: 100%;
-  max-width: 100%;
+  max-width: 292px;
   min-width: 0;
-  min-height: 0;
-  flex-direction: column;
-  overflow: hidden;
   box-sizing: border-box;
+  overflow: hidden;
   border: 1px solid var(--pet-chat-line);
-  border-radius: 14px;
-  background: var(--pet-chat-surface);
+  border-radius: 12px;
+  background: var(--mac-surface, #ffffff);
   color: var(--pet-chat-ink);
   box-shadow: 0 8px 22px color-mix(in srgb, #243247 10%, transparent);
-  backdrop-filter: blur(14px);
   font-family: var(--mac-font, system-ui, sans-serif);
 }
 
-.pet-chat__header,
-.pet-chat__heading,
-.pet-chat__tabs,
-.pet-chat__status,
-.pet-chat__message-meta,
-.pet-chat__dream-detail-header {
-  display: flex;
-  align-items: center;
-}
-
-.pet-chat__header {
-  justify-content: space-between;
-  gap: 8px;
-  min-width: 0;
-  padding: 9px 10px 8px;
-  border-bottom: 1px solid var(--pet-chat-line);
-}
-
-.pet-chat__heading {
-  min-width: 0;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 1px;
-}
-
-.pet-chat__heading strong {
-  max-width: 150px;
-  overflow: hidden;
-  color: var(--pet-chat-ink);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.pet-chat__eyebrow,
-.pet-chat__dream-date,
-.pet-chat__message-meta,
-.pet-chat__status,
-.pet-chat__empty-state small,
-.pet-chat__message-state {
-  color: var(--pet-chat-muted);
-  font-size: 10px;
-}
-
-.pet-chat__tabs {
-  flex: 0 0 auto;
-  gap: 3px;
-  padding: 2px;
-  border: 1px solid var(--pet-chat-line);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--pet-chat-muted) 7%, transparent);
-}
-
-.pet-chat__tab,
-.pet-chat__send,
-.pet-chat__retry {
-  border: 0;
-  cursor: pointer;
-  font: inherit;
-}
-
-.pet-chat__tab {
-  min-height: 26px;
-  padding: 3px 8px;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--pet-chat-muted);
-  font-size: 10px;
-  transition: background 0.18s ease, color 0.18s ease;
-}
-
-.pet-chat__tab.is-active {
-  background: var(--pet-chat-surface);
-  color: var(--pet-chat-ink);
-  box-shadow: 0 1px 4px color-mix(in srgb, #243247 12%, transparent);
-}
-
-.pet-chat__count {
-  display: inline-flex;
-  min-width: 15px;
-  height: 15px;
-  align-items: center;
-  justify-content: center;
-  margin-left: 2px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--mac-accent, #0a84ff) 12%, transparent);
-  color: var(--mac-accent, #0a84ff);
-  font-size: 9px;
-  line-height: 1;
-}
-
-.pet-chat__messages {
-  display: flex;
-  min-height: 112px;
-  max-height: 220px;
-  flex-direction: column;
-  gap: 8px;
-  overflow-x: hidden;
-  overflow-y: auto;
-  padding: 9px;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-}
-
-.pet-chat__empty-state {
-  display: flex;
-  min-height: 96px;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  color: var(--pet-chat-muted);
-  font-size: 11px;
-  text-align: center;
-}
-
-.pet-chat__empty-state small {
-  max-width: 220px;
-  line-height: 15px;
-}
-
-.pet-chat__empty-glyph {
-  color: color-mix(in srgb, var(--mac-accent, #0a84ff) 68%, var(--pet-chat-muted));
-  font-size: 22px;
-  line-height: 1;
-}
-
-.pet-chat__message {
-  width: min(88%, 270px);
-  min-width: 0;
-  box-sizing: border-box;
-  padding: 7px 9px;
-  border: 1px solid var(--pet-chat-line);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--mac-surface, #fff) 42%, transparent);
-}
-
-.pet-chat__message.is-user {
-  align-self: flex-end;
-  border-color: color-mix(in srgb, var(--mac-accent, #0a84ff) 22%, var(--pet-chat-line));
-  background: color-mix(in srgb, var(--mac-accent, #0a84ff) 9%, transparent);
-}
-
-.pet-chat__message.is-assistant {
-  align-self: flex-start;
-}
-
-.pet-chat__message.is-error {
-  border-color: color-mix(in srgb, #bd4f4f 34%, var(--pet-chat-line));
-}
-
-.pet-chat__message-meta {
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 3px;
-}
-
-.pet-chat__message p,
-.pet-chat__dream-body p {
-  margin: 0;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
-
-.pet-chat__message p {
-  color: var(--pet-chat-ink);
-  font-size: 11px;
-  line-height: 17px;
-}
-
-.pet-chat__typing {
-  display: inline-block;
-  color: var(--mac-accent, #0a84ff);
-  font-size: 12px;
-  letter-spacing: 1px;
-  animation: pet-chat-blink 1s steps(2, end) infinite;
-}
-
-.pet-chat__message-state {
-  display: block;
-  margin-top: 4px;
-  color: #bd4f4f;
-}
-
-.pet-chat__message.is-cancelled .pet-chat__message-state {
-  color: var(--pet-chat-muted);
-}
-
 .pet-chat__status {
-  gap: 5px;
+  display: flex;
   min-width: 0;
-  min-height: 28px;
-  padding: 0 9px;
-  border-top: 1px solid var(--pet-chat-line);
+  min-height: 26px;
+  align-items: center;
+  gap: 5px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--pet-chat-line);
+  color: var(--pet-chat-muted);
+  font-size: 10px;
   line-height: 15px;
 }
 
@@ -1730,7 +1427,7 @@ onBeforeUnmount(() => {
 .pet-chat__status-dot {
   width: 6px;
   height: 6px;
-  flex: 0 0 auto;
+  flex: 0 0 6px;
   border-radius: 50%;
   background: var(--pet-chat-muted);
 }
@@ -1756,20 +1453,37 @@ onBeforeUnmount(() => {
 .pet-chat__retry {
   flex: 0 0 auto;
   margin-left: auto;
-  padding: 3px 7px;
+  border: 0;
   border-radius: 6px;
+  padding: 3px 7px;
   background: color-mix(in srgb, #bd4f4f 12%, transparent);
   color: #bd4f4f;
+  cursor: pointer;
+  font: inherit;
   font-size: 10px;
 }
 
+.pet-chat__retry:disabled {
+  cursor: wait;
+  opacity: 0.45;
+}
+
 .pet-chat__composer {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
+  width: 100%;
   min-width: 0;
-  align-items: flex-end;
+  flex-direction: column;
+  box-sizing: border-box;
   gap: 6px;
-  padding: 8px;
+  padding: 10px;
+}
+
+.pet-chat__composer-row {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
 }
 
 .pet-chat__file-input {
@@ -1781,36 +1495,31 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.pet-chat__attachment-strip,
-.pet-chat__message-images {
+.pet-chat__attachment-strip {
   display: flex;
+  width: 100%;
   min-width: 0;
+  max-width: 100%;
   gap: 6px;
   overflow-x: auto;
+  padding: 0 0 1px;
+  scrollbar-width: thin;
 }
 
-.pet-chat__attachment-strip {
-  grid-column: 1 / -1;
-  padding: 2px 0;
-}
-
-.pet-chat__attachment,
-.pet-chat__message-image {
+.pet-chat__attachment {
   position: relative;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
   overflow: hidden;
+  box-sizing: border-box;
   border: 1px solid var(--pet-chat-line);
   border-radius: 7px;
   background: color-mix(in srgb, var(--pet-chat-muted) 8%, transparent);
 }
 
-.pet-chat__attachment {
-  width: 42px;
-  height: 42px;
-  flex: 0 0 auto;
-}
-
-.pet-chat__attachment img,
-.pet-chat__message-image {
+.pet-chat__attachment img {
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -1826,9 +1535,12 @@ onBeforeUnmount(() => {
   place-items: center;
   border: 0;
   border-radius: 50%;
+  margin: 0;
+  padding: 0;
   background: rgba(0, 0, 0, 0.66);
   color: #fff;
   cursor: pointer;
+  font: inherit;
   font-size: 12px;
   line-height: 1;
 }
@@ -1838,33 +1550,39 @@ onBeforeUnmount(() => {
   opacity: 0.5;
 }
 
-.pet-chat__message-images {
-  margin: 0 0 5px;
-}
-
-.pet-chat__message-image {
-  width: 76px;
-  height: 76px;
-  flex: 0 0 auto;
-}
-
-.pet-chat__composer-actions {
-  display: flex;
-  align-items: stretch;
-  gap: 6px;
-}
-
+/* Wails 模板的 public/style.css 给所有 button 注入左侧外边距；桌宠 composer 必须在本地恢复固定控件的盒模型。 */
 .pet-chat__voice,
-.pet-chat__attach {
-  min-height: 38px;
-  border: 1px solid var(--pet-chat-line);
+.pet-chat__attach,
+.pet-chat__send,
+.pet-chat__close {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 0;
+  flex: 0 0 32px;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
   border-radius: 8px;
-  padding: 6px 8px;
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  line-height: 1;
+}
+
+.pet-chat__attach {
+  border: 1px solid var(--pet-chat-line);
   background: transparent;
   color: var(--pet-chat-muted);
   cursor: pointer;
-  font: inherit;
-  font-size: 11px;
+}
+
+.pet-chat__voice {
+  border: 1px solid var(--pet-chat-line);
+  background: transparent;
+  color: var(--pet-chat-muted);
+  cursor: pointer;
 }
 
 .pet-chat__voice.is-recording {
@@ -1874,26 +1592,32 @@ onBeforeUnmount(() => {
 }
 
 .pet-chat__voice:hover:not(:disabled),
-.pet-chat__attach:hover:not(:disabled) {
+.pet-chat__attach:hover:not(:disabled),
+.pet-chat__close:hover,
+.pet-chat__close:focus-visible {
   border-color: color-mix(in srgb, var(--mac-accent, #0a84ff) 50%, var(--pet-chat-line));
   color: var(--pet-chat-ink);
 }
 
 .pet-chat__voice:disabled,
-.pet-chat__attach:disabled {
+.pet-chat__attach:disabled,
+.pet-chat__send:disabled {
   cursor: not-allowed;
   opacity: 0.42;
 }
 
 .pet-chat__composer textarea {
-  grid-column: 1;
   display: block;
-  width: 100%;
+  width: auto;
+  height: 32px;
+  flex: 1 1 auto;
   min-width: 0;
-  min-height: 38px;
-  max-height: 96px;
+  min-height: 32px;
+  max-height: 32px;
   box-sizing: border-box;
-  resize: vertical;
+  resize: none;
+  overflow-x: auto;
+  overflow-y: hidden;
   border: 1px solid var(--pet-chat-line);
   border-radius: 8px;
   padding: 7px 8px;
@@ -1905,7 +1629,7 @@ onBeforeUnmount(() => {
   font-size: 11px;
   line-height: 16px;
   user-select: text;
-  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+  white-space: nowrap;
 }
 
 .pet-chat__composer textarea::placeholder {
@@ -1914,7 +1638,6 @@ onBeforeUnmount(() => {
 
 .pet-chat__composer textarea:focus {
   border-color: color-mix(in srgb, var(--mac-accent, #0a84ff) 52%, var(--pet-chat-line));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mac-accent, #0a84ff) 13%, transparent);
 }
 
 .pet-chat__composer textarea:disabled {
@@ -1923,287 +1646,52 @@ onBeforeUnmount(() => {
 }
 
 .pet-chat__send {
-  min-width: 48px;
-  min-height: 38px;
-  flex: 0 0 auto;
-  border-radius: 8px;
-  padding: 6px 8px;
+  border: 0;
   background: var(--mac-accent, #0a84ff);
   color: #fff;
-  font-size: 11px;
+  cursor: pointer;
+  font-size: 0;
   transition: opacity 0.18s ease, transform 0.18s ease;
-}
-
-@media (max-width: 440px) {
-  .pet-chat__composer {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .pet-chat__composer textarea,
-  .pet-chat__composer-actions {
-    grid-column: 1;
-  }
-
-  .pet-chat__composer-actions {
-    justify-content: flex-end;
-  }
 }
 
 .pet-chat__send:hover:not(:disabled) {
   transform: translateY(-1px);
 }
 
-.pet-chat__send:disabled {
-  cursor: not-allowed;
-  opacity: 0.42;
-}
-
 .pet-chat__send--cancel {
   background: #bd4f4f;
 }
 
-.pet-chat__dream-layout {
-  display: grid;
-  min-width: 0;
-  max-height: 260px;
-  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
-  gap: 7px;
-  padding: 8px;
-}
-
-.pet-chat__dream-list,
-.pet-chat__dream-detail,
-.pet-chat__empty-detail {
-  min-width: 0;
-  max-height: 244px;
-  overflow-x: hidden;
-  overflow-y: auto;
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--mac-surface, #fff) 34%, transparent);
-  scrollbar-width: thin;
-}
-
-.pet-chat__dream-list {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  padding: 5px;
-}
-
-.pet-chat__dream-item {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  padding: 7px;
+.pet-chat__close {
+  border: 0;
   background: transparent;
   color: var(--pet-chat-muted);
   cursor: pointer;
-  font: inherit;
-  text-align: left;
 }
 
-.pet-chat__dream-item strong,
-.pet-chat__dream-item > span:last-child {
-  width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.pet-chat__dream-item strong {
+.pet-chat__close:hover,
+.pet-chat__close:focus-visible {
+  background: color-mix(in srgb, var(--pet-chat-muted) 10%, transparent);
   color: var(--pet-chat-ink);
-  font-size: 10px;
+  outline: none;
 }
 
-.pet-chat__dream-item > span:last-child {
-  font-size: 10px;
-}
-
-.pet-chat__dream-item:hover,
-.pet-chat__dream-item.is-selected {
-  border-color: color-mix(in srgb, var(--mac-accent, #0a84ff) 28%, var(--pet-chat-line));
-  background: color-mix(in srgb, var(--mac-accent, #0a84ff) 8%, transparent);
-}
-
-.pet-chat__dream-detail,
-.pet-chat__empty-detail {
-  padding: 10px;
-}
-
-.pet-chat__dream-detail-header {
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 6px;
-}
-
-.pet-chat__dream-detail h3 {
-  margin: 3px 0 0;
-  overflow-wrap: anywhere;
-  color: var(--pet-chat-ink);
-  font-size: 12px;
-  line-height: 16px;
-}
-
-.pet-chat__emotion {
+.pet-chat__control-icon {
   flex: 0 0 auto;
-  border-radius: 999px;
-  padding: 3px 6px;
-  background: color-mix(in srgb, #c87e9c 14%, transparent);
-  color: #a65b7c;
-  font-size: 9px;
 }
 
-.pet-chat__dream-body {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 12px;
-  color: var(--pet-chat-ink);
-  font-size: 11px;
-  line-height: 17px;
+.pet-chat__control-icon.is-spinning {
+  animation: pet-chat-spin 0.9s linear infinite;
 }
 
-.pet-chat__dream-body strong {
-  display: block;
-  margin-bottom: 2px;
-  color: var(--pet-chat-muted);
-  font-size: 10px;
-  font-weight: 600;
+.pet-chat__control-icon.is-pulsing {
+  animation: pet-chat-blink 1s steps(2, end) infinite;
 }
 
-.pet-chat__empty-detail {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--pet-chat-muted);
-  font-size: 10px;
-  text-align: center;
-}
-
-.pet-chat__plan-layout {
-  display: flex;
-  min-width: 0;
-  max-height: 260px;
-  flex-direction: column;
-  gap: 7px;
-  overflow: hidden;
-  padding: 8px;
-}
-
-.pet-chat__plan-header,
-.pet-chat__plan-item > header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.pet-chat__plan-header > div,
-.pet-chat__plan-item > header > div {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.pet-chat__plan-header strong,
-.pet-chat__plan-item strong {
-  overflow-wrap: anywhere;
-  color: var(--pet-chat-ink);
-  font-size: 11px;
-}
-
-.pet-chat__plan-header span,
-.pet-chat__plan-date {
-  color: var(--pet-chat-muted);
-  font-size: 9px;
-}
-
-.pet-chat__plan-state {
-  display: flex;
-  min-height: 90px;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  color: var(--pet-chat-muted);
-  font-size: 10px;
-  text-align: center;
-}
-
-.pet-chat__plan-state.is-error {
-  flex-direction: column;
-  color: #bd4f4f;
-}
-
-.pet-chat__plans {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 6px;
-  overflow-y: auto;
-  scrollbar-width: thin;
-}
-
-.pet-chat__plan-item {
-  min-width: 0;
-  padding: 8px;
-  border: 1px solid var(--pet-chat-line);
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--mac-surface, #fff) 34%, transparent);
-}
-
-.pet-chat__plan-status {
-  flex: 0 0 auto;
-  color: #327c52;
-  font-size: 9px;
-}
-
-.pet-chat__plan-status.is-cancelled {
-  color: var(--pet-chat-muted);
-}
-
-.pet-chat__plan-item ul {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  margin: 7px 0;
-  padding-left: 16px;
-  color: var(--pet-chat-ink);
-  font-size: 10px;
-  line-height: 15px;
-}
-
-.pet-chat__plan-item li {
-  overflow-wrap: anywhere;
-}
-
-.pet-chat__plan-cancel {
-  border: 0;
-  border-radius: 6px;
-  padding: 3px 7px;
-  background: color-mix(in srgb, #bd4f4f 12%, transparent);
-  color: #bd4f4f;
-  cursor: pointer;
-  font: inherit;
-  font-size: 10px;
-}
-
-.pet-chat__plan-cancel:disabled,
-.pet-chat__retry:disabled {
-  cursor: wait;
-  opacity: 0.45;
-}
-
-.pet-chat__plan-notice {
-  flex: 0 0 auto;
-  margin: 0;
-  color: var(--pet-chat-muted);
-  font-size: 10px;
-  line-height: 15px;
+@keyframes pet-chat-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @keyframes pet-chat-blink {
@@ -2212,41 +1700,13 @@ onBeforeUnmount(() => {
   }
 }
 
-@media (max-width: 340px) {
-  .pet-chat__header {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .pet-chat__tabs {
-    width: 100%;
-    box-sizing: border-box;
-  }
-
-  .pet-chat__tab {
-    width: 33.333%;
-  }
-
-  .pet-chat__dream-layout {
-    max-height: 360px;
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .pet-chat__dream-list,
-  .pet-chat__dream-detail,
-  .pet-chat__empty-detail {
-    max-height: 158px;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .pet-chat__typing {
+  .pet-chat__control-icon.is-spinning,
+  .pet-chat__control-icon.is-pulsing {
     animation: none;
   }
 
-  .pet-chat__tab,
-  .pet-chat__send,
-  .pet-chat__composer textarea {
+  .pet-chat__send {
     transition: none;
   }
 }

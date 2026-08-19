@@ -294,10 +294,15 @@ func normalizePetAIProviderProtocol(
 	configuredProtocol string,
 	apiEndpoint string,
 ) (string, string, error) {
+	platform = strings.ToLower(strings.TrimSpace(platform))
 	raw := strings.ToLower(strings.TrimSpace(configuredProtocol))
 	defaultProtocol := "openai"
 	if platform == "claude" {
 		defaultProtocol = "anthropic"
+	} else if platform == "codex" {
+		// Codex provider 的平台契约是 Responses API；只有显式配置 Chat
+		// 或 endpoint 已明确指向 Chat 时，才兼容旧的 OpenAI Chat 代理。
+		defaultProtocol = "responses"
 	}
 
 	var protocol string
@@ -307,15 +312,20 @@ func normalizePetAIProviderProtocol(
 	case "auto":
 		// auto 只根据当前 provider 的 endpoint 判断，判断失败时回到该 platform
 		// 的协议默认值，不会寻找另一个 provider 或修改当前 provider 配置。
-		if strings.Contains(strings.ToLower(strings.TrimSpace(apiEndpoint)), "/chat/completions") {
+		endpoint := strings.ToLower(strings.TrimSpace(apiEndpoint))
+		if strings.Contains(endpoint, "/chat/completions") {
 			protocol = "openai"
-		} else if strings.Contains(strings.ToLower(strings.TrimSpace(apiEndpoint)), "/messages") {
+		} else if strings.Contains(endpoint, "/messages") {
 			protocol = "anthropic"
+		} else if strings.Contains(endpoint, "/responses") {
+			protocol = "responses"
 		} else {
 			protocol = defaultProtocol
 		}
 	case "openai", "openai-chat", "openai_chat", "openai-compatible", "openai_compatible":
 		protocol = "openai"
+	case "responses", "openai-responses", "openai_responses", "codex":
+		protocol = "responses"
 	case "anthropic", "anthropic-messages", "messages":
 		protocol = "anthropic"
 	default:

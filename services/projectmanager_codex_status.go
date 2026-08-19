@@ -23,19 +23,19 @@ const (
 )
 
 type projectManagerCodexStatusService struct {
-	mu       sync.RWMutex
-	sessions map[string]*CodexSessionRuntimeStatus
-	monitor  CodexStatusMonitorInfo
-	app      *application.App
-	stop     chan struct{}
-	started  bool
-	stopped  bool
+	mu           sync.RWMutex
+	transitionMu sync.Mutex
+	sessions     map[string]*CodexSessionRuntimeStatus
+	monitor      CodexStatusMonitorInfo
+	app          *application.App
+	stop         chan struct{}
+	running      bool
+	stopped      bool
 }
 
 func newProjectManagerCodexStatusService() *projectManagerCodexStatusService {
 	return &projectManagerCodexStatusService{
 		sessions: make(map[string]*CodexSessionRuntimeStatus),
-		stop:     make(chan struct{}),
 	}
 }
 
@@ -48,11 +48,19 @@ func (s *ProjectManagerService) SetApp(app *application.App) {
 	s.codexStatus.mu.Unlock()
 }
 
-func (s *ProjectManagerService) StartCodexStatusMonitor() {
+func (s *ProjectManagerService) StartCodexStatusMonitor(enabled bool) {
 	if s == nil || s.codexStatus == nil {
 		return
 	}
-	s.codexStatus.start()
+	s.codexStatus.start(enabled)
+}
+
+// ApplyCodexHookEnabled 由 AppSettingsService 调用，负责把设置变更立即映射到 Hook 文件和监控线程。
+func (s *ProjectManagerService) ApplyCodexHookEnabled(enabled bool) error {
+	if s == nil || s.codexStatus == nil {
+		return fmt.Errorf("Codex Hook 状态服务未初始化")
+	}
+	return s.codexStatus.applyEnabled(enabled)
 }
 
 func (s *ProjectManagerService) StopCodexStatusMonitor() {
@@ -69,51 +77,178 @@ func (s *ProjectManagerService) GetCodexRuntimeStatusSnapshot() CodexRuntimeStat
 	return s.codexStatus.snapshot()
 }
 
-func (s *projectManagerCodexStatusService) start() {
-	s.mu.Lock()
-	if s.started || s.stopped {
-		s.mu.Unlock()
+func (s *projectManagerCodexStatusService) start(enabled bool) {
+	s.transitionMu.Lock()
+	defer s.transitionMu.Unlock()
+
+	s.mu.RLock()
+	if s.stopped || s.running {
+		s.mu.RUnlock()
 		return
 	}
-	s.started = true
-	s.mu.Unlock()
+	s.mu.RUnlock()
+	if !enabled {
+		if err := s.disableLocked(); err != nil {
+			// 配置损坏时保留原文件并让状态灯明确显示不可用，不能因为清理失败阻断 GUI 启动。
+			s.markDisabled(CodexStatusMonitorInfo{Error: err.Error()})
+			log.Printf("[ProjectManager] 启动时清理 Codex 状态 Hook 失败: %v", err)
+		}
+		return
+	}
 
 	if err := s.loadState(); err != nil && !os.IsNotExist(err) {
 		log.Printf("[ProjectManager] 加载 Codex 状态缓存失败: %v", err)
 	}
-	go s.run()
-	go func() {
-		info, err := installProjectManagerCodexHooks()
-		if err != nil {
-			info.Error = err.Error()
-		}
-		s.mu.Lock()
-		s.monitor = info
-		for _, status := range s.sessions {
-			status.AgentSupported = info.AgentHooksSupported
-		}
+	s.mu.Lock()
+	if s.stopped {
 		s.mu.Unlock()
-		s.persistAndEmit()
-		if err != nil {
-			log.Printf("[ProjectManager] 自动安装 Codex 状态 Hook 失败: %v", err)
-			return
-		}
-		log.Printf("[ProjectManager] Codex 状态 Hook 已就绪 version=%q agent_hooks=%t", info.CodexVersion, info.AgentHooksSupported)
-	}()
+		return
+	}
+	s.running = true
+	s.stop = make(chan struct{})
+	stop := s.stop
+	s.mu.Unlock()
+
+	go s.run(stop)
+	// 启动阶段保留异步安装，避免 Codex 版本探测或信任握手阻塞 GUI 首屏。
+	go s.installHooksAsync()
 }
 
 func (s *projectManagerCodexStatusService) shutdown() {
+	s.transitionMu.Lock()
+	defer s.transitionMu.Unlock()
+
 	s.mu.Lock()
 	if s.stopped {
 		s.mu.Unlock()
 		return
 	}
 	s.stopped = true
-	close(s.stop)
+	s.running = false
+	stop := s.stop
+	s.stop = nil
 	s.mu.Unlock()
+	if stop != nil {
+		close(stop)
+	}
 }
 
-func (s *projectManagerCodexStatusService) run() {
+func (s *projectManagerCodexStatusService) applyEnabled(enabled bool) error {
+	s.transitionMu.Lock()
+	defer s.transitionMu.Unlock()
+
+	s.mu.RLock()
+	if s.stopped {
+		s.mu.RUnlock()
+		return fmt.Errorf("Codex Hook 状态服务已关闭")
+	}
+	running := s.running
+	s.mu.RUnlock()
+	if enabled {
+		if running {
+			return nil
+		}
+		return s.enableLocked()
+	}
+	return s.disableLocked()
+}
+
+func (s *projectManagerCodexStatusService) enableLocked() error {
+	info, err := installProjectManagerCodexHooks()
+	if err != nil {
+		return err
+	}
+	if err := s.loadState(); err != nil && !os.IsNotExist(err) {
+		log.Printf("[ProjectManager] 重新启用时加载 Codex 状态缓存失败: %v", err)
+	}
+
+	s.mu.Lock()
+	if s.stopped {
+		s.mu.Unlock()
+		return fmt.Errorf("Codex Hook 状态服务已关闭")
+	}
+	s.monitor = info
+	for _, status := range s.sessions {
+		status.AgentSupported = info.AgentHooksSupported
+	}
+	s.running = true
+	s.stop = make(chan struct{})
+	stop := s.stop
+	s.mu.Unlock()
+
+	go s.run(stop)
+	s.persistAndEmit()
+	log.Printf("[ProjectManager] Codex 状态 Hook 已就绪 version=%q agent_hooks=%t", info.CodexVersion, info.AgentHooksSupported)
+	return nil
+}
+
+func (s *projectManagerCodexStatusService) disableLocked() error {
+	info, err := uninstallProjectManagerCodexHooks()
+	if err != nil {
+		return err
+	}
+	s.markDisabled(info)
+	return nil
+}
+
+func (s *projectManagerCodexStatusService) installHooksAsync() {
+	s.transitionMu.Lock()
+	defer s.transitionMu.Unlock()
+
+	s.mu.RLock()
+	if s.stopped || !s.running {
+		s.mu.RUnlock()
+		return
+	}
+	s.mu.RUnlock()
+
+	info, err := installProjectManagerCodexHooks()
+	if err != nil {
+		info.Error = err.Error()
+	}
+	s.mu.Lock()
+	if s.stopped || !s.running {
+		s.mu.Unlock()
+		return
+	}
+	s.monitor = info
+	for _, status := range s.sessions {
+		status.AgentSupported = info.AgentHooksSupported
+	}
+	s.mu.Unlock()
+	s.persistAndEmit()
+	if err != nil {
+		log.Printf("[ProjectManager] 自动安装 Codex 状态 Hook 失败: %v", err)
+		return
+	}
+	log.Printf("[ProjectManager] Codex 状态 Hook 已就绪 version=%q agent_hooks=%t", info.CodexVersion, info.AgentHooksSupported)
+}
+
+func (s *projectManagerCodexStatusService) markDisabled(info CodexStatusMonitorInfo) {
+	s.mu.Lock()
+	stop := s.stop
+	s.stop = nil
+	s.running = false
+	// 关闭时不清理用户的 Codex 配置，只把运行态标记为不可监控。
+	info.Installed = false
+	info.AgentHooksSupported = false
+	s.monitor = info
+	for _, status := range s.sessions {
+		status.Monitored = false
+		status.AgentSupported = false
+		status.State = CodexRuntimeNotLoaded
+		status.TurnStatus = ""
+		status.ActiveAgents = 0
+		status.activeAgentIDs = make(map[string]struct{})
+	}
+	s.mu.Unlock()
+	if stop != nil {
+		close(stop)
+	}
+	s.persistAndEmit()
+}
+
+func (s *projectManagerCodexStatusService) run(stop <-chan struct{}) {
 	eventTicker := time.NewTicker(projectManagerCodexEventPoll)
 	processTicker := time.NewTicker(projectManagerCodexProcessPoll)
 	defer eventTicker.Stop()
@@ -129,7 +264,7 @@ func (s *projectManagerCodexStatusService) run() {
 			if s.reconcileProcessesAndTranscripts() {
 				s.persistAndEmit()
 			}
-		case <-s.stop:
+		case <-stop:
 			return
 		}
 	}

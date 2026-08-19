@@ -15,7 +15,10 @@
     <section class="logs-summary" v-if="statsCards.length">
       <article v-for="card in statsCards" :key="card.key" class="summary-card">
         <div class="summary-card__label">{{ card.label }}</div>
-        <div class="summary-card__value">{{ card.value }}</div>
+        <div class="summary-card__value">
+          {{ card.value }}
+          <span v-if="card.subValue" class="summary-card__sub-value">({{ card.subValue }})</span>
+        </div>
         <div class="summary-card__hint">{{ card.hint }}</div>
       </article>
     </section>
@@ -473,6 +476,23 @@ const formatNumber = (value?: number) => {
   return value.toLocaleString()
 }
 
+// 汇总卡使用紧凑单位，避免大 Token 数值挤压卡片；明细表仍保留完整数字便于核对。
+const formatTokenNumber = (value?: number) => {
+  if (value === undefined || value === null) return '—'
+  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(2)}B`
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`
+  if (value >= 1_000) return `${(value / 1_000).toFixed(2)}k`
+  return value.toLocaleString()
+}
+
+// 缓存命中分母由后端按协议逐请求归一化；前端只负责显示，避免再次猜测 input 口径。
+const formatCacheHitRate = (cacheRead?: number, denominatorTokens?: number) => {
+  const read = Math.max(cacheRead ?? 0, 0)
+  const denominator = Math.max(denominatorTokens ?? 0, read)
+  if (denominator <= 0) return '0%'
+  return `${Math.min((read / denominator) * 100, 100).toFixed(1)}%`
+}
+
 const formatCurrency = (value?: number) => {
   if (value === undefined || value === null || Number.isNaN(value)) {
     return '$0.0000'
@@ -495,32 +515,36 @@ const startOfTodayLocal = () => {
 const statsCards = computed(() => {
   const data = stats.value
   const summaryDate = summaryDateLabel.value
-  const totalTokens =
-    (data?.input_tokens ?? 0) + (data?.output_tokens ?? 0) + (data?.reasoning_tokens ?? 0)
+  // reasoning_tokens 是部分供应商 output_tokens 的细分字段，不能再加一次。
+  const totalTokens = (data?.input_tokens ?? 0) + (data?.output_tokens ?? 0)
   return [
     {
       key: 'requests',
       label: t('components.logs.summary.total'),
       hint: t('components.logs.summary.requests'),
       value: data ? formatNumber(data.total_requests) : '—',
+      subValue: '',
     },
     {
       key: 'tokens',
       label: t('components.logs.summary.tokens'),
       hint: t('components.logs.summary.tokenHint'),
-      value: data ? formatNumber(totalTokens) : '—',
+      value: data ? formatTokenNumber(totalTokens) : '—',
+      subValue: '',
     },
     {
       key: 'cacheReads',
       label: t('components.logs.summary.cache'),
       hint: t('components.logs.summary.cacheHint'),
-      value: data ? formatNumber(data.cache_read_tokens) : '—',
+      value: data ? formatTokenNumber(data.cache_read_tokens) : '—',
+      subValue: data ? formatCacheHitRate(data.cache_read_tokens, data.cache_hit_denominator_tokens) : '',
     },
     {
       key: 'cost',
       label: t('components.logs.tokenLabels.cost'),
       hint: summaryDate ? t('components.logs.summary.todayScope', { date: summaryDate }) : '',
       value: formatCurrency(data?.cost_total ?? 0),
+      subValue: '',
     },
   ]
 })
@@ -603,6 +627,12 @@ onUnmounted(() => {
   color: #0f172a;
 }
 
+.summary-card__sub-value {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: #64748b;
+}
+
 .summary-card__hint {
   font-size: 0.85rem;
   color: #94a3b8;
@@ -619,6 +649,10 @@ html.dark .summary-card__label {
 
 html.dark .summary-card__value {
   color: rgba(248, 250, 252, 0.95);
+}
+
+html.dark .summary-card__sub-value {
+  color: rgba(186, 194, 210, 0.8);
 }
 
 html.dark .summary-card__hint {

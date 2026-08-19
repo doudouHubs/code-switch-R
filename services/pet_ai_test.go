@@ -7,6 +7,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -19,6 +21,12 @@ import (
 type petAITestProviderReader struct {
 	config PetAIProviderConfig
 	err    error
+}
+
+type PetAIProviderReaderFunc func(context.Context, PetProviderReference) (PetAIProviderConfig, error)
+
+func (f PetAIProviderReaderFunc) Read(ctx context.Context, reference PetProviderReference) (PetAIProviderConfig, error) {
+	return f(ctx, reference)
 }
 
 func (r *petAITestProviderReader) Read(ctx context.Context, _ PetProviderReference) (PetAIProviderConfig, error) {
@@ -189,6 +197,119 @@ func TestPetAIStartChatOpenAICompatibleSSEEmitsSafeLifecycle(t *testing.T) {
 	}
 }
 
+func TestPetAIStartChatResponsesSSEUsesResponsesContract(t *testing.T) {
+	reader := &petAITestProviderReader{config: petAITestConfig("codex", "responses", "gpt-5.6-luna")}
+	emitter := &petAITestEmitter{}
+	transport := petAITestRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Path != "/v1/responses" {
+			t.Fatalf("Responses path = %q", request.URL.Path)
+		}
+		if got := request.Header.Get("Authorization"); got != "Bearer pet-secret-key" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		var payload struct {
+			Model  string           `json:"model"`
+			Input  []map[string]any `json:"input"`
+			Stream bool             `json:"stream"`
+		}
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatalf("读取 Responses body: %v", err)
+		}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatalf("解析 Responses body: %v", err)
+		}
+		if payload.Model != "gpt-5.6-luna" || !payload.Stream || len(payload.Input) != 4 {
+			t.Fatalf("Responses body = %#v", payload)
+		}
+		if payload.Input[0]["role"] != "system" || payload.Input[1]["role"] != "user" || payload.Input[3]["role"] != "user" {
+			t.Fatalf("Responses input roles = %#v", payload.Input)
+		}
+		return petAITestResponse(http.StatusOK, "text/event-stream", "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"你好\"}\n\n"+
+			"event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"，Codex。\"}\n\n"+
+			"event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":18,\"output_tokens\":6,\"input_tokens_details\":{\"cached_tokens\":2},\"output_tokens_details\":{\"reasoning_tokens\":1}}}}\n\n"), nil
+	})
+	service := NewPetAIService(reader, transport, emitter)
+	_, err := service.StartChat(context.Background(), PetChatRequest{
+		PetID:     "pet-codex",
+		RequestID: "chat-responses-1",
+		Provider:  petAITestReference("codex", "pet-provider", "gpt-5.6-luna", PetCapabilityChat),
+		Persona:   "你是一个安静的桌宠",
+		UserText:  "今天好吗",
+		History:   []PetAIMessage{{Role: "user", Content: "旧消息"}, {Role: "assistant", Content: "我在"}},
+	})
+	if err != nil {
+		t.Fatalf("StartChat() error = %v", err)
+	}
+	completed := emitter.waitFor(t, PetAIEventCompleted)
+	if completed.Text != "你好，Codex。" {
+		t.Fatalf("completed text = %q", completed.Text)
+	}
+	usage := emitter.waitFor(t, PetAIEventUsage)
+	if usage.Usage == nil || usage.Usage.InputTokens != 18 || usage.Usage.OutputTokens != 6 || usage.Usage.CacheReadTokens != 2 || usage.Usage.ReasoningTokens != 1 {
+		t.Fatalf("Responses usage = %#v", usage.Usage)
+	}
+}
+
+func TestPetAIResponsesToolContinuationUsesFunctionCallOutput(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("宠物项目\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reader := &petAITestProviderReader{config: petAITestConfig("codex", "responses", "gpt-5.6-luna")}
+	emitter := &petAITestEmitter{}
+	callCount := 0
+	transport := petAITestRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		callCount++
+		if request.URL.Path != "/v1/responses" {
+			t.Fatalf("Responses tool path = %q", request.URL.Path)
+		}
+		var payload struct {
+			Input  []map[string]any `json:"input"`
+			Tools  []map[string]any `json:"tools"`
+			Stream bool             `json:"stream"`
+		}
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatalf("读取 Responses tool body: %v", err)
+		}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatalf("解析 Responses tool body: %v", err)
+		}
+		if payload.Stream || len(payload.Tools) != 4 {
+			t.Fatalf("Responses tool options = %#v", payload)
+		}
+		if callCount == 1 {
+			return petAITestResponse(http.StatusOK, "application/json", `{"output":[{"type":"function_call","call_id":"call-read-1","name":"Read","arguments":"{\"file_path\":\"README.md\"}"}]}`), nil
+		}
+		if callCount != 2 || len(payload.Input) < 3 || payload.Input[len(payload.Input)-2]["type"] != "function_call" || payload.Input[len(payload.Input)-1]["type"] != "function_call_output" || payload.Input[len(payload.Input)-1]["call_id"] != "call-read-1" {
+			t.Fatalf("Responses continuation input = %#v", payload.Input)
+		}
+		return petAITestResponse(http.StatusOK, "application/json", `{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"文件已读"}]}]}`), nil
+	})
+	service := NewPetAIServiceWithDependencies(PetAIDependencies{
+		ProviderReader: reader,
+		Transport:      transport,
+		Emitter:        emitter,
+		WorkspaceResolver: PetWorkspaceResolverFunc(func(context.Context, string) (string, error) {
+			return workspace, nil
+		}),
+	})
+	_, err := service.StartChat(context.Background(), PetChatRequest{
+		PetID:     "pet-codex-tools",
+		RequestID: "chat-responses-tools-1",
+		Provider:  petAITestReference("codex", "pet-provider", "gpt-5.6-luna", PetCapabilityChat),
+		UserText:  "读取 README",
+	})
+	if err != nil {
+		t.Fatalf("StartChat() error = %v", err)
+	}
+	completed := emitter.waitFor(t, PetAIEventCompleted)
+	if completed.Text != "文件已读" || callCount != 2 {
+		t.Fatalf("Responses tool completion = %#v, calls=%d", completed, callCount)
+	}
+}
+
 func TestPetAIUsageParsingAcrossProviderProtocols(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -220,6 +341,12 @@ func TestPetAIUsageParsingAcrossProviderProtocols(t *testing.T) {
 			protocol: "gemini",
 			data:     `{"usageMetadata":{"promptTokenCount":31,"candidatesTokenCount":9,"thoughtsTokenCount":2,"cachedContentTokenCount":6}}`,
 			want:     modelpricing.UsageSnapshot{InputTokens: 31, OutputTokens: 9, ReasoningTokens: 2, CacheReadTokens: 6},
+		},
+		{
+			name:     "responses nested",
+			protocol: "responses",
+			data:     `{"type":"response.completed","response":{"usage":{"input_tokens":41,"output_tokens":13,"input_tokens_details":{"cached_tokens":7},"output_tokens_details":{"reasoning_tokens":3}}}}`,
+			want:     modelpricing.UsageSnapshot{InputTokens: 41, OutputTokens: 13, ReasoningTokens: 3, CacheReadTokens: 7},
 		},
 	}
 
@@ -763,6 +890,44 @@ func TestPetAISynthesizeChatAudioCanBeCancelled(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("chat audio cancellation did not finish")
+	}
+}
+
+func TestPetAISynthesizeSpeechCancelBeforeProviderResolution(t *testing.T) {
+	readerEntered := make(chan struct{})
+	reader := PetAIProviderReaderFunc(func(ctx context.Context, _ PetProviderReference) (PetAIProviderConfig, error) {
+		close(readerEntered)
+		<-ctx.Done()
+		return PetAIProviderConfig{}, ctx.Err()
+	})
+	service := NewPetAIServiceWithOptions(reader, petAITestRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		t.Fatal("provider cancellation should happen before transport")
+		return nil, nil
+	}), nil, PetAIOptions{Timeout: time.Second})
+	result := make(chan error, 1)
+	go func() {
+		_, _, err := service.SynthesizeSpeech(context.Background(), PetSpeechRequest{
+			PetID: "pet-1", RequestID: "sync-cancel-before-register",
+			Provider: petAITestReference("openai", "pet-provider", "pet-model", PetCapabilityTTS),
+			Text:     "provider 解析期间取消", VoiceMode: PetVoiceSpeech,
+		})
+		result <- err
+	}()
+	select {
+	case <-readerEntered:
+	case <-time.After(time.Second):
+		t.Fatal("provider resolution did not start")
+	}
+	if err := service.CancelSpeech("sync-cancel-before-register"); err != nil {
+		t.Fatalf("CancelSpeech() error = %v", err)
+	}
+	select {
+	case err := <-result:
+		if got := petAITestErrorCode(t, err); got != string(PET_AI_REQUEST_CANCELLED) {
+			t.Fatalf("cancel-before-register error code = %q", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("provider resolution did not observe cancellation")
 	}
 }
 

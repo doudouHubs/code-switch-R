@@ -10,6 +10,7 @@ type fakePetWindowDriver struct {
 	mu sync.Mutex
 
 	openConfigs       []petWindowOpenConfig
+	openCalls         int
 	closeCalls        int
 	focusCalls        int
 	releaseFocusCalls int
@@ -36,6 +37,7 @@ type fakePetWindowDriver struct {
 func (f *fakePetWindowDriver) Open(config petWindowOpenConfig) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.openCalls++
 	if f.openErr != nil {
 		return f.openErr
 	}
@@ -174,7 +176,7 @@ func TestPetWindowOpenCloseToggleAreIdempotent(t *testing.T) {
 	window, driver := newTestPetWindow(t)
 
 	state := window.State()
-	if state.Open || state.Mode != PetWindowPassive || !state.ClickThrough || state.AlwaysOnTop {
+	if state.Open || state.Mode != PetWindowPassive || !state.ClickThrough || !state.AlwaysOnTop {
 		t.Fatalf("initial state = %#v", state)
 	}
 
@@ -187,8 +189,11 @@ func TestPetWindowOpenCloseToggleAreIdempotent(t *testing.T) {
 	if !window.IsOpen() || len(driver.openConfigs) != 1 {
 		t.Fatalf("open state/calls = %v/%d", window.IsOpen(), len(driver.openConfigs))
 	}
+	if driver.openCalls != 2 {
+		t.Fatalf("repeated Open() should refresh the existing driver window, calls = %d", driver.openCalls)
+	}
 	config := driver.openConfigs[0]
-	if !config.IgnoreMouseEvents || config.AlwaysOnTop || config.Width != 320 || config.Height != 240 {
+	if !config.IgnoreMouseEvents || !config.AlwaysOnTop || config.Width != 320 || config.Height != 240 {
 		t.Fatalf("open config = %#v", config)
 	}
 
@@ -314,6 +319,66 @@ func TestPetWindowMoveResizeAndTopmostCacheWhileClosed(t *testing.T) {
 	}
 	if err := window.SetMode(PetWindowMode("unknown")); !errors.Is(err, ErrPetWindowInvalidMode) {
 		t.Fatalf("invalid mode error = %v", err)
+	}
+}
+
+func TestPetWindowPropagatesActiveDriverOperationErrors(t *testing.T) {
+	tests := []struct {
+		name   string
+		setup  func(*fakePetWindowDriver)
+		action func(*PetWindow) error
+	}{
+		{
+			name: "ignore mouse",
+			setup: func(driver *fakePetWindowDriver) {
+				driver.ignoreErr = errors.New("ignore mouse failed")
+			},
+			action: func(window *PetWindow) error {
+				return window.SetMode(PetWindowInteractive)
+			},
+		},
+		{
+			name: "position",
+			setup: func(driver *fakePetWindowDriver) {
+				driver.positionErr = errors.New("position failed")
+			},
+			action: func(window *PetWindow) error {
+				return window.Move(10, 20)
+			},
+		},
+		{
+			name: "size",
+			setup: func(driver *fakePetWindowDriver) {
+				driver.sizeErr = errors.New("size failed")
+			},
+			action: func(window *PetWindow) error {
+				return window.Resize(640, 480)
+			},
+		},
+		{
+			name: "always on top",
+			setup: func(driver *fakePetWindowDriver) {
+				driver.topErr = errors.New("topmost failed")
+			},
+			action: func(window *PetWindow) error {
+				// 桌宠默认置顶；切换到非置顶才能真正经过 driver，
+				// 这样注入的底层错误才是在“活动操作”上生效，而不是被同值幂等短路。
+				return window.SetAlwaysOnTop(false)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			window, driver := newTestPetWindow(t)
+			if err := window.Open(); err != nil {
+				t.Fatalf("Open() error = %v", err)
+			}
+			tt.setup(driver)
+			if err := tt.action(window); err == nil {
+				t.Fatal("operation error = nil, want driver error")
+			}
+		})
 	}
 }
 

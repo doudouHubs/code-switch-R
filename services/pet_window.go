@@ -56,14 +56,11 @@ type petWindowOpenConfig struct {
 	IgnoreMouseEvents bool
 }
 
-// resolvePetWindowOverlayConfig 为运行时直接 Open 的路径补齐原版桌宠几何。
-// 启动时主控已经在 ApplicationStarted 回调中写入位置；设置页重新开启时则会
-// 直接进入 driver.Open，因此几何规则必须在唯一的原生窗口创建入口再次兜底，
-// 否则桌宠会退回默认 420x380 并出现在屏幕中间。
+// resolvePetWindowOverlayConfig 为每次创建桌宠窗口补齐原版 overlay 几何。
+// PositionSet 只代表调用方是否提供了坐标，不能代表窗口已经是 overlay 尺寸；
+// 宠物窗口的尺寸和底部位置必须始终由 work area 重新计算，否则窗口被 Move/Resize
+// 过一次后再次打开会退回普通小窗口，前端再努力漫游也只能困在中间那一块。
 func resolvePetWindowOverlayConfig(app *application.App, config petWindowOpenConfig) (petWindowOpenConfig, error) {
-	if config.PositionSet {
-		return config, nil
-	}
 	if app == nil || app.Screen == nil {
 		return petWindowOpenConfig{}, ErrPetWindowScreenUnavailable
 	}
@@ -101,6 +98,36 @@ type petWindowDriver interface {
 	SetSize(width, height int) error
 	SetAlwaysOnTop(alwaysOnTop bool) error
 	IsFocused() bool
+}
+
+func applyPetWindowOpenConfig(window application.Window, config petWindowOpenConfig) error {
+	if window == nil {
+		return ErrPetWindowNotReady
+	}
+	window.SetSize(config.Width, config.Height)
+	if config.PositionSet {
+		window.SetPosition(config.X, config.Y)
+	}
+	window.SetIgnoreMouseEvents(config.IgnoreMouseEvents)
+
+	// Wails 的窗口 setter 不返回底层错误，回读尺寸/位置和点击模式，
+	// 才能确认复用路径确实摆脱了旧的小窗口状态。窗口显示由平台 driver
+	// 负责：Windows 的显示与 Z-order 都必须走 SWP_NOACTIVATE，不能在公共层
+	// 调用可能激活窗口的 Show/SetAlwaysOnTop。
+	actualWidth, actualHeight := window.Size()
+	if actualWidth != config.Width || actualHeight != config.Height {
+		return fmt.Errorf("reapply pet window size: requested %dx%d, got %dx%d", config.Width, config.Height, actualWidth, actualHeight)
+	}
+	if config.PositionSet {
+		actualX, actualY := window.Position()
+		if actualX != config.X || actualY != config.Y {
+			return fmt.Errorf("reapply pet window position: requested (%d, %d), got (%d, %d)", config.X, config.Y, actualX, actualY)
+		}
+	}
+	if actual := window.IsIgnoreMouseEvents(); actual != config.IgnoreMouseEvents {
+		return fmt.Errorf("reapply pet window mouse mode: requested %t, got %t", config.IgnoreMouseEvents, actual)
+	}
+	return nil
 }
 
 // PetWindow 是宠物桌面窗口的线程安全宿主。它不负责注册服务，也不负责加载前端页面。
@@ -160,9 +187,9 @@ func newPetWindowWithDriver(driver petWindowDriver, options PetWindowOptions) (*
 		x:           normalized.X,
 		y:           normalized.Y,
 		mode:        PetWindowPassive,
-		// 桌宠默认不是置顶窗口；透明 overlay 仍可在命中宠物时临时接管输入，
-		// 但不能因为窗口存在就压住用户当前使用的其他应用。
-		alwaysOnTop: false,
+		// 桌宠默认置顶；窗口仍保持点击穿透和不可激活，置顶只负责 Z-order，
+		// 不应改变用户当前正在使用的应用焦点。
+		alwaysOnTop: true,
 	}
 	// 系统关闭事件由原生 driver 反向通知状态机；主动关闭由宿主自身完成状态落盘，
 	// driver 会抑制同一窗口代次的同步 hook 回调，避免和宿主锁形成死锁。
@@ -194,7 +221,9 @@ func normalizePetWindowOptions(options PetWindowOptions) (PetWindowOptions, erro
 	return options, nil
 }
 
-// Open 创建并显示窗口；重复调用不会重复创建原生窗口。
+// Open 创建并显示窗口；重复调用不会重复创建原生窗口，但会把最新的
+// WorkArea 几何和交互配置交给 driver 重新应用，修复宿主重启/热更新后
+// 原生窗口残留旧尺寸而前端只能困在局部区域的问题。
 func (w *PetWindow) Open() error {
 	if w == nil {
 		return ErrPetWindowNilDriver
@@ -206,10 +235,6 @@ func (w *PetWindow) Open() error {
 }
 
 func (w *PetWindow) openLocked() error {
-	if w.open {
-		return nil
-	}
-
 	if err := w.driver.Open(petWindowOpenConfig{
 		Name:              w.name,
 		Title:             w.title,
@@ -412,7 +437,7 @@ func (w *PetWindow) Focus() error {
 	return nil
 }
 
-// SetAlwaysOnTop 设置置顶状态；默认值为 false，关闭期间的变更会在下次 Open 生效。
+// SetAlwaysOnTop 设置置顶状态；默认值为 true，关闭期间的变更会在下次 Open 生效。
 func (w *PetWindow) SetAlwaysOnTop(alwaysOnTop bool) error {
 	if w == nil {
 		return nil

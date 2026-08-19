@@ -7,6 +7,7 @@ export type RequestLog = {
   provider: string
   http_code: number
   input_tokens: number
+  billable_input_tokens?: number
   output_tokens: number
   cache_create_tokens: number
   cache_read_tokens: number
@@ -45,6 +46,7 @@ export type LogStatsSeries = {
   day: string
   total_requests: number
   input_tokens: number
+  billable_input_tokens?: number
   output_tokens: number
   reasoning_tokens: number
   cache_create_tokens: number
@@ -55,10 +57,12 @@ export type LogStatsSeries = {
 export type LogStats = {
   total_requests: number
   input_tokens: number
+  billable_input_tokens?: number
   output_tokens: number
   reasoning_tokens: number
   cache_create_tokens: number
   cache_read_tokens: number
+  cache_hit_denominator_tokens: number
   cost_total: number
   cost_input: number
   cost_output: number
@@ -82,6 +86,7 @@ export type ProviderDailyStat = {
   failed_requests: number
   success_rate: number
   input_tokens: number
+  billable_input_tokens?: number
   output_tokens: number
   reasoning_tokens: number
   cache_create_tokens: number
@@ -99,6 +104,7 @@ export type HeatmapStat = {
   day: string
   total_requests: number
   input_tokens: number
+  billable_input_tokens?: number
   output_tokens: number
   reasoning_tokens: number
   total_cost: number

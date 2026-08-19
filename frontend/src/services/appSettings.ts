@@ -26,6 +26,7 @@ export type AppSettings = {
   enable_switch_notify: boolean // 供应商切换通知开关
   enable_round_robin: boolean   // 同 Level 轮询负载均衡开关
   enable_request_capture: boolean
+  enable_codex_hook: boolean
   request_capture_dir: string
   speech_provider_platform: string | null
   speech_provider_id: string | null
@@ -64,6 +65,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   enable_switch_notify: true,  // 默认开启
   enable_round_robin: false,   // 默认关闭轮询
   enable_request_capture: true,
+  enable_codex_hook: true,
   request_capture_dir: '',
   speech_provider_platform: null,
   speech_provider_id: null,

@@ -104,7 +104,7 @@ func TestPetAIProviderReaderDefaultProtocolFollowsPlatform(t *testing.T) {
 		platform string
 		protocol string
 	}{
-		{name: "codex", platform: "codex", protocol: "openai"},
+		{name: "codex", platform: "codex", protocol: "responses"},
 		{name: "claude", platform: "claude-code", protocol: "anthropic"},
 	}
 	for _, tc := range cases {
@@ -122,6 +122,45 @@ func TestPetAIProviderReaderDefaultProtocolFollowsPlatform(t *testing.T) {
 				t.Fatalf("default protocol = %q/%q, want %q", config.Protocol, config.UpstreamProtocol, tc.protocol)
 			}
 		})
+	}
+}
+
+func TestNormalizePetAIProviderProtocolCodexAutoKeepsResponsesDefault(t *testing.T) {
+	tests := []struct {
+		name       string
+		configured string
+		endpoint   string
+		want       string
+	}{
+		{name: "auto without endpoint", configured: "auto", want: "responses"},
+		{name: "auto responses endpoint", configured: "auto", endpoint: "/v1/responses", want: "responses"},
+		{name: "auto chat endpoint", configured: "auto", endpoint: "/v1/chat/completions", want: "openai"},
+		{name: "explicit chat compatibility", configured: "openai_chat", want: "openai"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			protocol, _, err := normalizePetAIProviderProtocol("codex", tt.configured, tt.endpoint)
+			if err != nil {
+				t.Fatalf("normalizePetAIProviderProtocol() error = %v", err)
+			}
+			if protocol != tt.want {
+				t.Fatalf("protocol = %q, want %q", protocol, tt.want)
+			}
+		})
+	}
+}
+
+func TestNormalizePetAIProtocolCodexEmptyConfigDefaultsToResponses(t *testing.T) {
+	protocol, err := normalizePetAIProtocol("codex", "", "")
+	if err != nil {
+		t.Fatalf("normalizePetAIProtocol() error = %v", err)
+	}
+	if protocol != "responses" {
+		t.Fatalf("protocol = %q, want responses", protocol)
+	}
+	protocol, err = normalizePetAIProtocol("codex", "auto", "")
+	if err != nil || protocol != "responses" {
+		t.Fatalf("auto protocol = %q, err=%v; want responses", protocol, err)
 	}
 }
 

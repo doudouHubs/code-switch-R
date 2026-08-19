@@ -54,6 +54,9 @@ type PetActionResult struct {
 	OK     bool                   `json:"ok"`
 	Reason PetActionFailureReason `json:"reason,omitempty"`
 	Reward *PetAwayReward         `json:"reward,omitempty"`
+	// State 是动作完成后的轻量运行时状态。动作反馈不再要求前端回读包含
+	// atlas、梦境历史和记忆的完整 PetSnapshot，避免一次点击就重复搬运大对象。
+	State *PetState `json:"state,omitempty"`
 }
 
 const (
@@ -213,6 +216,11 @@ type PetDreamConfig struct {
 	Keywords                 string `json:"keywords"`
 	SleepTalkMinLength       int    `json:"sleepTalkMinLength"`
 	BubbleMinDurationSeconds int    `json:"bubbleMinDurationSeconds"`
+	// 图片模型独立于 Agent 对话模型；梦境可以只配置文字模型，也可以额外绑定图片能力。
+	// 三个字段必须成对出现，且只保存引用，不把 provider 凭据复制进宠物配置。
+	ImageProviderPlatform *string `json:"imageProviderPlatform"`
+	ImageProviderID       *string `json:"imageProviderId"`
+	ImageModelID          *string `json:"imageModelId"`
 }
 
 type PetWindowConfig struct {

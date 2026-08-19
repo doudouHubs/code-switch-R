@@ -56,6 +56,19 @@ type PetSnapshot struct {
 	Atlas         *PetAtlasAsset          `json:"atlas"`
 }
 
+// PetRuntimeSnapshot 是桌宠窗口的低频 hydration 契约。它只携带运行时需要的
+// 状态、经验和配置，不包含历史记录、皮肤目录或 atlas 二进制；这些内容由各自
+// 的页面/API 在真正需要时读取，避免 renderer 的心跳重复构造大快照。
+type PetRuntimeSnapshot struct {
+	State         PetState         `json:"state"`
+	Experience    PetExperience    `json:"experience"`
+	Window        PetWindowConfig  `json:"window"`
+	Care          PetCareConfig    `json:"care"`
+	Agent         PetAgentConfig   `json:"agent"`
+	Dream         PetDreamConfig   `json:"dream"`
+	SkinSelection PetSkinSelection `json:"skinSelection"`
+}
+
 // PetDailyBonusResult 把每日奖励和领取后的稳定快照放在同一个响应里，
 // 前端不需要先领取再额外读取，也不会把“已领取”状态显示成旧值。
 type PetDailyBonusResult struct {
@@ -123,6 +136,36 @@ func (s *PetService) GetSnapshot(petID string) (PetSnapshot, error) {
 	return newPetSnapshot(snapshot)
 }
 
+// GetRuntimeSnapshot 只返回桌宠窗口需要的运行时字段。完整 GetSnapshot 仍保留给
+// 设置页和历史页，不能让资源拆分破坏已有的页面契约。
+func (s *PetService) GetRuntimeSnapshot(petID string) (PetRuntimeSnapshot, error) {
+	service, err := s.apiServiceForPet(petID)
+	if err != nil {
+		return PetRuntimeSnapshot{}, err
+	}
+
+	snapshot, err := service.Load()
+	if err != nil {
+		return PetRuntimeSnapshot{}, err
+	}
+	return newPetRuntimeSnapshot(snapshot)
+}
+
+// GetAtlas 独立读取当前皮肤的展示资源。atlas 只在首次 hydration 或皮肤变化时
+// 通过这个入口传输，运行时状态 tick 不再携带约 MB 级 data URL。
+func (s *PetService) GetAtlas(petID string) (*PetAtlasAsset, error) {
+	service, err := s.apiServiceForPet(petID)
+	if err != nil {
+		return nil, err
+	}
+
+	snapshot, err := service.Load()
+	if err != nil {
+		return nil, err
+	}
+	return resolvePetAtlas(snapshot), nil
+}
+
 // PerformAction 把前端动作名映射到 PetService 的业务入口。
 // 规则层返回的 OK=false 是正常业务结果，必须原样返回；只有参数、读取或持久化
 // 失败才通过 error 返回，避免 Vue 把“宠物太饱”误报成 runtime 异常。
@@ -133,33 +176,72 @@ func (s *PetService) PerformAction(petID string, action PetAction) (PetActionRes
 	}
 
 	action = PetAction(strings.TrimSpace(string(action)))
+	var result PetActionResult
+	var actionErr error
 	switch action {
 	case PetActionFeed:
-		return service.Feed()
+		result, actionErr = service.Feed()
 	case PetActionBathe:
-		return service.Bathe()
+		result, actionErr = service.Bathe()
 	case PetActionSoak:
-		return service.Soak()
+		result, actionErr = service.Soak()
 	case PetActionPlay:
-		return service.Play()
+		result, actionErr = service.Play()
 	case PetActionSleep:
-		if _, err := service.ToggleSleep(); err != nil {
-			return PetActionResult{}, err
-		}
-		return PetActionResult{OK: true}, nil
+		_, actionErr = service.ToggleSleep()
+		result = PetActionResult{OK: actionErr == nil}
 	case PetActionWork:
-		return service.StartWork()
+		result, actionErr = service.StartWork()
 	case PetActionStudy:
-		return service.StartStudy()
+		result, actionErr = service.StartStudy()
 	case PetAction("petted"):
 		// 兼容不经过单独 Petted 入口的调用方；前端正式入口仍是 Petted。
-		if err := service.petted(); err != nil {
-			return PetActionResult{}, err
-		}
-		return PetActionResult{OK: true}, nil
+		actionErr = service.petted()
+		result = PetActionResult{OK: actionErr == nil}
 	default:
 		return PetActionResult{}, fmt.Errorf("不支持的宠物动作 %q", action)
 	}
+	if actionErr != nil {
+		return PetActionResult{}, actionErr
+	}
+	// 业务拒绝也返回当前状态，让 renderer 能在不回读完整快照的情况下完成
+	// 本地状态收敛；只有读取/持久化错误才走 error 分支。
+	state, err := service.GetState()
+	if err != nil {
+		return PetActionResult{}, err
+	}
+	result.State = &state
+	return result, nil
+}
+
+// EndWorkEarlyForPet 是桌宠 away 胶囊的唯一提前结束入口。只有未完成的 work
+// 任务允许提前结束，study 或已经到期的任务必须交给正常结算流程处理，避免奖励规则被
+// 前端的双击行为绕过。
+func (s *PetService) EndWorkEarlyForPet(petID string, now int64) (PetActionResult, error) {
+	service, err := s.apiServiceForPet(petID)
+	if err != nil {
+		return PetActionResult{}, err
+	}
+	service.mu.Lock()
+	defer service.mu.Unlock()
+
+	if now <= 0 {
+		now = petNow(nil)
+	}
+	snapshot, err := service.loadSnapshotLocked(context.Background(), now)
+	if err != nil {
+		return PetActionResult{}, err
+	}
+	next, ended := PetEndWorkEarly(*snapshot.State, now)
+	if !ended {
+		state := *snapshot.State
+		return PetActionResult{OK: false, Reason: PetActionFailureBusy, State: &state}, nil
+	}
+	snapshot.State = &next
+	if err := service.saveSnapshotLocked(context.Background(), snapshot); err != nil {
+		return PetActionResult{}, err
+	}
+	return PetActionResult{OK: true, State: &next}, nil
 }
 
 // RecordProactive 记录一次计入每日配额的主动搭话。计数必须由后端持久化，
@@ -185,6 +267,31 @@ func (s *PetService) RecordProactive(petID string, now int64) (PetSnapshot, erro
 		return PetSnapshot{}, err
 	}
 	return newPetSnapshot(snapshot)
+}
+
+// RecordProactiveState 是桌宠主动搭话使用的轻量入口。完整 RecordProactive
+// 保留给兼容调用方，窗口运行时不应因为记一次配额又搬运 atlas 和历史记录。
+func (s *PetService) RecordProactiveState(petID string, now int64) (PetState, error) {
+	service, err := s.apiServiceForPet(petID)
+	if err != nil {
+		return PetState{}, err
+	}
+	service.mu.Lock()
+	defer service.mu.Unlock()
+
+	if now <= 0 {
+		now = petNow(nil)
+	}
+	snapshot, err := service.loadSnapshotLocked(context.Background(), now)
+	if err != nil {
+		return PetState{}, err
+	}
+	next := PetRecordProactive(*snapshot.State, now)
+	snapshot.State = &next
+	if err := service.saveSnapshotLocked(context.Background(), snapshot); err != nil {
+		return PetState{}, err
+	}
+	return next, nil
 }
 
 // ClaimDailyBonusForPet 是按 petId 分区的 Wails 入口。原有 ClaimDailyBonus
@@ -374,34 +481,9 @@ func petSettingsSkinSelectionID(value *PetSkinSelection) string {
 }
 
 func newPetSnapshot(snapshot PetMigrationSnapshot) (PetSnapshot, error) {
-	if snapshot.State == nil {
-		return PetSnapshot{}, errors.New("宠物快照缺少 state")
-	}
-	if snapshot.Experience == nil {
-		return PetSnapshot{}, errors.New("宠物快照缺少 experience")
-	}
-	if snapshot.Window == nil {
-		return PetSnapshot{}, errors.New("宠物快照缺少 window")
-	}
-	if snapshot.Care == nil {
-		return PetSnapshot{}, errors.New("宠物快照缺少 care")
-	}
-	if snapshot.Agent == nil {
-		return PetSnapshot{}, errors.New("宠物快照缺少 agent")
-	}
-	if snapshot.DreamConfig == nil {
-		return PetSnapshot{}, errors.New("宠物快照缺少 dream")
-	}
-
-	agent := *snapshot.Agent
-	// ProjectFolder 是后端项目引用的本地路径，前端只需要 projectId/projectName；
-	// 即使旧数据库里存在该值，也不能随着稳定快照穿过 Wails 边界。
-	agent.ProjectFolder = nil
-
-	selection := PetSkinSelection{PetID: snapshot.PetID}
-	if snapshot.SkinSelection != nil {
-		selection = *snapshot.SkinSelection
-		selection.PetID = snapshot.PetID
+	runtimeSnapshot, err := newPetRuntimeSnapshot(snapshot)
+	if err != nil {
+		return PetSnapshot{}, err
 	}
 
 	// 内置资源来自 embed.FS，不经过数据库迁移，所以必须在 API 边界合并到列表；
@@ -439,18 +521,60 @@ func newPetSnapshot(snapshot PetMigrationSnapshot) (PetSnapshot, error) {
 	atlas := resolvePetAtlas(snapshot)
 
 	return PetSnapshot{
+		State:         runtimeSnapshot.State,
+		Experience:    runtimeSnapshot.Experience,
+		Window:        runtimeSnapshot.Window,
+		Care:          runtimeSnapshot.Care,
+		Agent:         runtimeSnapshot.Agent,
+		Dream:         runtimeSnapshot.Dream,
+		Plans:         plans,
+		Dreams:        dreams,
+		Memories:      memories,
+		SkinSelection: runtimeSnapshot.SkinSelection,
+		Skins:         skins,
+		Atlas:         atlas,
+	}, nil
+}
+
+func newPetRuntimeSnapshot(snapshot PetMigrationSnapshot) (PetRuntimeSnapshot, error) {
+	if snapshot.State == nil {
+		return PetRuntimeSnapshot{}, errors.New("宠物快照缺少 state")
+	}
+	if snapshot.Experience == nil {
+		return PetRuntimeSnapshot{}, errors.New("宠物快照缺少 experience")
+	}
+	if snapshot.Window == nil {
+		return PetRuntimeSnapshot{}, errors.New("宠物快照缺少 window")
+	}
+	if snapshot.Care == nil {
+		return PetRuntimeSnapshot{}, errors.New("宠物快照缺少 care")
+	}
+	if snapshot.Agent == nil {
+		return PetRuntimeSnapshot{}, errors.New("宠物快照缺少 agent")
+	}
+	if snapshot.DreamConfig == nil {
+		return PetRuntimeSnapshot{}, errors.New("宠物快照缺少 dream")
+	}
+
+	agent := *snapshot.Agent
+	// ProjectFolder 是后端项目引用的本地路径，前端只需要 projectId/projectName；
+	// 即使旧数据库里存在该值，也不能随着运行时配置穿过 Wails 边界。
+	agent.ProjectFolder = nil
+
+	selection := PetSkinSelection{PetID: snapshot.PetID}
+	if snapshot.SkinSelection != nil {
+		selection = *snapshot.SkinSelection
+		selection.PetID = snapshot.PetID
+	}
+
+	return PetRuntimeSnapshot{
 		State:         *snapshot.State,
 		Experience:    *snapshot.Experience,
 		Window:        *snapshot.Window,
 		Care:          *snapshot.Care,
 		Agent:         agent,
 		Dream:         *snapshot.DreamConfig,
-		Plans:         plans,
-		Dreams:        dreams,
-		Memories:      memories,
 		SkinSelection: selection,
-		Skins:         skins,
-		Atlas:         atlas,
 	}, nil
 }
 

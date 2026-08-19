@@ -118,6 +118,49 @@ func TestPetAudioStreamCancellationEmitsCancelled(t *testing.T) {
 	t.Fatalf("cancelled event missing: %#v", emitter.snapshot())
 }
 
+func TestPetAudioCancelBeforeProviderResolutionStopsRegistrationWindow(t *testing.T) {
+	readerEntered := make(chan struct{})
+	reader := PetAIProviderReaderFunc(func(ctx context.Context, _ PetProviderReference) (PetAIProviderConfig, error) {
+		close(readerEntered)
+		<-ctx.Done()
+		return PetAIProviderConfig{}, ctx.Err()
+	})
+	service := NewPetAIServiceWithDependencies(PetAIDependencies{
+		ProviderReader: reader,
+		Transport: petAITestRoundTripFunc(func(*http.Request) (*http.Response, error) {
+			t.Fatal("provider cancellation should happen before transport")
+			return nil, nil
+		}),
+		AudioEmitter: &petAudioTestEmitter{},
+		Options:      PetAIOptions{Timeout: time.Second},
+	})
+	result := make(chan error, 1)
+	go func() {
+		_, err := service.StartSpeechStream(context.Background(), PetSpeechRequest{
+			PetID: "pet-1", RequestID: "audio-cancel-before-register",
+			Provider: petAITestReference("openai", "pet-provider", "pet-model", PetCapabilityTTS),
+			Text:     "provider 解析期间取消", VoiceMode: PetVoiceChat,
+		})
+		result <- err
+	}()
+	select {
+	case <-readerEntered:
+	case <-time.After(time.Second):
+		t.Fatal("provider resolution did not start")
+	}
+	if err := service.CancelSpeech("audio-cancel-before-register"); err != nil {
+		t.Fatalf("CancelSpeech() error = %v", err)
+	}
+	select {
+	case err := <-result:
+		if got := petAITestErrorCode(t, err); got != string(PET_AI_REQUEST_CANCELLED) {
+			t.Fatalf("cancel-before-register error code = %q", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("provider resolution did not observe cancellation")
+	}
+}
+
 func TestPetAudioQueueOrdersAndDrainsFiniteSentences(t *testing.T) {
 	queue := NewPetAudioQueue(2)
 	defer queue.Close()

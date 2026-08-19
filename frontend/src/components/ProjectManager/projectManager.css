@@ -249,6 +249,9 @@
 .project-manager-page .breadcrumb-action-button {
   border: none;
   min-height: 40px;
+  /* 操作文案不能被父级 flex 挤成逐字换行，否则按钮仍可点击但用户看不懂动作。 */
+  min-width: max-content !important;
+  flex: 0 0 auto;
   padding: 0 16px;
   border-radius: 999px;
   background: rgba(37, 99, 235, 0.12);
@@ -259,6 +262,7 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
+  white-space: nowrap;
   cursor: pointer;
   transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease, opacity 0.18s ease;
 }
@@ -293,6 +297,7 @@
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
+  min-width: max-content !important;
   flex: 0 0 auto;
 }
 
@@ -613,6 +618,7 @@
   align-items: center;
   justify-content: flex-end;
   gap: 2px;
+  min-width: max-content;
   justify-self: end;
   white-space: nowrap;
 }
@@ -754,6 +760,8 @@
   position: absolute;
   top: calc(100% + 10px);
   right: 0;
+  /* 菜单按最长动作文案展开，避免中文最后一个字被固定宽度挤到下一行。 */
+  width: max-content;
   min-width: 148px;
   padding: 8px;
   border-radius: 18px;
@@ -786,6 +794,8 @@
   text-align: left;
   font-size: 0.82rem;
   font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
   cursor: pointer;
   transition: background 0.18s ease, color 0.18s ease;
 }
@@ -829,6 +839,9 @@
 
 .project-manager-page .card-footer-action {
   border: none;
+  /* 卡片底部按钮与顶部操作保持同一规则，避免窄卡片下出现半截中文。 */
+  min-width: max-content !important;
+  flex: 0 0 auto;
   padding: 8px 8px;
   border-radius: 999px;
   background: rgba(37, 99, 235, 0.12);
@@ -840,6 +853,7 @@
   align-items: center;
   justify-content: center;
   gap: 4px;
+  white-space: nowrap;
   cursor: pointer;
   transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease;
 }
@@ -1209,7 +1223,9 @@
 
 .project-manager-page .detail-app-header-actions {
   gap: 8px;
+  min-width: max-content;
   flex: 0 0 auto;
+  flex-wrap: nowrap;
 }
 
 .project-manager-page .detail-search-shell {
@@ -1276,12 +1292,20 @@
 .project-manager-page .detail-header-text-button {
   border: none;
   min-height: 38px;
+  /* 头部动作必须保持完整文案，避免 flex 收缩把中文拆成多行。 */
+  min-width: max-content;
+  flex: 0 0 auto;
   padding: 0 14px;
   border-radius: 999px;
   background: rgba(17, 28, 47, 0.06);
   color: var(--mac-text-secondary);
   font-size: 0.84rem;
   font-weight: 700;
+  line-height: 1.1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
   cursor: pointer;
   transition: background 0.18s ease, color 0.18s ease;
 }
