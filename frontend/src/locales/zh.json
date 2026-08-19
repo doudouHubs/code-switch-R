@@ -1020,6 +1020,7 @@
       "processing": "处理中...",
       "saving": "保存中...",
       "delete": "删除",
+      "close": "关闭",
       "unknownDate": "时间未知"
     },
     "window": {
@@ -1098,7 +1099,6 @@
       "actionsLabel": "宠物动作",
       "requiresLevel": "{level}级解锁",
       "feedback": {
-        "imageOpenBlocked": "浏览器阻止了打开原图，请允许弹出窗口后重试。",
         "scheduledActionFailed": "计划动作执行失败，请重试",
         "workCompleted": "你刚完成工作，获得了 {coins} 金币。",
         "studyCompleted": "你刚完成学习，成长增加了 {growth}。",

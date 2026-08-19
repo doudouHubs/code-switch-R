@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Call, Events } from '../../wails-runtime-compat'
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch, type Component } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   Bath,
@@ -16,7 +16,8 @@ import {
   Sun,
   Utensils,
   Wand2,
-  Waves
+  Waves,
+  X
 } from '@lucide/vue'
 import PetAtlasFrame from './PetAtlasFrame.vue'
 import PetChat from './PetChat.vue'
@@ -330,6 +331,8 @@ const petMetrics = ref<PetAtlasMetrics>({
 const dragGestureMoved = ref(false)
 const squashing = ref(false)
 const petBubble = ref<PetBubbleState | null>(null)
+const petImagePreviewUrl = ref('')
+const petImagePreviewCloseRef = ref<HTMLButtonElement | null>(null)
 const atlasImageFailed = ref(false)
 // dozing 是系统空闲造成的前端表现，不写入 PetSnapshot.sleeping，避免误触发梦境和持久化睡眠规则。
 const dozing = ref(false)
@@ -717,15 +720,15 @@ function isKeyboardTarget(value: EventTarget | null): boolean {
 }
 
 function shouldRetainKeyboardMode(): boolean {
-  // 只有聊天面板中的真实输入焦点需要保留 keyboard；普通菜单焦点和透明空白都不能
-  // 把整条底部 overlay 锁成可交互窗口，否则用户当前应用会再次被挡住。
-  return chatOpen.value && isKeyboardTarget(document.activeElement)
+  // 普通菜单焦点和透明空白不能把整条底部 overlay 锁成可交互窗口，否则用户当前
+  // 应用会再次被挡住；聊天输入和图片预览则必须持续接收焦点及鼠标事件。
+  return Boolean(petImagePreviewUrl.value) || (chatOpen.value && isKeyboardTarget(document.activeElement))
 }
 
 function isInteractiveTarget(value: EventTarget | null): boolean {
   return (
     value instanceof Element &&
-    Boolean(value.closest('.pet-window__pet-stage, .pet-window__bubble, .pet-window__context-menu, .pet-chat, button, input, textarea, select'))
+    Boolean(value.closest('.pet-window__pet-stage, .pet-window__bubble, .pet-window__context-menu, .pet-window__image-preview, .pet-chat, button, input, textarea, select'))
   )
 }
 
@@ -746,7 +749,7 @@ function syncPetWindowModeAtPointer(event: PointerEvent): void {
     : document.elementFromPoint(event.clientX, event.clientY)
   syncPetHoverState(hovered)
   if (isInteractiveTarget(hovered)) {
-    requestPetWindowMode(isKeyboardTarget(document.activeElement) ? 'keyboard' : 'interactive')
+    requestPetWindowMode(petImagePreviewUrl.value || isKeyboardTarget(document.activeElement) ? 'keyboard' : 'interactive')
     return
   }
   // 全屏 overlay 的根节点没有真实可交互内容；鼠标离开宠物/菜单/聊天后必须恢复穿透，
@@ -789,7 +792,7 @@ function handleNativePetPointer(value: unknown): void {
   const hovered = document.elementFromPoint(localX, localY)
   syncPetHoverState(hovered)
   if (isInteractiveTarget(hovered)) {
-    requestPetWindowMode(isKeyboardTarget(document.activeElement) ? 'keyboard' : 'interactive')
+    requestPetWindowMode(petImagePreviewUrl.value || isKeyboardTarget(document.activeElement) ? 'keyboard' : 'interactive')
   } else if (!dragging.value) {
     // interactive 状态下原生窗口覆盖整个 work area，不会再触发 DOM pointerleave；
     // 轮询命中透明空白后主动恢复 WS_EX_TRANSPARENT，避免一次碰到宠物就永久挡住桌面。
@@ -799,7 +802,9 @@ function handleNativePetPointer(value: unknown): void {
 
 function handleWindowPointerOver(event: PointerEvent): void {
   syncPetHoverState(event.target)
-  if (isInteractiveTarget(event.target)) requestPetWindowMode('interactive')
+  if (isInteractiveTarget(event.target)) {
+    requestPetWindowMode(petImagePreviewUrl.value ? 'keyboard' : 'interactive')
+  }
 }
 
 function handleWindowPointerLeave(): void {
@@ -809,7 +814,7 @@ function handleWindowPointerLeave(): void {
 }
 
 function handleWindowFocusIn(event: FocusEvent): void {
-  requestPetWindowMode(isKeyboardTarget(event.target) ? 'keyboard' : 'interactive')
+  requestPetWindowMode(petImagePreviewUrl.value || isKeyboardTarget(event.target) ? 'keyboard' : 'interactive')
 }
 
 function handleWindowFocusOut(event: FocusEvent): void {
@@ -945,10 +950,30 @@ function showPetBubble(
 function openPetBubbleImage(): void {
   const imageUrl = petBubble.value?.imageUrl
   if (!imageUrl) return
-  // 原版点击梦境图片会打开原图；当前协议返回受控 data URL，因此直接交给
-  // 浏览器新页打开，不暴露归档绝对路径，也不把图片点击误判成打开聊天。
-  const opened = window.open(imageUrl, '_blank', 'noopener,noreferrer')
-  if (!opened) showPetBubble(t('pet.window.feedback.imageOpenBlocked'), 'muted', 'notice')
+  // Wails WebView 对 data URL 新窗口的加载不稳定；在当前透明窗口内预览，
+  // 才能复用已经验证可显示的图片数据，同时避免新窗口空白或丢失应用上下文。
+  petImagePreviewUrl.value = imageUrl
+  requestPetWindowMode('keyboard')
+  void nextTick(() => petImagePreviewCloseRef.value?.focus())
+}
+
+function closePetImagePreview(): void {
+  if (!petImagePreviewUrl.value) return
+  petImagePreviewUrl.value = ''
+  if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+  requestPetWindowMode(shouldRetainKeyboardMode() ? 'keyboard' : 'passive')
+}
+
+function handlePetEscape(): void {
+  if (petImagePreviewUrl.value) {
+    closePetImagePreview()
+    return
+  }
+  if (chatOpen.value) {
+    closePetChat()
+    return
+  }
+  if (contextMenuOpen.value) toggleContextMenu()
 }
 
 function showAmbientPresentation(text: string, duration = 5_000): void {
@@ -2747,7 +2772,7 @@ onBeforeUnmount(() => {
     @pointerleave="handleWindowPointerLeave"
     @focusin="handleWindowFocusIn"
     @focusout="handleWindowFocusOut"
-    @keydown.esc="chatOpen ? closePetChat() : contextMenuOpen && toggleContextMenu()"
+    @keydown.esc="handlePetEscape"
   >
     <main class="pet-window__scene">
       <div
@@ -2957,6 +2982,34 @@ onBeforeUnmount(() => {
         <button type="button" class="pet-window__retry" @click="loadSnapshot(true)">{{ t('pet.window.retry') }}</button>
       </section>
     </main>
+
+    <section
+      v-if="petImagePreviewUrl"
+      class="pet-window__image-preview"
+      role="dialog"
+      aria-modal="true"
+      :aria-label="t('pet.window.dreamImageOpen')"
+      @click.self="closePetImagePreview"
+      @pointerdown.stop
+    >
+      <button
+        ref="petImagePreviewCloseRef"
+        type="button"
+        class="pet-window__image-preview-close"
+        :aria-label="t('pet.common.close')"
+        :title="t('pet.common.close')"
+        @click="closePetImagePreview"
+      >
+        <X :size="18" :stroke-width="2" aria-hidden="true" />
+      </button>
+      <img
+        class="pet-window__image-preview-image"
+        :src="petImagePreviewUrl"
+        :alt="t('pet.window.dreamImageAlt')"
+        draggable="false"
+        @click.stop
+      />
+    </section>
 
     <section
       v-if="chatOpen"
@@ -3205,6 +3258,56 @@ onBeforeUnmount(() => {
   border-radius: 6px;
   background: color-mix(in srgb, var(--pet-muted) 8%, transparent);
   object-fit: contain;
+}
+
+.pet-window__image-preview {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+  display: grid;
+  box-sizing: border-box;
+  place-items: center;
+  padding: 48px 32px 32px;
+  background: rgba(15, 20, 29, 0.78);
+  cursor: zoom-out;
+  pointer-events: auto;
+}
+
+.pet-window__image-preview-image {
+  display: block;
+  max-width: calc(100vw - 64px);
+  max-height: calc(100vh - 80px);
+  border-radius: 8px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+  object-fit: contain;
+  cursor: default;
+  user-select: none;
+}
+
+.pet-window__image-preview-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 50%;
+  padding: 0;
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.pet-window__image-preview-close:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.pet-window__image-preview-close:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 3px;
 }
 
 .pet-window__pet-stage {

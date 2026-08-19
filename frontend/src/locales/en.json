@@ -1019,6 +1019,7 @@
       "processing": "Processing...",
       "saving": "Saving...",
       "delete": "Delete",
+      "close": "Close",
       "unknownDate": "Unknown date"
     },
     "window": {
@@ -1096,7 +1097,6 @@
       "actionsLabel": "Pet actions",
       "requiresLevel": "Lv.{level}",
       "feedback": {
-        "imageOpenBlocked": "The browser blocked the original image. Allow pop-ups and try again.",
         "scheduledActionFailed": "Scheduled action failed, please retry",
         "workCompleted": "You just finished work and earned {coins} coins.",
         "studyCompleted": "You just finished studying and gained {growth} growth.",
