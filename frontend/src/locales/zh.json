@@ -215,6 +215,7 @@
           "inputTokens": "输入 Token",
           "outputTokens": "输出 Token",
           "reasoningTokens": "推理 Token",
+          "imageCount": "图片张数",
           "cost": "金额"
         }
       },
@@ -292,6 +293,7 @@
       "providers": {
         "requests": "请求数",
         "tokens": "Tokens",
+        "images": "图片",
         "cost": "花费",
         "successRate": "成功率",
         "loading": "刷新中...",
@@ -637,6 +639,9 @@
         "errorHint": "数量与失败率",
         "tokens": "Token 流量",
         "tokenHint": "输入 + 输出 Tokens（推理已包含在部分模型的输出中）",
+        "images": "图片产出",
+        "imageHint": "实际返回的图片张数（不计入 Token）",
+        "imageCostValue": "图片成本 {value}",
         "cache": "缓存命中",
         "cacheHint": "缓存读取 Token / 总输入 Token",
         "costHint": "近 24 小时总花费",
@@ -650,6 +655,7 @@
         "httpCode": "HTTP",
         "stream": "传输",
         "duration": "耗时",
+        "images": "图片",
         "cost": "金额",
         "tokens": "Token 汇总"
       },
@@ -660,6 +666,7 @@
         "reasoning": "推理",
         "cacheWrite": "缓存写入",
         "cacheRead": "缓存读取",
+        "images": "图片",
         "cost": "金额"
       },
       "streamOn": "流式",
@@ -667,6 +674,7 @@
       "back": "返回主页",
       "nextRefresh": "距离下次刷新 {seconds}s",
       "query": "查询",
+      "imageUnit": "张",
       "costDetail": {
         "title": "今日消费明细",
         "empty": "今日暂无消费记录"

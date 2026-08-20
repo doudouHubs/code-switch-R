@@ -390,12 +390,13 @@ onUnmounted(() => {
   --dream-line: var(--settings-line, var(--mac-border, rgba(15, 23, 42, 0.12)));
   --dream-surface: var(--settings-surface, var(--mac-surface, #fff));
   display: flex;
+  box-sizing: border-box;
   min-width: 0;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
   border: 1px solid var(--dream-line);
   border-radius: 8px;
-  padding: 16px;
+  padding: 18px;
   background: color-mix(in srgb, var(--settings-strong-surface, #f5f5f7) 30%, transparent);
   color: var(--dream-ink);
 }
@@ -418,6 +419,13 @@ onUnmounted(() => {
   margin: 0;
 }
 
+/* 旧版 Wails 模板会给所有 button 注入固定高度和左边距；历史列表必须
+ * 由缩略图和文本内容自然撑开，否则 64px 缩略图会被压进 30px 行高并互相覆盖。 */
+.pet-dream-history-panel button {
+  box-sizing: border-box;
+  margin: 0;
+}
+
 .pet-dream-history-panel__header,
 .pet-dream-history-panel__detail-header,
 .pet-dream-history-panel__pagination,
@@ -427,8 +435,12 @@ onUnmounted(() => {
   gap: 12px;
 }
 
+.pet-dream-history-panel__header {
+  align-items: flex-start;
+}
+
 .pet-dream-history-panel h3 {
-  font-size: 14px;
+  font-size: 15px;
 }
 
 .pet-dream-history-panel__header p,
@@ -519,14 +531,16 @@ onUnmounted(() => {
 
 .pet-dream-history-panel__layout {
   display: grid;
+  align-items: stretch;
   min-width: 0;
-  grid-template-columns: minmax(180px, 0.38fr) minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
+  gap: 14px;
 }
 
 .pet-dream-history-panel__list-wrap,
 .pet-dream-history-panel__detail {
   display: flex;
+  box-sizing: border-box;
   min-width: 0;
   flex-direction: column;
   gap: 0;
@@ -536,33 +550,38 @@ onUnmounted(() => {
 }
 
 .pet-dream-history-panel__list-wrap {
-  height: min(34rem, 65vh);
-  min-height: 18rem;
+  height: clamp(34rem, calc(100dvh - 250px), 52rem);
+  min-height: 0;
   overflow: hidden;
 }
 
 .pet-dream-history-panel__list {
   display: flex;
+  box-sizing: border-box;
   min-height: 0;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
   overflow-y: auto;
+  overflow-x: hidden;
+  padding: 8px;
 }
 
 .pet-dream-history-panel__item {
   display: flex;
+  height: auto;
   width: 100%;
   min-width: 0;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   border: 1px solid transparent;
   border-radius: 7px;
-  padding: 6px;
+  padding: 8px;
   background: transparent;
   color: var(--dream-ink);
   cursor: pointer;
   font: inherit;
+  line-height: 1.3;
   text-align: left;
 }
 
@@ -574,8 +593,8 @@ onUnmounted(() => {
 
 .pet-dream-history-panel__thumb {
   display: flex;
-  width: 56px;
-  height: 56px;
+  width: 64px;
+  height: 64px;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
@@ -616,6 +635,7 @@ onUnmounted(() => {
 .pet-dream-history-panel__pagination {
   align-items: center;
   flex-wrap: wrap;
+  min-width: 0;
   border-top: 1px solid var(--dream-line);
   padding: 6px;
 }
@@ -629,6 +649,7 @@ onUnmounted(() => {
 }
 
 .pet-dream-history-panel__page-controls {
+  min-width: 0;
   flex: 1 1 auto;
 }
 
@@ -681,14 +702,14 @@ onUnmounted(() => {
 }
 
 .pet-dream-history-panel__detail {
-  height: min(34rem, 65vh);
-  min-height: 18rem;
+  height: clamp(34rem, calc(100dvh - 250px), 52rem);
+  min-height: 0;
   overflow-y: auto;
-  padding: 12px;
+  padding: 18px;
 }
 
 .pet-dream-history-panel__detail-header h4 {
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .pet-dream-history-panel__detail-header small {
@@ -707,7 +728,9 @@ onUnmounted(() => {
 
 .pet-dream-history-panel__image {
   display: flex;
-  min-height: 150px;
+  height: clamp(220px, 30vh, 360px);
+  min-height: 0;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   overflow: hidden;
@@ -722,7 +745,7 @@ onUnmounted(() => {
 .pet-dream-history-panel__image img {
   display: block;
   max-width: 100%;
-  max-height: 280px;
+  max-height: 100%;
   object-fit: contain;
 }
 
@@ -736,8 +759,8 @@ onUnmounted(() => {
 .pet-dream-history-panel__fields {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  font-size: 11px;
+  gap: 14px;
+  font-size: 12px;
 }
 
 .pet-dream-history-panel__fields > div {
@@ -747,13 +770,13 @@ onUnmounted(() => {
 .pet-dream-history-panel__fields dt {
   margin-bottom: 4px;
   color: var(--dream-muted);
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .pet-dream-history-panel__fields dd {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  line-height: 1.6;
+  line-height: 1.7;
 }
 
 @media (max-width: 680px) {
@@ -761,9 +784,20 @@ onUnmounted(() => {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .pet-dream-history-panel__list-wrap,
-  .pet-dream-history-panel__detail {
+  .pet-dream-history-panel__list-wrap {
+    height: min(32rem, 58vh);
     min-height: 18rem;
+  }
+
+  .pet-dream-history-panel__detail {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .pet-dream-history-panel__image {
+    height: min(52vw, 300px);
+    min-height: 180px;
   }
 }
 </style>

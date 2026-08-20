@@ -56,10 +56,10 @@ type petWindowOpenConfig struct {
 	IgnoreMouseEvents bool
 }
 
-// resolvePetWindowOverlayConfig 为每次创建桌宠窗口补齐原版 overlay 几何。
-// PositionSet 只代表调用方是否提供了坐标，不能代表窗口已经是 overlay 尺寸；
-// 宠物窗口的尺寸和底部位置必须始终由 work area 重新计算，否则窗口被 Move/Resize
-// 过一次后再次打开会退回普通小窗口，前端再努力漫游也只能困在中间那一块。
+// resolvePetWindowOverlayConfig 为每次创建桌宠窗口补齐完整 WorkArea 的 overlay 几何。
+// PositionSet 只代表调用方是否提供了坐标，不能代表窗口已经是全屏 overlay；
+// 宠物窗口的尺寸和位置必须始终由 WorkArea 重新计算，否则窗口被 Move/Resize
+// 过一次后再次打开会退回普通小窗口，前端的拖拽边界和原生指针映射都会失真。
 func resolvePetWindowOverlayConfig(app *application.App, config petWindowOpenConfig) (petWindowOpenConfig, error) {
 	if app == nil || app.Screen == nil {
 		return petWindowOpenConfig{}, ErrPetWindowScreenUnavailable
@@ -71,16 +71,19 @@ func resolvePetWindowOverlayConfig(app *application.App, config petWindowOpenCon
 	}
 
 	workArea := primaryScreen.WorkArea
-	height := DefaultPetWindowHeight
-	if height > workArea.Height {
-		height = workArea.Height
-	}
-	config.Width = workArea.Width
+	return applyPetWindowWorkAreaConfig(config, workArea.X, workArea.Y, workArea.Width, workArea.Height), nil
+}
+
+// applyPetWindowWorkAreaConfig 将透明窗口完整覆盖到工作区，任务栏仍由系统保留。
+// 几何计算独立出来，既保证首次创建和复用路径使用同一套规则，也让全屏边界可以
+// 在不依赖真实 Wails 屏幕对象的情况下回归测试。
+func applyPetWindowWorkAreaConfig(config petWindowOpenConfig, x, y, width, height int) petWindowOpenConfig {
+	config.Width = width
 	config.Height = height
 	config.PositionSet = true
-	config.X = workArea.X
-	config.Y = workArea.Y + workArea.Height - height
-	return config, nil
+	config.X = x
+	config.Y = y
+	return config
 }
 
 // petWindowDriver 是公共状态机和 Wails API 之间的最小边界。

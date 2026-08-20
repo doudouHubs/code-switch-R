@@ -41,6 +41,7 @@ func setupRenameTestEnv(t *testing.T) string {
 	for _, schema := range []string{
 		`CREATE TABLE IF NOT EXISTS request_log (
 			id INTEGER PRIMARY KEY AUTOINCREMENT, platform TEXT, model TEXT, provider TEXT,
+			request_type TEXT DEFAULT 'chat', image_count INTEGER DEFAULT 0,
 			http_code INTEGER, input_tokens INTEGER, output_tokens INTEGER,
 			cache_create_tokens INTEGER, cache_read_tokens INTEGER, reasoning_tokens INTEGER,
 			is_stream INTEGER DEFAULT 0, duration_sec REAL DEFAULT 0,
@@ -63,6 +64,9 @@ func setupRenameTestEnv(t *testing.T) string {
 		if _, err := db.Exec(schema); err != nil {
 			t.Fatalf("建表失败: %v", err)
 		}
+	}
+	if err := ensureRequestLogTableWithDB(db); err != nil {
+		t.Fatalf("补齐 request_log 迁移列失败: %v", err)
 	}
 	return tmpHome
 }

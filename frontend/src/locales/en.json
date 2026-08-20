@@ -214,6 +214,7 @@
           "inputTokens": "Input tokens",
           "outputTokens": "Output tokens",
           "reasoningTokens": "Reasoning tokens",
+          "imageCount": "Images",
           "cost": "Cost"
         }
       },
@@ -291,6 +292,7 @@
       "providers": {
         "requests": "Requests",
         "tokens": "Tokens",
+        "images": "Images",
         "cost": "Cost",
         "successRate": "Success rate",
         "loading": "Refreshing...",
@@ -636,6 +638,9 @@
         "errorHint": "Count & failure rate",
         "tokens": "Tokens moved",
         "tokenHint": "Input + output tokens (reasoning may already be included in output)",
+        "images": "Images generated",
+        "imageHint": "Images actually returned (not counted as tokens)",
+        "imageCostValue": "Image cost {value}",
         "cache": "Cache reads",
         "cacheHint": "Cached input tokens / total input tokens",
         "costHint": "24h total cost",
@@ -649,6 +654,7 @@
         "httpCode": "HTTP",
         "stream": "Stream",
         "duration": "Duration",
+        "images": "Images",
         "cost": "Cost",
         "tokens": "Tokens"
       },
@@ -659,6 +665,7 @@
         "reasoning": "Reasoning",
         "cacheWrite": "Cache write",
         "cacheRead": "Cache read",
+        "images": "Images",
         "cost": "Cost"
       },
       "streamOn": "Streaming",
@@ -666,6 +673,7 @@
       "back": "Back to home",
       "nextRefresh": "Next refresh in {seconds}s",
       "query": "Query",
+      "imageUnit": "images",
       "costDetail": {
         "title": "Today's Cost Breakdown",
         "empty": "No cost records today"

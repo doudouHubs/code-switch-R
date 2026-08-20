@@ -117,10 +117,8 @@ const deleteState = reactive({
 });
 
 const projectManagerOpenTimeoutMs = 5000;
-const projectManagerWarmRefreshDelayMs = 800;
 const projectSessionSearchDelayMs = 300;
 const openingSessionTimers = new Map<string, ReturnType<typeof setTimeout>>();
-let projectManagerWarmRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 let projectSessionSearchTimer: ReturnType<typeof setTimeout> | null = null;
 let projectSessionSearchRequestVersion = 0;
 let stopCodexStatusEvents: (() => void) | null = null;
@@ -477,9 +475,14 @@ const scheduleProjectSessionSearch = () => {
 watch(projectSessionSearchKey, scheduleProjectSessionSearch);
 
 const loadSnapshot = async (isRefresh = false) => {
+  const hasSnapshot =
+    snapshotProjects.value.length > 0 || snapshotSessions.value.length > 0;
   if (isRefresh) {
     refreshing.value = true;
-  } else {
+  }
+  // 首次强制刷新没有可展示的旧数据，必须保留 loading 状态，
+  // 否则空数组会先被误判成“没有项目”，造成首屏状态闪烁。
+  if (!isRefresh || !hasSnapshot) {
     loading.value = true;
   }
 
@@ -794,28 +797,6 @@ const loadCodexRuntimeSnapshot = async () => {
   }
 };
 
-const scheduleSilentWarmRefresh = () => {
-  if (projectManagerWarmRefreshTimer) {
-    clearTimeout(projectManagerWarmRefreshTimer);
-  }
-
-  // 首屏先吃缓存，随后静默强制走一次增量刷新；
-  // 这里不能再调 GetSnapshot，不然很可能第二次还是吃到旧缓存，等于刷新了个寂寞。
-  projectManagerWarmRefreshTimer = setTimeout(async () => {
-    try {
-      const snapshot = await refreshProjectManagerSnapshot();
-      applySnapshot(snapshot);
-    } catch (error) {
-      console.error(
-        "failed to perform silent project manager warm refresh",
-        error,
-      );
-    } finally {
-      projectManagerWarmRefreshTimer = null;
-    }
-  }, projectManagerWarmRefreshDelayMs);
-};
-
 const confirmDelete = async () => {
   const targetType = deleteState.targetType;
   const targetId = deleteState.targetId;
@@ -1069,8 +1050,8 @@ onMounted(() => {
     },
   );
   void loadCodexRuntimeSnapshot();
-  loadSnapshot();
-  scheduleSilentWarmRefresh();
+  // 页面打开时直接走增量刷新，避免先展示旧快照后再悄悄补会话，导致用户误以为历史不全。
+  void loadSnapshot(true);
 });
 
 onBeforeUnmount(() => {
@@ -1082,10 +1063,6 @@ onBeforeUnmount(() => {
     clearTimeout(timeoutId);
   });
   openingSessionTimers.clear();
-  if (projectManagerWarmRefreshTimer) {
-    clearTimeout(projectManagerWarmRefreshTimer);
-    projectManagerWarmRefreshTimer = null;
-  }
 });
 </script>
 

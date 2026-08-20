@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -45,6 +46,11 @@ type Service struct {
 type PricingEntry struct {
 	InputCostPerToken           float64 `json:"input_cost_per_token"`
 	OutputCostPerToken          float64 `json:"output_cost_per_token"`
+	OutputCostPerImage          float64 `json:"output_cost_per_image"`
+	// LiteLLM 的图片模型把单张生成价按像素记录在 input_cost_per_pixel；
+	// output_cost_per_pixel 通常为 0，但仍保留并优先读取，兼容两种字段口径。
+	InputCostPerPixel            float64 `json:"input_cost_per_pixel"`
+	OutputCostPerPixel           float64 `json:"output_cost_per_pixel"`
 	OutputCostPerReasoningToken float64 `json:"output_cost_per_reasoning_token"`
 	CacheCreationInputTokenCost float64 `json:"cache_creation_input_token_cost"`
 	CacheReadInputTokenCost     float64 `json:"cache_read_input_token_cost"`
@@ -179,6 +185,9 @@ type UsageSnapshot struct {
 	ReasoningTokens   int
 	CacheCreateTokens int
 	CacheReadTokens   int
+	ImageCount        int
+	ImageWidth        int
+	ImageHeight       int
 	CacheCreation     *CacheCreationDetail
 	// ServiceTier 当前请求实际走的服务档位;空值视为 default,不影响定价。
 	ServiceTier ServiceTier
@@ -195,6 +204,7 @@ type CostBreakdown struct {
 	InputCost       float64 `json:"input_cost"`
 	OutputCost      float64 `json:"output_cost"`
 	ReasoningCost   float64 `json:"reasoning_cost"`
+	ImageCost       float64 `json:"image_cost"`
 	CacheCreateCost float64 `json:"cache_create_cost"`
 	CacheReadCost   float64 `json:"cache_read_cost"`
 	Ephemeral5mCost float64 `json:"ephemeral_5m_cost"`
@@ -375,11 +385,60 @@ func (s *Service) CalculateCost(model string, usage UsageSnapshot) CostBreakdown
 	breakdown.Ephemeral5mCost = cache5mCost
 	breakdown.Ephemeral1hCost = cache1hCost
 	breakdown.CacheCreateCost = cache5mCost + cache1hCost
-	breakdown.TotalCost = breakdown.InputCost + breakdown.OutputCost + breakdown.ReasoningCost + breakdown.CacheCreateCost + breakdown.CacheReadCost
+	// 图片按 provider 实际返回的张数计费，不把 image_count 伪装成 token，避免首页和明细重复计算。
+	imageCount := usage.ImageCount
+	if imageCount < 0 {
+		imageCount = 0
+	}
+	if imageCount > 0 {
+		imageCostPerPixel := firstNonZero(entry.OutputCostPerPixel, entry.InputCostPerPixel)
+		switch {
+		case entry.OutputCostPerImage > 0:
+			breakdown.ImageCost = float64(imageCount) * entry.OutputCostPerImage
+		case imageCostPerPixel > 0:
+			// 图片价格表的 pixel 费率代表一张输出图的生成价；没有尺寸的旧日志按
+			// 当前服务默认 1024x1024 估算，避免历史成功请求继续被静默记为 0 元。
+			pixels := resolveImagePixels(model, usage)
+			breakdown.ImageCost = float64(imageCount) * float64(pixels) * imageCostPerPixel
+		}
+	}
+	breakdown.TotalCost = breakdown.InputCost + breakdown.OutputCost + breakdown.ReasoningCost + breakdown.ImageCost + breakdown.CacheCreateCost + breakdown.CacheReadCost
 	if breakdown.TotalCost > 0 {
 		breakdown.HasPricing = true
 	}
 	return breakdown
+}
+
+const defaultImagePixelCount int64 = 1024 * 1024
+
+// resolveImagePixels 优先使用请求日志保存的尺寸，其次从价格模型变体的模型名中读取尺寸，
+// 最后回退到服务默认尺寸。最后一档只服务于历史日志和 auto 尺寸，保证兼容性但不伪造 token。
+func resolveImagePixels(model string, usage UsageSnapshot) int64 {
+	if usage.ImageWidth > 0 && usage.ImageHeight > 0 {
+		return int64(usage.ImageWidth) * int64(usage.ImageHeight)
+	}
+	if pixels, ok := imagePixelsFromModel(model); ok {
+		return pixels
+	}
+	return defaultImagePixelCount
+}
+
+// imagePixelsFromModel 识别 LiteLLM 图片价格键中的 "1024-x-1024" 尺寸片段。
+// 只解析明确的数字尺寸，避免把任意模型名文本误当成计价输入。
+func imagePixelsFromModel(model string) (int64, bool) {
+	for _, segment := range strings.Split(strings.ToLower(strings.TrimSpace(model)), "/") {
+		parts := strings.Split(segment, "-x-")
+		if len(parts) != 2 {
+			continue
+		}
+		width, widthErr := strconv.ParseInt(strings.TrimSpace(parts[0]), 10, 64)
+		height, heightErr := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
+		if widthErr != nil || heightErr != nil || width <= 0 || height <= 0 {
+			continue
+		}
+		return width * height, true
+	}
+	return 0, false
 }
 
 // pickTier 根据 prompt tokens 总数选择分段价,range 语义为 [lo, hi),

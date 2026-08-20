@@ -797,6 +797,10 @@ func scanProjectManagerCodexSessionFileDetails(path string) (sessionID string, c
 		if gjson.Get(line, "type").String() == "session_meta" {
 			if sessionID == "" {
 				sessionID = strings.TrimSpace(gjson.Get(line, "payload.id").String())
+				if sessionID == "" {
+					// Codex 新格式在部分版本中只暴露 payload.session_id，不能因为元数据字段差异漏掉整条会话。
+					sessionID = strings.TrimSpace(gjson.Get(line, "payload.session_id").String())
+				}
 			}
 			if cwd == "" {
 				cwd = strings.TrimSpace(gjson.Get(line, "payload.cwd").String())
@@ -848,29 +852,11 @@ func scanProjectManagerCodexSessionFileDetails(path string) (sessionID string, c
 }
 
 func extractProjectManagerSessionLineUserMessage(line string) string {
-	recordType := gjson.Get(line, "type").String()
-	if recordType == "event_msg" && gjson.Get(line, "payload.type").String() == "user_message" {
-		return projectManagerTrimSummary(gjson.Get(line, "payload.message").String())
-	}
-	if recordType != "response_item" || gjson.Get(line, "payload.type").String() != "message" || gjson.Get(line, "payload.role").String() != "user" {
+	message, ok := parseProjectManagerConversationMessage(line)
+	if !ok || message.Role != "user" {
 		return ""
 	}
-
-	content := gjson.Get(line, "payload.content")
-	if !content.IsArray() {
-		return projectManagerTrimSummary(content.String())
-	}
-
-	// 新旧 Codex 会话都可能只有 response_item；这里只抽取文本片段，
-	// 图片和其他结构化内容不能被序列化成 JSON 噪声塞进卡片预览。
-	parts := make([]string, 0, 2)
-	content.ForEach(func(_, item gjson.Result) bool {
-		if text := strings.TrimSpace(item.Get("text").String()); text != "" {
-			parts = append(parts, text)
-		}
-		return true
-	})
-	return projectManagerTrimSummary(strings.Join(parts, "\n"))
+	return projectManagerTrimSummary(message.Content)
 }
 
 func extractProjectManagerWorkspaceRootsFromLine(line string) []string {

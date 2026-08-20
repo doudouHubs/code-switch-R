@@ -35,6 +35,7 @@
             <option value="">{{ t('components.logs.filters.allPlatforms') }}</option>
             <option value="claude">Claude</option>
             <option value="codex">Codex</option>
+            <option value="gemini">Gemini</option>
           </select>
         </label>
         <label class="filter-field">
@@ -65,6 +66,8 @@
             <th class="col-http">{{ t('components.logs.table.httpCode') }}</th>
             <th class="col-stream">{{ t('components.logs.table.stream') }}</th>
             <th class="col-duration">{{ t('components.logs.table.duration') }}</th>
+            <th class="col-images">{{ t('components.logs.table.images') }}</th>
+            <th class="col-cost">{{ t('components.logs.table.cost') }}</th>
             <th class="col-tokens">{{ t('components.logs.table.tokens') }}</th>
           </tr>
         </thead>
@@ -77,6 +80,11 @@
             <td :class="['code', httpCodeClass(item.http_code)]">{{ item.http_code }}</td>
             <td><span :class="['stream-tag', item.is_stream ? 'on' : 'off']">{{ formatStream(item.is_stream) }}</span></td>
             <td><span :class="['duration-tag', durationColor(item.duration_sec)]">{{ formatDuration(item.duration_sec) }}</span></td>
+            <td class="image-cell">
+              <span>{{ formatImageCount(item) }}</span>
+              <small v-if="item.image_cost" class="image-cost">{{ formatCurrency(item.image_cost) }}</small>
+            </td>
+            <td class="cost-cell">{{ formatCurrency(item.total_cost) }}</td>
             <td class="token-cell">
               <div>
                 <span class="token-label">{{ t('components.logs.tokenLabels.input') }}</span>
@@ -101,7 +109,7 @@
             </td>
           </tr>
           <tr v-if="!pagedLogs.length && !loading">
-            <td colspan="8" class="empty">{{ t('components.logs.empty') }}</td>
+            <td colspan="10" class="empty">{{ t('components.logs.empty') }}</td>
           </tr>
         </tbody>
       </table>
@@ -255,6 +263,14 @@ const chartData = computed(() => {
         backgroundColor: 'rgba(244, 114, 182, 0.2)',
         tension: 0.35,
         fill: true,
+      },
+      {
+        label: t('components.logs.tokenLabels.images'),
+        data: series.map((item) => item.image_count ?? 0),
+        borderColor: '#a78bfa',
+        backgroundColor: 'rgba(167, 139, 250, 0.2)',
+        tension: 0.35,
+        fill: false,
       },
       {
         label: t('components.logs.tokenLabels.cacheWrite'),
@@ -476,6 +492,14 @@ const formatNumber = (value?: number) => {
   return value.toLocaleString()
 }
 
+const formatImageCount = (item: RequestLog) => {
+  const count = Math.max(0, item.image_count ?? 0)
+  if (item.request_type === 'image' || count > 0) {
+    return `${formatNumber(count)} ${t('components.logs.imageUnit')}`
+  }
+  return '—'
+}
+
 // 汇总卡使用紧凑单位，避免大 Token 数值挤压卡片；明细表仍保留完整数字便于核对。
 const formatTokenNumber = (value?: number) => {
   if (value === undefined || value === null) return '—'
@@ -531,6 +555,13 @@ const statsCards = computed(() => {
       hint: t('components.logs.summary.tokenHint'),
       value: data ? formatTokenNumber(totalTokens) : '—',
       subValue: '',
+    },
+    {
+      key: 'images',
+      label: t('components.logs.summary.images'),
+      hint: t('components.logs.summary.imageHint'),
+      value: data ? formatNumber(data.image_count) : '—',
+      subValue: data ? t('components.logs.summary.imageCostValue', { value: formatCurrency(data.cost_image) }) : '',
     },
     {
       key: 'cacheReads',

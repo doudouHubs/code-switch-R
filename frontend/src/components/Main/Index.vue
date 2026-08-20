@@ -399,6 +399,8 @@
                   <span class="card-metric-separator" aria-hidden="true">·</span>
                   <span>{{ stats.tokens }}</span>
                   <span class="card-metric-separator" aria-hidden="true">·</span>
+                  <span>{{ stats.images }}</span>
+                  <span class="card-metric-separator" aria-hidden="true">·</span>
                   <span>{{ stats.cost }}</span>
                 </template>
               </p>
@@ -1223,6 +1225,7 @@ const usageTooltip = reactive({
   inputTokens: 0,
   outputTokens: 0,
   reasoningTokens: 0,
+  imageCount: 0,
   cost: 0,
 })
 
@@ -1302,6 +1305,11 @@ const usageTooltipMetrics = computed(() => [
     label: t('components.main.heatmap.metrics.reasoningTokens'),
     value: formatTokenNumber(usageTooltip.reasoningTokens),
   },
+  {
+    key: 'imageCount',
+    label: t('components.main.heatmap.metrics.imageCount'),
+    value: formatMetric(usageTooltip.imageCount),
+  },
 ])
 
 const clamp = (value: number, min: number, max: number) => {
@@ -1349,6 +1357,7 @@ const showUsageTooltip = (day: UsageHeatmapDay, event: MouseEvent) => {
   usageTooltip.inputTokens = day.inputTokens
   usageTooltip.outputTokens = day.outputTokens
   usageTooltip.reasoningTokens = day.reasoningTokens
+  usageTooltip.imageCount = day.imageCount
   usageTooltip.cost = day.cost
   const { width: tooltipWidth, height: tooltipHeight } = getTooltipSize()
   const { width: viewportWidth, height: viewportHeight } = viewportSize()
@@ -1882,6 +1891,7 @@ type ProviderStatDisplay =
       state: 'ready'
       requests: string
       tokens: string
+      images: string
       cost: string
       successRateLabel: string
       successRateClass: string
@@ -1926,6 +1936,7 @@ const providerStatDisplay = (providerName: string): ProviderStatDisplay => {
     state: 'ready',
     requests: `${t('components.main.providers.requests')}: ${formatMetric(stat.total_requests)}`,
     tokens: `${t('components.main.providers.tokens')}: ${formatTokenNumber(totalTokens)}`,
+    images: `${t('components.main.providers.images')}: ${formatMetric(stat.image_count ?? 0)}`,
     cost: `${t('components.main.providers.cost')}: ${currencyFormatter.value.format(Math.max(stat.cost_total, 0))}`,
     successRateLabel,
     successRateClass,

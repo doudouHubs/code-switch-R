@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"image"
 	_ "image/gif"
 	_ "image/jpeg"
@@ -113,6 +114,7 @@ type PetImageOptions struct {
 type PetImageDependencies struct {
 	ProviderReader PetAIProviderReader
 	Transport      PetAIHTTPTransport
+	RequestLogSink RequestLogSink
 	Options        PetImageOptions
 }
 
@@ -121,6 +123,7 @@ type PetImageDependencies struct {
 type PetImageService struct {
 	providerReader PetAIProviderReader
 	transport      PetAIHTTPTransport
+	requestLogSink RequestLogSink
 	options        PetImageOptions
 }
 
@@ -144,9 +147,14 @@ func NewPetImageServiceWithOptions(
 }
 
 func NewPetImageServiceWithDependencies(deps PetImageDependencies) *PetImageService {
+	requestLogSink := deps.RequestLogSink
+	if requestLogSink == nil {
+		requestLogSink = defaultRequestLogSink
+	}
 	return &PetImageService{
 		providerReader: deps.ProviderReader,
 		transport:      deps.Transport,
+		requestLogSink: requestLogSink,
 		options:        normalizePetImageOptions(deps.Options),
 	}
 }
@@ -173,19 +181,37 @@ func (s *PetImageService) GenerateImage(ctx context.Context, request PetImageReq
 	if err != nil {
 		return PetImageResult{}, err
 	}
+	requestLog := &ReqeustLog{
+		Platform:       provider.platform,
+		Provider:       provider.providerID,
+		Model:          provider.model,
+		RequestedModel: firstNonEmptyString(normalized.Provider.Model, provider.model),
+		RequestType:    requestLogTypeImage,
+	}
+	requestLog.ImageWidth, requestLog.ImageHeight = petImageSizeDimensions(normalized.Size)
+	start := time.Now()
+	defer func() {
+		requestLog.DurationSec = time.Since(start).Seconds()
+		requestLog.Provider = ResolveProviderAlias(requestLog.Platform, requestLog.Provider)
+		if err := enqueueRequestLogWithSink(s.requestLogSink, requestLog); err != nil {
+			// 日志落库失败不能改变已经完成的图片结果，但保留失败可见性便于排障。
+			fmt.Printf("写入图片 request_log 失败: %v\n", err)
+		}
+	}()
 	if ctx.Err() != nil {
 		return PetImageResult{}, classifyPetImageContextError(ctx.Err())
 	}
 
 	requestCtx, cancel := context.WithTimeout(ctx, s.options.Timeout)
 	defer cancel()
-	result, err := s.executeImageRequest(requestCtx, provider, normalized)
+	result, err := s.executeImageRequest(requestCtx, provider, normalized, requestLog)
 	if err != nil {
 		if requestCtx.Err() != nil {
 			return PetImageResult{}, classifyPetImageContextError(requestCtx.Err())
 		}
 		return PetImageResult{}, err
 	}
+	requestLog.ImageCount = len(result.Images)
 	return result, nil
 }
 
@@ -420,6 +446,21 @@ func normalizePetImageSize(size string) (string, error) {
 	return strconv.Itoa(width) + "x" + strconv.Itoa(height), nil
 }
 
+// petImageSizeDimensions 将已经归一化的请求尺寸投影到日志计价字段；auto 没有确定输出尺寸，
+// 由价格层按模型变体或默认尺寸兼容处理，不能把它误记成 0 张或 0 元。
+func petImageSizeDimensions(size string) (int, int) {
+	parts := strings.Split(strings.TrimSpace(strings.ToLower(size)), "x")
+	if len(parts) != 2 {
+		return 0, 0
+	}
+	width, widthErr := strconv.Atoi(strings.TrimSpace(parts[0]))
+	height, heightErr := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if widthErr != nil || heightErr != nil || width <= 0 || height <= 0 {
+		return 0, 0
+	}
+	return width, height
+}
+
 func (s *PetImageService) resolveProvider(
 	ctx context.Context,
 	reference PetProviderReference,
@@ -476,17 +517,19 @@ func (s *PetImageService) executeImageRequest(
 	ctx context.Context,
 	provider petAIProviderRuntime,
 	request PetImageRequest,
+	requestLog *ReqeustLog,
 ) (PetImageResult, error) {
 	if len(request.ReferenceImages) > 0 {
-		return s.executePetImageEdit(ctx, provider, request, request.ReferenceImages)
+		return s.executePetImageEdit(ctx, provider, request, request.ReferenceImages, requestLog)
 	}
-	return s.executePetImageGeneration(ctx, provider, request)
+	return s.executePetImageGeneration(ctx, provider, request, requestLog)
 }
 
 func (s *PetImageService) executePetImageGeneration(
 	ctx context.Context,
 	provider petAIProviderRuntime,
 	request PetImageRequest,
+	requestLog *ReqeustLog,
 ) (PetImageResult, error) {
 	body, err := json.Marshal(map[string]any{
 		"model":           provider.model,
@@ -524,6 +567,9 @@ func (s *PetImageService) executePetImageGeneration(
 	applyProviderAuth(httpRequest, provider)
 
 	response, err := s.transport.RoundTrip(httpRequest)
+	if response != nil && requestLog != nil {
+		requestLog.HttpCode = response.StatusCode
+	}
 	if err != nil {
 		if ctx.Err() != nil {
 			return PetImageResult{}, classifyPetImageContextError(ctx.Err())
@@ -570,6 +616,7 @@ func (s *PetImageService) executePetImageEdit(
 	provider petAIProviderRuntime,
 	request PetImageRequest,
 	references []PetImageReference,
+	requestLog *ReqeustLog,
 ) (PetImageResult, error) {
 	payload, err := readPetImageReferences(references, s.options)
 	if err != nil {
@@ -600,7 +647,7 @@ func (s *PetImageService) executePetImageEdit(
 		httpRequest.Header.Set(key, value)
 	}
 	applyProviderAuth(httpRequest, provider)
-	return s.parsePetImageHTTPResponse(ctx, httpRequest, request.Count)
+	return s.parsePetImageHTTPResponse(ctx, httpRequest, request.Count, requestLog)
 }
 
 func readPetImageReferences(references []PetImageReference, options PetImageOptions) ([]petImageReferencePayload, error) {
@@ -803,8 +850,12 @@ func (s *PetImageService) parsePetImageHTTPResponse(
 	ctx context.Context,
 	request *http.Request,
 	requestedCount int,
+	requestLog *ReqeustLog,
 ) (PetImageResult, error) {
 	response, err := s.transport.RoundTrip(request)
+	if response != nil && requestLog != nil {
+		requestLog.HttpCode = response.StatusCode
+	}
 	if err != nil {
 		if ctx.Err() != nil {
 			return PetImageResult{}, classifyPetImageContextError(ctx.Err())

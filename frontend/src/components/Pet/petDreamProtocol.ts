@@ -2,6 +2,8 @@
 
 export const PET_DREAM_MIN_DELAY_MS = 10_000
 export const PET_DREAM_MAX_DELAY_MS = 3 * 60_000
+// 梦境图片统一使用 4:3 画布；尺寸沿用通用图片服务允许的像素范围，避免各调用方自行硬编码。
+export const PET_DREAM_IMAGE_SIZE = '1024x768'
 const PET_DREAM_SLEEP_TALK_MAX_LENGTH = 120
 const PET_DREAM_TITLE_MAX_LENGTH = 32
 const PET_DREAM_EMOTIONS = ['pleasant', 'calm', 'tense', 'afraid'] as const

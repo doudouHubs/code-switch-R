@@ -172,6 +172,31 @@ func newTestPetWindow(t *testing.T) (*PetWindow, *fakePetWindowDriver) {
 	return window, driver
 }
 
+func TestApplyPetWindowWorkAreaConfigCoversEntireWorkArea(t *testing.T) {
+	config := applyPetWindowWorkAreaConfig(petWindowOpenConfig{
+		Name:              "test-pet",
+		Title:             "Test Pet",
+		URL:               "/pet-test",
+		Width:             420,
+		Height:            380,
+		PositionSet:       false,
+		X:                 12,
+		Y:                 34,
+		AlwaysOnTop:       true,
+		IgnoreMouseEvents: true,
+	}, -1920, 0, 3840, 2160)
+
+	if config.Width != 3840 || config.Height != 2160 {
+		t.Fatalf("work area size = %dx%d, want 3840x2160", config.Width, config.Height)
+	}
+	if !config.PositionSet || config.X != -1920 || config.Y != 0 {
+		t.Fatalf("work area position = set:%v (%d,%d), want set:true (-1920,0)", config.PositionSet, config.X, config.Y)
+	}
+	if !config.AlwaysOnTop || !config.IgnoreMouseEvents || config.Name != "test-pet" || config.URL != "/pet-test" {
+		t.Fatalf("work area config changed unrelated fields: %#v", config)
+	}
+}
+
 func TestPetWindowOpenCloseToggleAreIdempotent(t *testing.T) {
 	window, driver := newTestPetWindow(t)
 

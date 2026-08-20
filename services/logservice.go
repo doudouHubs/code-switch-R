@@ -36,6 +36,9 @@ func (ls *LogService) CostSince(start string, platform string) (float64, error) 
 			"reasoning_tokens",
 			"cache_create_tokens",
 			"cache_read_tokens",
+			"image_count",
+			"image_width",
+			"image_height",
 			"ephemeral_5m_tokens",
 			"ephemeral_1h_tokens",
 			"service_tier",
@@ -79,6 +82,9 @@ func buildPricingSnapshotFromLog(logEntry *ReqeustLog) modelpricing.UsageSnapsho
 		ReasoningTokens:   logEntry.ReasoningTokens,
 		CacheCreateTokens: logEntry.CacheCreateTokens,
 		CacheReadTokens:   logEntry.CacheReadTokens,
+		ImageCount:        logEntry.ImageCount,
+		ImageWidth:        logEntry.ImageWidth,
+		ImageHeight:       logEntry.ImageHeight,
 		ServiceTier:       modelpricing.ServiceTier(strings.ToLower(strings.TrimSpace(logEntry.ServiceTier))),
 	}
 	if logEntry.Ephemeral5mTokens > 0 || logEntry.Ephemeral1hTokens > 0 {
@@ -105,6 +111,9 @@ func buildSnapshotFromRecord(record xdb.Record) modelpricing.UsageSnapshot {
 		ReasoningTokens:   record.GetInt("reasoning_tokens"),
 		CacheCreateTokens: total,
 		CacheReadTokens:   record.GetInt("cache_read_tokens"),
+		ImageCount:        record.GetInt("image_count"),
+		ImageWidth:        record.GetInt("image_width"),
+		ImageHeight:       record.GetInt("image_height"),
 		ServiceTier:       modelpricing.ServiceTier(strings.ToLower(strings.TrimSpace(record.GetString("service_tier")))),
 	}
 	if fiveM > 0 || oneH > 0 {
@@ -154,6 +163,10 @@ func (ls *LogService) ListRequestLogs(platform string, provider string, limit in
 			Model:                  record.GetString("model"),
 			RequestedModel:         record.GetString("requested_model"),
 			Provider:               record.GetString("provider"),
+			RequestType:            record.GetString("request_type"),
+			ImageCount:             record.GetInt("image_count"),
+			ImageWidth:             record.GetInt("image_width"),
+			ImageHeight:            record.GetInt("image_height"),
 			HttpCode:               record.GetInt("http_code"),
 			InputTokens:            record.GetInt("input_tokens"),
 			OutputTokens:           record.GetInt("output_tokens"),
@@ -224,6 +237,9 @@ func (ls *LogService) HeatmapStats(days int) ([]HeatmapStat, error) {
 			"reasoning_tokens",
 			"cache_create_tokens",
 			"cache_read_tokens",
+			"image_count",
+			"image_width",
+			"image_height",
 			"ephemeral_5m_tokens",
 			"ephemeral_1h_tokens",
 			"service_tier",
@@ -259,6 +275,7 @@ func (ls *LogService) HeatmapStats(days int) ([]HeatmapStat, error) {
 		bucket.BillableInputTokens += int64(pricingUsage.InputTokens)
 		bucket.OutputTokens += int64(usage.OutputTokens)
 		bucket.ReasoningTokens += int64(usage.ReasoningTokens)
+		bucket.ImageCount += int64(usage.ImageCount)
 		cost := ls.calculateCostForPricingUsage(record.GetString("model"), pricingUsage)
 		bucket.TotalCost += cost.TotalCost
 	}
@@ -302,6 +319,9 @@ func (ls *LogService) StatsSince(platform string) (LogStats, error) {
 			"reasoning_tokens",
 			"cache_create_tokens",
 			"cache_read_tokens",
+			"image_count",
+			"image_width",
+			"image_height",
 			"ephemeral_5m_tokens",
 			"ephemeral_1h_tokens",
 			"service_tier",
@@ -373,6 +393,7 @@ func (ls *LogService) StatsSince(platform string) (LogStats, error) {
 		bucket.ReasoningTokens += int64(usage.ReasoningTokens)
 		bucket.CacheCreateTokens += int64(usage.CacheCreateTokens)
 		bucket.CacheReadTokens += int64(usage.CacheReadTokens)
+		bucket.ImageCount += int64(usage.ImageCount)
 		bucket.TotalCost += cost.TotalCost
 
 		if createdAt.IsZero() || createdAt.Before(summaryStart) {
@@ -385,11 +406,13 @@ func (ls *LogService) StatsSince(platform string) (LogStats, error) {
 		stats.ReasoningTokens += int64(usage.ReasoningTokens)
 		stats.CacheCreateTokens += int64(usage.CacheCreateTokens)
 		stats.CacheReadTokens += int64(usage.CacheReadTokens)
+		stats.ImageCount += int64(usage.ImageCount)
 		stats.CacheHitDenominatorTokens += int64(cacheHitDenominator)
 		stats.CostInput += cost.InputCost
 		stats.CostOutput += cost.OutputCost
 		stats.CostCacheCreate += cost.CacheCreateCost
 		stats.CostCacheRead += cost.CacheReadCost
+		stats.CostImage += cost.ImageCost
 		stats.CostTotal += cost.TotalCost
 	}
 
@@ -425,6 +448,9 @@ func (ls *LogService) ProviderDailyStats(platform string) ([]ProviderDailyStat, 
 			"reasoning_tokens",
 			"cache_create_tokens",
 			"cache_read_tokens",
+			"image_count",
+			"image_width",
+			"image_height",
 			"ephemeral_5m_tokens",
 			"ephemeral_1h_tokens",
 			"service_tier",
@@ -481,6 +507,7 @@ func (ls *LogService) ProviderDailyStats(platform string) ([]ProviderDailyStat, 
 		stat.ReasoningTokens += int64(usage.ReasoningTokens)
 		stat.CacheCreateTokens += int64(usage.CacheCreateTokens)
 		stat.CacheReadTokens += int64(usage.CacheReadTokens)
+		stat.ImageCount += int64(usage.ImageCount)
 		stat.CostTotal += cost.TotalCost
 	}
 	stats := make([]ProviderDailyStat, 0, len(statMap))
@@ -513,6 +540,7 @@ func (ls *LogService) decorateCost(logEntry *ReqeustLog) {
 	logEntry.CacheReadCost = cost.CacheReadCost
 	logEntry.Ephemeral5mCost = cost.Ephemeral5mCost
 	logEntry.Ephemeral1hCost = cost.Ephemeral1hCost
+	logEntry.ImageCost = cost.ImageCost
 	logEntry.TotalCost = cost.TotalCost
 }
 
@@ -652,6 +680,7 @@ type HeatmapStat struct {
 	BillableInputTokens int64   `json:"billable_input_tokens"`
 	OutputTokens        int64   `json:"output_tokens"`
 	ReasoningTokens     int64   `json:"reasoning_tokens"`
+	ImageCount          int64   `json:"image_count"`
 	TotalCost           float64 `json:"total_cost"`
 }
 
@@ -661,6 +690,7 @@ type LogStats struct {
 	BillableInputTokens       int64            `json:"billable_input_tokens"`
 	OutputTokens              int64            `json:"output_tokens"`
 	ReasoningTokens           int64            `json:"reasoning_tokens"`
+	ImageCount                int64            `json:"image_count"`
 	CacheCreateTokens         int64            `json:"cache_create_tokens"`
 	CacheReadTokens           int64            `json:"cache_read_tokens"`
 	CacheHitDenominatorTokens int64            `json:"cache_hit_denominator_tokens"`
@@ -669,6 +699,7 @@ type LogStats struct {
 	CostOutput                float64          `json:"cost_output"`
 	CostCacheCreate           float64          `json:"cost_cache_create"`
 	CostCacheRead             float64          `json:"cost_cache_read"`
+	CostImage                 float64          `json:"cost_image"`
 	Series                    []LogStatsSeries `json:"series"`
 }
 
@@ -682,6 +713,7 @@ type ProviderDailyStat struct {
 	BillableInputTokens int64   `json:"billable_input_tokens"`
 	OutputTokens        int64   `json:"output_tokens"`
 	ReasoningTokens     int64   `json:"reasoning_tokens"`
+	ImageCount          int64   `json:"image_count"`
 	CacheCreateTokens   int64   `json:"cache_create_tokens"`
 	CacheReadTokens     int64   `json:"cache_read_tokens"`
 	CostTotal           float64 `json:"cost_total"`
@@ -694,6 +726,7 @@ type LogStatsSeries struct {
 	BillableInputTokens int64   `json:"billable_input_tokens"`
 	OutputTokens        int64   `json:"output_tokens"`
 	ReasoningTokens     int64   `json:"reasoning_tokens"`
+	ImageCount          int64   `json:"image_count"`
 	CacheCreateTokens   int64   `json:"cache_create_tokens"`
 	CacheReadTokens     int64   `json:"cache_read_tokens"`
 	TotalCost           float64 `json:"total_cost"`

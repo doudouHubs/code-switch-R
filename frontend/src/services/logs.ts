@@ -5,6 +5,8 @@ export type RequestLog = {
   platform: string
   model: string
   provider: string
+  request_type?: string
+  image_count?: number
   http_code: number
   input_tokens: number
   billable_input_tokens?: number
@@ -22,6 +24,7 @@ export type RequestLog = {
   cache_read_cost?: number
   ephemeral_5m_cost?: number
   ephemeral_1h_cost?: number
+  image_cost?: number
   has_pricing?: boolean
 }
 
@@ -49,6 +52,7 @@ export type LogStatsSeries = {
   billable_input_tokens?: number
   output_tokens: number
   reasoning_tokens: number
+  image_count: number
   cache_create_tokens: number
   cache_read_tokens: number
   total_cost: number
@@ -60,6 +64,7 @@ export type LogStats = {
   billable_input_tokens?: number
   output_tokens: number
   reasoning_tokens: number
+  image_count: number
   cache_create_tokens: number
   cache_read_tokens: number
   cache_hit_denominator_tokens: number
@@ -68,6 +73,7 @@ export type LogStats = {
   cost_output: number
   cost_cache_create: number
   cost_cache_read: number
+  cost_image: number
   series: LogStatsSeries[]
 }
 
@@ -89,6 +95,7 @@ export type ProviderDailyStat = {
   billable_input_tokens?: number
   output_tokens: number
   reasoning_tokens: number
+  image_count: number
   cache_create_tokens: number
   cache_read_tokens: number
   cost_total: number
@@ -107,6 +114,7 @@ export type HeatmapStat = {
   billable_input_tokens?: number
   output_tokens: number
   reasoning_tokens: number
+  image_count: number
   total_cost: number
 }
 

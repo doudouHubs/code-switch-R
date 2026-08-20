@@ -1,8 +1,18 @@
 <script setup lang="ts">
 import { Call, Events } from '../../wails-runtime-compat'
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
+import {
+  BarChart3,
+  Bot,
+  Brain,
+  Images,
+  LayoutDashboard,
+  Moon,
+  PawPrint,
+  Wand2
+} from '@lucide/vue'
 import type { GeminiProvider, Provider } from '../../../bindings/codeswitch/services/models'
 import { fetchProjectManagerSnapshot, refreshProjectManagerSnapshot, type ProjectSummary } from '../../services/projectManager'
 import { petApi } from './petApi'
@@ -83,15 +93,15 @@ const PET_BUILTIN_DREAM_PROMPT = '你正在睡觉并处于梦境中，这不是�
 
 type PetTab = 'overview' | 'stats' | 'agent' | 'sleep' | 'skins' | 'memory' | 'dream-history' | 'studio'
 
-const PET_TABS: ReadonlyArray<{ id: PetTab }> = [
-  { id: 'overview' },
-  { id: 'stats' },
-  { id: 'studio' },
-  { id: 'skins' },
-  { id: 'memory' },
-  { id: 'agent' },
-  { id: 'sleep' },
-  { id: 'dream-history' }
+const PET_TABS: ReadonlyArray<{ id: PetTab; icon: Component }> = [
+  { id: 'overview', icon: LayoutDashboard },
+  { id: 'stats', icon: BarChart3 },
+  { id: 'studio', icon: Wand2 },
+  { id: 'skins', icon: PawPrint },
+  { id: 'memory', icon: Brain },
+  { id: 'agent', icon: Bot },
+  { id: 'sleep', icon: Moon },
+  { id: 'dream-history', icon: Images }
 ]
 
 interface PetExperienceLogEntry {
@@ -1353,21 +1363,21 @@ onUnmounted(() => {
         <h2>{{ t('pet.settings.title') }}</h2>
         <p>{{ t('pet.settings.subtitle') }}</p>
       </div>
+      <nav class="pet-settings__tabs" role="tablist" :aria-label="t('pet.settings.tabsAria')">
+        <button
+          v-for="tab in PET_TABS"
+          :key="tab.id"
+          type="button"
+          role="tab"
+          :aria-selected="activeTab === tab.id"
+          :class="['pet-settings__tab', { 'is-active': activeTab === tab.id }]"
+          @click="selectTab(tab.id)"
+        >
+          <component :is="tab.icon" class="pet-settings__tab-icon" :size="14" :stroke-width="1.9" aria-hidden="true" />
+          <span>{{ t(`pet.settings.tabs.${tab.id}`) }}</span>
+        </button>
+      </nav>
     </header>
-
-    <nav class="pet-settings__tabs" role="tablist" :aria-label="t('pet.settings.tabsAria')">
-      <button
-        v-for="tab in PET_TABS"
-        :key="tab.id"
-        type="button"
-        role="tab"
-        :aria-selected="activeTab === tab.id"
-        :class="['pet-settings__tab', { 'is-active': activeTab === tab.id }]"
-        @click="selectTab(tab.id)"
-      >
-        {{ t(`pet.settings.tabs.${tab.id}`) }}
-      </button>
-    </nav>
 
     <div v-if="loading" class="pet-settings__state">{{ t('pet.settings.loading') }}</div>
     <div v-else-if="errorMessage" class="pet-settings__state is-error">
@@ -2003,7 +2013,7 @@ onUnmounted(() => {
   --settings-strong-surface: var(--mac-surface-strong, #f5f5f7);
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 18px;
   width: 100%;
   max-width: none;
   min-width: 0;
@@ -2025,8 +2035,10 @@ onUnmounted(() => {
 }
 
 .pet-settings__header {
-  justify-content: space-between;
-  gap: 20px;
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(0, auto);
+  align-items: end;
+  gap: 16px 28px;
 }
 
 .pet-settings__heading {
@@ -2112,46 +2124,59 @@ onUnmounted(() => {
 
 .pet-settings__tabs {
   display: flex;
-  width: 100%;
   min-width: 0;
   align-items: center;
+  justify-content: flex-end;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 /* 旧版 Wails 模板的 public/style.css 会给所有 button 注入固定宽度和左边距；设置页页签必须由内容决定宽度。 */
 .pet-settings__tab {
+  display: inline-flex;
   flex: 0 0 auto;
   width: auto;
   min-width: 0;
-  height: 32px;
+  height: 34px;
+  align-items: center;
+  gap: 7px;
   white-space: nowrap;
   border: 1px solid var(--settings-line);
-  border-radius: 6px;
+  border-radius: 8px;
   margin: 0;
-  padding: 0 12px;
-  background: var(--settings-surface);
+  padding: 0 11px;
+  background: color-mix(in srgb, var(--settings-surface) 88%, transparent);
   color: var(--settings-ink);
   cursor: pointer;
   font: inherit;
   font-size: 12px;
-  font-weight: 400;
+  font-weight: 500;
   line-height: 20px;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.035);
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.pet-settings__tab-icon {
+  flex: 0 0 auto;
+  color: var(--settings-muted);
 }
 
 .pet-settings__tab:not(.is-active):hover {
   border-color: var(--settings-line);
   background: var(--settings-strong-surface);
   color: var(--settings-ink);
+  transform: translateY(-1px);
 }
 
 .pet-settings__tab.is-active {
   border-color: var(--mac-accent, #0a84ff);
   background: var(--mac-accent, #0a84ff);
   color: #fff;
-  box-shadow: none;
+  box-shadow: 0 5px 14px color-mix(in srgb, var(--mac-accent, #0a84ff) 20%, transparent);
+}
+
+.pet-settings__tab.is-active .pet-settings__tab-icon {
+  color: currentColor;
 }
 
 .pet-settings__tab.is-active:hover {
@@ -3171,15 +3196,35 @@ onUnmounted(() => {
   margin-top: -4px;
 }
 
+@media (max-width: 1100px) {
+  .pet-settings__header {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: flex-start;
+  }
+
+  .pet-settings__tabs {
+    justify-content: flex-start;
+  }
+}
+
 @media (max-width: 640px) {
   .pet-settings {
     padding: 16px 12px;
   }
 
   .pet-settings__header {
+    grid-template-columns: minmax(0, 1fr);
     align-items: flex-start;
-    flex-direction: column;
     gap: 12px;
+  }
+
+  .pet-settings__tabs {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding: 2px 2px 5px;
+    scrollbar-width: thin;
   }
 
   .pet-settings__header-actions {

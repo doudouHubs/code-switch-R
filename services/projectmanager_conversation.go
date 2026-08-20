@@ -36,12 +36,13 @@ type projectManagerConversationPrunePlan struct {
 }
 
 type projectManagerRolloutRecord struct {
-	LineIndex   int
-	Type        string
-	Timestamp   int64
-	PayloadType string
-	Role        string
-	Message     string
+	LineIndex        int
+	Type             string
+	Timestamp        int64
+	PayloadType      string
+	Role             string
+	ConversationRole string
+	Message          string
 }
 
 type projectManagerRolloutTurn struct {
@@ -67,6 +68,88 @@ type projectManagerRolloutFile struct {
 func projectManagerIsRolloutSessionPath(path string) bool {
 	name := strings.ToLower(strings.TrimSpace(filepath.Base(path)))
 	return strings.HasPrefix(name, "rollout-") && strings.HasSuffix(name, ".jsonl")
+}
+
+type projectManagerConversationMessage struct {
+	PayloadType string
+	Role        string
+	Content     string
+}
+
+func parseProjectManagerConversationMessage(line string) (projectManagerConversationMessage, bool) {
+	recordType := strings.ToLower(strings.TrimSpace(gjson.Get(line, "type").String()))
+	switch recordType {
+	case "event_msg":
+		payloadType := strings.ToLower(strings.TrimSpace(gjson.Get(line, "payload.type").String()))
+		if payloadType != "user_message" && payloadType != "agent_message" {
+			return projectManagerConversationMessage{}, false
+		}
+
+		content := strings.TrimSpace(gjson.Get(line, "payload.message").String())
+		if content == "" {
+			return projectManagerConversationMessage{}, false
+		}
+
+		role := "agent"
+		if payloadType == "user_message" {
+			role = "user"
+		}
+		return projectManagerConversationMessage{
+			PayloadType: payloadType,
+			Role:        role,
+			Content:     content,
+		}, true
+
+	case "response_item":
+		// Codex 0.148+ 把可见消息放在 response_item.message 中，
+		// developer/tool/reasoning 记录虽然也属于 response_item，但不能混进用户对话。
+		if strings.ToLower(strings.TrimSpace(gjson.Get(line, "payload.type").String())) != "message" {
+			return projectManagerConversationMessage{}, false
+		}
+
+		role := strings.ToLower(strings.TrimSpace(gjson.Get(line, "payload.role").String()))
+		if role != "user" && role != "assistant" {
+			return projectManagerConversationMessage{}, false
+		}
+
+		content := extractProjectManagerConversationText(gjson.Get(line, "payload.content"))
+		if content == "" {
+			return projectManagerConversationMessage{}, false
+		}
+
+		conversationRole := "agent"
+		payloadType := "agent_message"
+		if role == "user" {
+			conversationRole = "user"
+			payloadType = "user_message"
+		}
+		return projectManagerConversationMessage{
+			PayloadType: payloadType,
+			Role:        conversationRole,
+			Content:     content,
+		}, true
+	}
+
+	return projectManagerConversationMessage{}, false
+}
+
+func extractProjectManagerConversationText(content gjson.Result) string {
+	if !content.Exists() {
+		return ""
+	}
+	if !content.IsArray() {
+		return strings.TrimSpace(content.String())
+	}
+
+	// content 可能同时包含多个文本块；只拼接带 text 的块，避免把图片、工具参数或结构化对象序列化到气泡里。
+	parts := make([]string, 0, 2)
+	content.ForEach(func(_, item gjson.Result) bool {
+		if text := strings.TrimSpace(item.Get("text").String()); text != "" {
+			parts = append(parts, text)
+		}
+		return true
+	})
+	return strings.TrimSpace(strings.Join(parts, "\n"))
 }
 
 func (s *ProjectManagerService) findProjectManagerSessionFileByID(sessionID string) (projectManagerConversationFile, error) {
@@ -263,26 +346,17 @@ func readProjectManagerSessionConversationItems(path string, sessionID string) (
 		if line == "" {
 			continue
 		}
-		if gjson.Get(line, "type").String() != "event_msg" {
+		message, ok := parseProjectManagerConversationMessage(line)
+		if !ok {
 			continue
 		}
 
-		payloadType := gjson.Get(line, "payload.type").String()
-		if payloadType != "user_message" && payloadType != "agent_message" {
-			continue
-		}
-
-		content := strings.TrimSpace(gjson.Get(line, "payload.message").String())
-		if content == "" {
-			continue
-		}
-
-		itemID := buildProjectManagerConversationMessageID(sessionID, payloadType, lineNumber)
+		itemID := buildProjectManagerConversationMessageID(sessionID, message.PayloadType, lineNumber)
 		item := SessionConversationItem{
 			ID:         itemID,
 			SessionID:  sessionID,
-			Role:       projectManagerConversationRole(payloadType),
-			Content:    content,
+			Role:       message.Role,
+			Content:    message.Content,
 			Timestamp:  parseProjectManagerConversationTimestamp(gjson.Get(line, "timestamp").String()),
 			SourceFile: path,
 			SourceLine: lineNumber,
@@ -290,7 +364,7 @@ func readProjectManagerSessionConversationItems(path string, sessionID string) (
 
 		// 这里把“agent 属于哪个 user”在后端直接定死。
 		// 前端后续无论做批量勾选、折叠还是剪枝，统一消费 reply_for，避免每个入口各自猜一套关联规则。
-		if payloadType == "user_message" {
+		if message.Role == "user" {
 			currentUserID = itemID
 		} else if currentUserID != "" {
 			item.ReplyFor = currentUserID
@@ -315,10 +389,7 @@ func readProjectManagerRolloutConversationItems(path string, sessionID string) (
 	currentUserID := ""
 	for _, turn := range parsed.Turns {
 		for _, record := range turn.Records {
-			if record.Type != "event_msg" {
-				continue
-			}
-			if record.PayloadType != "user_message" && record.PayloadType != "agent_message" {
+			if record.ConversationRole == "" {
 				continue
 			}
 			content := strings.TrimSpace(record.Message)
@@ -326,23 +397,24 @@ func readProjectManagerRolloutConversationItems(path string, sessionID string) (
 				continue
 			}
 
-			itemID := buildProjectManagerConversationMessageID(sessionID, record.PayloadType, record.LineIndex+1)
+			payloadType := projectManagerConversationPayloadType(record.ConversationRole)
+			itemID := buildProjectManagerConversationMessageID(sessionID, payloadType, record.LineIndex+1)
 			item := SessionConversationItem{
 				ID:         itemID,
 				SessionID:  sessionID,
-				Role:       projectManagerConversationRole(record.PayloadType),
+				Role:       record.ConversationRole,
 				Content:    content,
 				Timestamp:  record.Timestamp,
 				SourceFile: path,
 				SourceLine: record.LineIndex + 1,
 				TurnID:     strings.TrimSpace(turn.TurnID),
 			}
-			if record.PayloadType == "user_message" {
+			if record.ConversationRole == "user" {
 				// 一轮用量属于用户发起的任务，不挂到可能有多条的 agent 回复上，
 				// 前端据此能稳定在每句提问下展示完整统计。
 				item.TurnUsage = projectManagerCloneTurnUsage(turn.Usage)
 			}
-			if record.PayloadType == "user_message" {
+			if record.ConversationRole == "user" {
 				currentUserID = itemID
 			} else if currentUserID != "" {
 				item.ReplyFor = currentUserID
@@ -700,6 +772,10 @@ func parseProjectManagerRolloutFile(path string, expectedSessionID string) (proj
 		payloadType := gjson.Get(trimmed, "payload.type").String()
 		if lineType == "session_meta" && result.SessionID == "" {
 			result.SessionID = strings.TrimSpace(gjson.Get(trimmed, "payload.id").String())
+			if result.SessionID == "" {
+				// Codex 新格式同时提供 id 和 session_id，但部分中间版本只保留后者。
+				result.SessionID = strings.TrimSpace(gjson.Get(trimmed, "payload.session_id").String())
+			}
 		}
 
 		if lineType == "event_msg" && payloadType == "task_started" {
@@ -729,6 +805,10 @@ func parseProjectManagerRolloutFile(path string, expectedSessionID string) (proj
 			Role:        strings.TrimSpace(gjson.Get(trimmed, "payload.role").String()),
 			Message:     strings.TrimSpace(gjson.Get(trimmed, "payload.message").String()),
 		}
+		if message, ok := parseProjectManagerConversationMessage(trimmed); ok {
+			record.ConversationRole = message.Role
+			record.Message = message.Content
+		}
 		turn := &result.Turns[currentTurnIndex]
 		turn.Records = append(turn.Records, record)
 		if record.Timestamp > turn.LastActivityAt {
@@ -738,10 +818,10 @@ func parseProjectManagerRolloutFile(path string, expectedSessionID string) (proj
 			usageAccumulator.add(trimmed, turn)
 		}
 
-		if lineType == "event_msg" && payloadType == "user_message" && turn.UserMessage == "" {
+		if record.ConversationRole == "user" && turn.UserMessage == "" {
 			turn.UserMessage = record.Message
 		}
-		if lineType == "event_msg" && payloadType == "agent_message" {
+		if record.ConversationRole == "agent" {
 			turn.AgentLineIndices = append(turn.AgentLineIndices, lineIndex)
 		}
 		if lineType == "event_msg" && payloadType == "task_complete" {
@@ -796,6 +876,13 @@ func normalizeProjectManagerConversationText(value string) string {
 
 func buildProjectManagerConversationMessageID(sessionID string, payloadType string, lineNumber int) string {
 	return fmt.Sprintf("%s:%s:%d", strings.TrimSpace(sessionID), projectManagerConversationRole(payloadType), lineNumber)
+}
+
+func projectManagerConversationPayloadType(role string) string {
+	if strings.TrimSpace(strings.ToLower(role)) == "user" {
+		return "user_message"
+	}
+	return "agent_message"
 }
 
 func projectManagerConversationRole(payloadType string) string {

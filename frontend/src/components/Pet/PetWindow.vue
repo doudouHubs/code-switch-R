@@ -43,6 +43,7 @@ import {
 import {
   countPetDreamCharacters,
   getRandomPetDreamDelay,
+  PET_DREAM_IMAGE_SIZE,
   normalizePetDreamImagePayload
 } from './petDreamProtocol'
 import {
@@ -2012,7 +2013,7 @@ async function generateDreamImage(
         'Preserve the concrete setting, characters, objects, events, and emotion. Do not add text, captions, speech bubbles, UI, collage panels, or a second scene.',
         `Dream: ${dream.dream}`
       ].join('\n'),
-      size: '512x512',
+      size: PET_DREAM_IMAGE_SIZE,
       count: 1,
       ...(referenceImage ? { referenceImage } : {})
     })

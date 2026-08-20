@@ -24,7 +24,6 @@ import (
 
 // warnedServiceTiers 去重容器:首次见到未知 service_tier 时告警,之后静默。
 var warnedServiceTiers sync.Map
-var requestLogQueueUnavailableWarning sync.Once
 
 // warnUnknownTier 在首次遇到未知 service_tier 值时打印一次警告。
 // 同值的后续请求静默,不同未知 tier 分别告警一次。
@@ -993,49 +992,7 @@ func (prs *ProviderRelayService) forwardRequestOnce(
 		requestLog.Provider = ResolveProviderAlias(requestLog.Platform, requestLog.Provider)
 		finalizeRequestLogUsage(requestLog)
 
-		// 【修复】判空保护：避免队列未初始化时 panic
-		if GlobalDBQueueLogs == nil {
-			// 队列异常是进程级状态，不应在每个请求结束时重复刷屏。
-			requestLogQueueUnavailableWarning.Do(func() {
-				fmt.Printf("⚠️  写入 request_log 失败: 队列未初始化\n")
-			})
-			return
-		}
-
-		// 使用批量队列写入 request_log（高频同构操作，批量提交）
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		err := GlobalDBQueueLogs.ExecBatchCtx(ctx, `
-			INSERT INTO request_log (
-				platform, model, provider, http_code,
-				input_tokens, output_tokens, cache_create_tokens, cache_read_tokens,
-				reasoning_tokens, is_stream, duration_sec,
-				ephemeral_5m_tokens, ephemeral_1h_tokens, service_tier,
-				requested_model, billable_input_tokens, usage_accounting_version, usage_raw_json
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`,
-			requestLog.Platform,
-			requestLog.Model,
-			requestLog.Provider,
-			requestLog.HttpCode,
-			requestLog.InputTokens,
-			requestLog.OutputTokens,
-			requestLog.CacheCreateTokens,
-			requestLog.CacheReadTokens,
-			requestLog.ReasoningTokens,
-			boolToInt(requestLog.IsStream),
-			requestLog.DurationSec,
-			requestLog.Ephemeral5mTokens,
-			requestLog.Ephemeral1hTokens,
-			requestLog.ServiceTier,
-			requestLog.RequestedModel,
-			requestLog.BillableInputTokens,
-			requestLog.UsageAccountingVersion,
-			requestLog.UsageRawJSON,
-		)
-
-		if err != nil {
+		if err := enqueueRequestLog(requestLog); err != nil {
 			fmt.Printf("写入 request_log 失败: %v\n", err)
 		}
 	}()
@@ -1276,6 +1233,10 @@ func ensureRequestLogTableWithDB(db *sql.DB) error {
 		reasoning_tokens INTEGER,
 		is_stream INTEGER DEFAULT 0,
 		duration_sec REAL DEFAULT 0,
+		request_type TEXT DEFAULT 'chat',
+		image_count INTEGER DEFAULT 0,
+		image_width INTEGER DEFAULT 0,
+		image_height INTEGER DEFAULT 0,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	)`
 
@@ -1298,6 +1259,10 @@ func ensureRequestLogTableWithDB(db *sql.DB) error {
 		{"billable_input_tokens", "INTEGER DEFAULT 0"},
 		{"usage_accounting_version", "INTEGER DEFAULT 0"},
 		{"usage_raw_json", "TEXT DEFAULT ''"},
+		{"request_type", "TEXT DEFAULT 'chat'"},
+		{"image_count", "INTEGER DEFAULT 0"},
+		{"image_width", "INTEGER DEFAULT 0"},
+		{"image_height", "INTEGER DEFAULT 0"},
 	}
 	for _, m := range migrations {
 		if err := ensureRequestLogColumn(db, m.column, m.definition); err != nil {
@@ -1370,6 +1335,10 @@ type ReqeustLog struct {
 	Model             string `json:"model"`
 	RequestedModel    string `json:"requested_model"`
 	Provider          string `json:"provider"` // provider name
+	RequestType       string `json:"request_type"`
+	ImageCount        int    `json:"image_count"`
+	ImageWidth        int    `json:"image_width"`
+	ImageHeight       int    `json:"image_height"`
 	HttpCode          int    `json:"http_code"`
 	InputTokens       int    `json:"input_tokens"`
 	OutputTokens      int    `json:"output_tokens"`
@@ -1396,6 +1365,7 @@ type ReqeustLog struct {
 	CacheReadCost          float64 `json:"cache_read_cost"`
 	Ephemeral5mCost        float64 `json:"ephemeral_5m_cost"`
 	Ephemeral1hCost        float64 `json:"ephemeral_1h_cost"`
+	ImageCost              float64 `json:"image_cost"`
 	TotalCost              float64 `json:"total_cost"`
 	HasPricing             bool    `json:"has_pricing"`
 }
@@ -1744,28 +1714,9 @@ func (prs *ProviderRelayService) geminiProxyHandler(apiVersion string) gin.Handl
 			// 若请求过程中发生 rename,把旧名兑换成新名再落库
 			requestLog.Provider = ResolveProviderAlias(requestLog.Platform, requestLog.Provider)
 			finalizeRequestLogUsage(requestLog)
-			if GlobalDBQueueLogs == nil {
-				return
+			if err := enqueueRequestLog(requestLog); err != nil {
+				fmt.Printf("写入 request_log 失败: %v\n", err)
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_ = GlobalDBQueueLogs.ExecBatchCtx(ctx, `
-				INSERT INTO request_log (
-					platform, model, provider, http_code,
-					input_tokens, output_tokens, cache_create_tokens, cache_read_tokens,
-					reasoning_tokens, is_stream, duration_sec,
-					ephemeral_5m_tokens, ephemeral_1h_tokens, service_tier,
-					requested_model, billable_input_tokens, usage_accounting_version, usage_raw_json
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			`,
-				requestLog.Platform, requestLog.Model, requestLog.Provider, requestLog.HttpCode,
-				requestLog.InputTokens, requestLog.OutputTokens, requestLog.CacheCreateTokens,
-				requestLog.CacheReadTokens, requestLog.ReasoningTokens,
-				boolToInt(requestLog.IsStream), requestLog.DurationSec,
-				requestLog.Ephemeral5mTokens, requestLog.Ephemeral1hTokens, requestLog.ServiceTier,
-				requestLog.RequestedModel, requestLog.BillableInputTokens,
-				requestLog.UsageAccountingVersion, requestLog.UsageRawJSON,
-			)
 		}()
 
 		// 获取拉黑功能开关状态

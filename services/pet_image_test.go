@@ -172,6 +172,40 @@ func TestPetImageServiceGeneratesB64JSONAndUsesSharedAuth(t *testing.T) {
 	}
 }
 
+func TestPetImageServiceForwardsFourThreeSize(t *testing.T) {
+	imageBytes := petImageTestPNG(t)
+	request := petImageTestRequest()
+	request.Size = "1024x768"
+	transport := petImageTestRoundTripFunc(func(httpRequest *http.Request) (*http.Response, error) {
+		var payload struct {
+			Size string `json:"size"`
+		}
+		body, err := io.ReadAll(httpRequest.Body)
+		if err != nil {
+			t.Fatalf("读取 4:3 图片请求体失败: %v", err)
+		}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatalf("解析 4:3 图片请求体失败: %v", err)
+		}
+		// 梦境调用固定传入 1024x768；服务层必须原样透传，不能退回默认正方形尺寸。
+		if payload.Size != "1024x768" {
+			t.Fatalf("4:3 图片尺寸 = %q, want 1024x768", payload.Size)
+		}
+		return petImageTestResponse(http.StatusOK, "application/json", petImageTestJSONResponse(imageBytes)), nil
+	})
+
+	result, err := NewPetImageService(
+		&petImageTestProviderReader{config: petImageTestConfig()},
+		transport,
+	).GenerateImage(context.Background(), request)
+	if err != nil {
+		t.Fatalf("4:3 图片请求 error = %v", err)
+	}
+	if len(result.Images) != 1 || !bytes.Equal(result.Images[0], imageBytes) {
+		t.Fatalf("4:3 图片结果 = %#v", result)
+	}
+}
+
 func TestPetImageServiceAllowsCodexResponsesProviderForImages(t *testing.T) {
 	imageBytes := petImageTestPNG(t)
 	config := petImageTestConfig()
