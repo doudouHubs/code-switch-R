@@ -347,13 +347,15 @@ func petWindowSetNativePlatformLayer(hwnd, platform windows.HWND) (bool, error) 
 		return false, fmt.Errorf("platform window cannot be the pet window itself")
 	}
 	if platform == 0 {
-		if err := petWindowSetNativeTopmost(hwnd, false); err != nil {
+		// 空平台不是“普通窗口层级”：桌面地面必须恢复 OpenCowork 的
+		// HWND_TOPMOST，否则用户切换到其它应用后桌宠会被主窗口完全压住。
+		if err := petWindowSetNativeTopmost(hwnd, true); err != nil {
 			return false, err
 		}
-		if err := petWindowSetNativePosition(hwnd, 0, 0, 0, 0, false, false); err != nil {
+		if err := petWindowSetNativePosition(hwnd, 0, 0, 0, 0, true, false); err != nil {
 			return false, err
 		}
-		return false, nil
+		return true, nil
 	}
 	if !windows.IsWindowVisible(platform) {
 		return false, fmt.Errorf("platform window %#x is not visible", uintptr(platform))

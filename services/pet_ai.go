@@ -251,6 +251,7 @@ type PetAIDependencies struct {
 	WorkspaceResolver     PetWorkspaceResolver
 	Transport             PetAIHTTPTransport
 	Emitter               PetAIEventEmitter
+	ActivityEmitter       PetActivityEmitter
 	AudioEmitter          PetAudioEventEmitter
 	Options               PetAIOptions
 }
@@ -262,6 +263,7 @@ type PetAIService struct {
 	workspaceResolver     PetWorkspaceResolver
 	transport             PetAIHTTPTransport
 	emitter               PetAIEventEmitter
+	activityEmitter       PetActivityEmitter
 	audioEmitter          PetAudioEventEmitter
 	options               PetAIOptions
 
@@ -300,6 +302,7 @@ func NewPetAIServiceWithDependencies(deps PetAIDependencies) *PetAIService {
 		workspaceResolver:     deps.WorkspaceResolver,
 		transport:             deps.Transport,
 		emitter:               deps.Emitter,
+		activityEmitter:       deps.ActivityEmitter,
 		audioEmitter:          deps.AudioEmitter,
 		options:               normalizePetAIOptions(deps.Options),
 		active:                make(map[string]*petAIRequestState),
@@ -366,6 +369,7 @@ type PetTTSRequest = PetSpeechRequest
 type petAIRequestState struct {
 	cancel   context.CancelFunc
 	sequence int64
+	activity *petActivityRequest
 }
 
 type petAIChatInput struct {
@@ -456,7 +460,10 @@ func (s *PetAIService) StartChat(ctx context.Context, request PetChatRequest) (P
 	}
 
 	requestCtx, cancel := context.WithTimeout(ctx, s.options.Timeout)
-	state := &petAIRequestState{cancel: cancel}
+	state := &petAIRequestState{
+		cancel:   cancel,
+		activity: newPetActivityRequest(s.activityEmitter, PetActivitySourcePetAI, input.RequestID, input.PetID),
+	}
 	if err := s.reserveRequest(input.RequestID, state); err != nil {
 		cancel()
 		return PetChatStartResult{}, err
@@ -498,7 +505,8 @@ func (s *PetAIService) CancelChat(requestID string) error {
 }
 
 // GenerateDreamText 是同步文本入口，复用 executeText 的请求构造、SSE 解析和上限控制。
-// 它不发 started/delta/completed 事件，避免后台梦境污染主动聊天流。
+// 梦境不发 pet.ai 聊天流事件，但真实梦境文本仍会触发独立 pet.activity，
+// 这样睡眠中的宠物能进入工作态，而不会把后台 JSON 过程混进聊天窗口。
 func (s *PetAIService) GenerateDreamText(ctx context.Context, request PetDreamTextRequest) (string, error) {
 	input, err := s.normalizeChatRequest(PetChatRequest{
 		PetID:     request.PetID,
@@ -526,15 +534,31 @@ func (s *PetAIService) GenerateDreamText(ctx context.Context, request PetDreamTe
 	requestCtx, cancel := context.WithTimeout(ctx, s.options.Timeout)
 	defer cancel()
 
-	state := &petAIRequestState{cancel: cancel}
+	state := &petAIRequestState{
+		cancel:   cancel,
+		activity: newPetActivityRequest(s.activityEmitter, PetActivitySourcePetAI, input.RequestID, input.PetID),
+	}
 	if err := s.reserveRequest(input.RequestID, state); err != nil {
 		return "", err
 	}
 	defer s.releaseRequest(input.RequestID, state)
 
-	text, err := s.executeText(requestCtx, provider, input, nil, nil)
+	activityPhase := PetActivityCompleted
+	defer func() {
+		state.activity.Finish(activityPhase)
+	}()
+	text, err := s.executeText(requestCtx, provider, input, func(delta string) error {
+		if strings.TrimSpace(delta) != "" {
+			state.activity.Output()
+		}
+		return nil
+	}, nil)
 	if err != nil {
+		activityPhase = petActivityPhaseForResult(requestCtx, err)
 		return "", classifyPetAIExecutionError(err, requestCtx)
+	}
+	if strings.TrimSpace(text) != "" {
+		state.activity.Output()
 	}
 	return text, nil
 }
@@ -600,7 +624,11 @@ func (s *PetAIService) runChat(
 	input petAIChatInput,
 	provider petAIProviderRuntime,
 ) {
-	defer s.releaseRequest(input.RequestID, state)
+	activityPhase := PetActivityCompleted
+	defer func() {
+		state.activity.Finish(activityPhase)
+		s.releaseRequest(input.RequestID, state)
+	}()
 	var usage modelpricing.UsageSnapshot
 	usageSeen := false
 	onUsage := func(next modelpricing.UsageSnapshot) {
@@ -611,6 +639,11 @@ func (s *PetAIService) runChat(
 	}
 
 	text, err := s.executeText(ctx, provider, input, func(delta string) error {
+		if strings.TrimSpace(delta) != "" {
+			// 工作态绑定完整请求而不是单个 Token；ActivityRequest 自己负责
+			// 首次输出去重和 provider 重试期间的单次终态。
+			state.activity.Output()
+		}
 		return s.emit(state, PetAIEvent{
 			Type:      PetAIEventDelta,
 			PetID:     input.PetID,
@@ -620,6 +653,7 @@ func (s *PetAIService) runChat(
 	}, onUsage)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.Canceled) && !isPetAIEventError(err) {
+			activityPhase = PetActivityCancelled
 			_ = s.emit(state, PetAIEvent{
 				Type:      PetAIEventCancelled,
 				PetID:     input.PetID,
@@ -627,6 +661,7 @@ func (s *PetAIService) runChat(
 			})
 			return
 		}
+		activityPhase = PetActivityFailed
 		_ = s.emit(state, PetAIEvent{
 			Type:      PetAIEventFailed,
 			PetID:     input.PetID,
@@ -637,6 +672,7 @@ func (s *PetAIService) runChat(
 	}
 
 	if ctx.Err() != nil {
+		activityPhase = PetActivityCancelled
 		_ = s.emit(state, PetAIEvent{
 			Type:      PetAIEventCancelled,
 			PetID:     input.PetID,

@@ -3,6 +3,7 @@
 package services
 
 import (
+	"strings"
 	"sync"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -190,9 +191,17 @@ func (d *wailsPetWindowDriver) SetAlwaysOnTop(alwaysOnTop bool) error {
 	return nil
 }
 
-func (d *wailsPetWindowDriver) SetPlatformLayer(_ string) (bool, error) {
-	// 非 Windows 没有统一的跨窗口 Z 序查询；保持普通层级，不伪造 topmost。
-	return false, nil
+func (d *wailsPetWindowDriver) SetPlatformLayer(platformID string) (bool, error) {
+	// 非 Windows 没有统一的跨窗口 Z 序查询；空平台仍表达桌面地面，
+	// 尝试恢复 Wails 自身的置顶开关，并只把该确定语义返回给公共状态机。
+	d.mu.Lock()
+	window := d.window
+	d.mu.Unlock()
+	topMost := strings.TrimSpace(platformID) == ""
+	if window != nil {
+		window.SetAlwaysOnTop(topMost)
+	}
+	return topMost, nil
 }
 
 func (d *wailsPetWindowDriver) IsFocused() bool {

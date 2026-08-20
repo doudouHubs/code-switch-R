@@ -163,7 +163,7 @@ func (f *fakePetWindowDriver) SetPlatformLayer(platformID string) (bool, error) 
 	}
 	f.platformLayerCalls = append(f.platformLayerCalls, platformID)
 	if platformID == "" {
-		return false, nil
+		return true, nil
 	}
 	return f.platformLayerTopmost, nil
 }
@@ -228,7 +228,7 @@ func TestPetWindowOpenCloseToggleAreIdempotent(t *testing.T) {
 	window, driver := newTestPetWindow(t)
 
 	state := window.State()
-	if state.Open || state.Mode != PetWindowPassive || !state.ClickThrough || state.AlwaysOnTop {
+	if state.Open || state.Mode != PetWindowPassive || !state.ClickThrough || !state.AlwaysOnTop {
 		t.Fatalf("initial state = %#v", state)
 	}
 
@@ -245,7 +245,7 @@ func TestPetWindowOpenCloseToggleAreIdempotent(t *testing.T) {
 		t.Fatalf("repeated Open() should refresh the existing driver window, calls = %d", driver.openCalls)
 	}
 	config := driver.openConfigs[0]
-	if !config.IgnoreMouseEvents || config.AlwaysOnTop || config.Width != 320 || config.Height != 240 {
+	if !config.IgnoreMouseEvents || !config.AlwaysOnTop || config.Width != 320 || config.Height != 240 {
 		t.Fatalf("open config = %#v", config)
 	}
 
@@ -394,8 +394,8 @@ func TestPetWindowPlatformLayerUpdatesZOrderState(t *testing.T) {
 	if err := window.SetPlatformLayer(""); err != nil {
 		t.Fatalf("SetPlatformLayer(empty) error = %v", err)
 	}
-	if state := window.State(); state.AlwaysOnTop {
-		t.Fatalf("ground layer state = %#v, want ordinary layer", state)
+	if state := window.State(); !state.AlwaysOnTop {
+		t.Fatalf("ground layer state = %#v, want topmost ground layer", state)
 	}
 	if err := window.Close(); err != nil {
 		t.Fatalf("Close() after platform layer error = %v", err)
@@ -403,8 +403,8 @@ func TestPetWindowPlatformLayerUpdatesZOrderState(t *testing.T) {
 	if err := window.Open(); err != nil {
 		t.Fatalf("Open() after platform layer error = %v", err)
 	}
-	if config := driver.openConfigs[len(driver.openConfigs)-1]; config.AlwaysOnTop {
-		t.Fatalf("reopened window config = %#v, want ordinary layer", config)
+	if config := driver.openConfigs[len(driver.openConfigs)-1]; !config.AlwaysOnTop {
+		t.Fatalf("reopened window config = %#v, want topmost ground layer", config)
 	}
 }
 
@@ -447,9 +447,9 @@ func TestPetWindowPropagatesActiveDriverOperationErrors(t *testing.T) {
 				driver.topErr = errors.New("topmost failed")
 			},
 			action: func(window *PetWindow) error {
-				// 桌宠默认普通层级；切换到置顶才能真正经过 driver，
+				// 桌宠默认处于桌面地面置顶；切换到普通层级才能真正经过 driver，
 				// 这样注入的底层错误才是在“活动操作”上生效，而不是被同值幂等短路。
-				return window.SetAlwaysOnTop(true)
+				return window.SetAlwaysOnTop(false)
 			},
 		},
 		{

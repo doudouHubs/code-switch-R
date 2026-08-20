@@ -54,6 +54,11 @@ func TestPetWindowAPIForwardsWindowControls(t *testing.T) {
 	if err := api.Focus(); err != nil {
 		t.Fatalf("Focus() error = %v", err)
 	}
+	// 桌面地面默认置顶；显式切换 false 再切回 true，覆盖 API 的两条 setter 路径，
+	// 同时避免把幂等调用误当成底层 driver 转发。
+	if err := api.SetAlwaysOnTop(false); err != nil {
+		t.Fatalf("SetAlwaysOnTop(false) error = %v", err)
+	}
 	if err := api.SetAlwaysOnTop(true); err != nil {
 		t.Fatalf("SetAlwaysOnTop(true) error = %v", err)
 	}
@@ -74,7 +79,7 @@ func TestPetWindowAPIForwardsWindowControls(t *testing.T) {
 	if len(driver.sizeCalls) != 1 || driver.sizeCalls[0] != [2]int{500, 360} {
 		t.Fatalf("size calls = %v", driver.sizeCalls)
 	}
-	if driver.focusCalls != 1 || len(driver.topCalls) != 1 || !driver.topCalls[0] {
+	if driver.focusCalls != 1 || len(driver.topCalls) != 2 || driver.topCalls[0] || !driver.topCalls[1] {
 		t.Fatalf("focus/top calls = %d/%v", driver.focusCalls, driver.topCalls)
 	}
 	if len(driver.platformLayerCalls) != 1 || driver.platformLayerCalls[0] != "0x1234" {

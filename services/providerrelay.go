@@ -52,6 +52,7 @@ type ProviderRelayService struct {
 	notificationService *NotificationService
 	appSettings         *AppSettingsService // 应用设置服务（用于获取轮询开关状态）
 	requestCapture      *RequestCaptureService
+	activityEmitter     PetActivityEmitter
 	server              *http.Server
 	addr                string
 	lastUsed            map[string]*LastUsedProvider // 各平台最后使用的供应商
@@ -365,6 +366,8 @@ func (prs *ProviderRelayService) registerRoutes(router gin.IRouter) {
 
 func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		prs.beginProviderRelayActivity(c)
+		defer prs.finishProviderRelayActivity(c)
 		var bodyBytes []byte
 		if c.Request.Body != nil {
 			data, err := io.ReadAll(c.Request.Body)
@@ -1063,12 +1066,8 @@ func (prs *ProviderRelayService) forwardRequestOnce(
 	if status == 0 {
 		fmt.Printf("[WARN] Provider %s 返回状态码 0，但无错误，当作成功处理\n", provider.Name)
 		var copyErr error
-		if sseConverter != nil && isStream {
-			// 使用协议转换 Hook
-			_, copyErr = resp.ToHttpResponseWriter(c.Writer, protocolConvertHook(sseConverter, kind, requestLog))
-		} else {
-			_, copyErr = resp.ToHttpResponseWriter(c.Writer, ReqeustLogHook(c, kind, requestLog))
-		}
+		hooks := providerRelayResponseHooks(c, kind, requestLog, isStream, sseConverter)
+		_, copyErr = resp.ToHttpResponseWriter(c.Writer, hooks...)
 		if copyErr != nil {
 			fmt.Printf("[WARN] 复制响应到客户端失败（不影响provider成功判定）: %v\n", copyErr)
 		}
@@ -1080,12 +1079,8 @@ func (prs *ProviderRelayService) forwardRequestOnce(
 			return forwardBufferedCodexStream(c, provider, resp, sseConverter, requestLog)
 		}
 		var copyErr error
-		if sseConverter != nil && isStream {
-			// 使用协议转换 Hook
-			_, copyErr = resp.ToHttpResponseWriter(c.Writer, protocolConvertHook(sseConverter, kind, requestLog))
-		} else {
-			_, copyErr = resp.ToHttpResponseWriter(c.Writer, ReqeustLogHook(c, kind, requestLog))
-		}
+		hooks := providerRelayResponseHooks(c, kind, requestLog, isStream, sseConverter)
+		_, copyErr = resp.ToHttpResponseWriter(c.Writer, hooks...)
 		if copyErr != nil {
 			fmt.Printf("[WARN] 复制响应到客户端失败（不影响provider成功判定）: %v\n", copyErr)
 		}
@@ -1507,7 +1502,7 @@ func mergeGeminiUsageMetadata(usage gjson.Result, reqLog *ReqeustLog) {
 // streamGeminiResponseWithHook 流式传输 Gemini 响应并通过 Hook 提取 token 用量
 // 【修复】维护跨 chunk 缓冲，确保完整 SSE 事件解析
 // Gemini SSE 格式: "data: {json}\n\n" 或 "data: [DONE]\n\n"
-func streamGeminiResponseWithHook(body io.Reader, writer io.Writer, requestLog *ReqeustLog) error {
+func streamGeminiResponseWithHook(body io.Reader, writer io.Writer, requestLog *ReqeustLog, activity *petActivityRequest) error {
 	buf := make([]byte, 8192)   // 增大缓冲区减少系统调用
 	var lineBuf strings.Builder // 跨 chunk 行缓冲
 
@@ -1524,12 +1519,12 @@ func streamGeminiResponseWithHook(body io.Reader, writer io.Writer, requestLog *
 				flusher.Flush()
 			}
 			// 解析 SSE 数据提取 token 用量（使用缓冲处理跨 chunk 情况）
-			parseGeminiSSEWithBuffer(string(chunk), &lineBuf, requestLog)
+			parseGeminiSSEWithBuffer(string(chunk), &lineBuf, requestLog, activity)
 		}
 		if err != nil {
 			// 处理缓冲区残留数据
 			if lineBuf.Len() > 0 {
-				parseGeminiSSELine(lineBuf.String(), requestLog)
+				parseGeminiSSELine(lineBuf.String(), requestLog, activity)
 				lineBuf.Reset()
 			}
 			if err == io.EOF {
@@ -1542,7 +1537,7 @@ func streamGeminiResponseWithHook(body io.Reader, writer io.Writer, requestLog *
 
 // parseGeminiSSEWithBuffer 使用缓冲处理跨 chunk 的 SSE 事件
 // 【修复】解决 JSON 被 TCP 分割到多个 chunk 导致解析失败的问题
-func parseGeminiSSEWithBuffer(chunk string, lineBuf *strings.Builder, requestLog *ReqeustLog) {
+func parseGeminiSSEWithBuffer(chunk string, lineBuf *strings.Builder, requestLog *ReqeustLog, activity *petActivityRequest) {
 	// 将当前 chunk 追加到缓冲
 	lineBuf.WriteString(chunk)
 	content := lineBuf.String()
@@ -1568,7 +1563,7 @@ func parseGeminiSSEWithBuffer(chunk string, lineBuf *strings.Builder, requestLog
 		content = content[idx:]
 
 		// 解析事件中的 data 行
-		parseGeminiSSELine(event, requestLog)
+		parseGeminiSSELine(event, requestLog, activity)
 	}
 
 	// 更新缓冲区为未处理的残留数据
@@ -1578,7 +1573,7 @@ func parseGeminiSSEWithBuffer(chunk string, lineBuf *strings.Builder, requestLog
 
 // parseGeminiSSELine 解析单个 SSE 事件提取 usageMetadata
 // 【优化】只在包含 usageMetadata 时才调用 gjson 解析
-func parseGeminiSSELine(event string, requestLog *ReqeustLog) {
+func parseGeminiSSELine(event string, requestLog *ReqeustLog, activity *petActivityRequest) {
 	lines := strings.Split(event, "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -1589,6 +1584,7 @@ func parseGeminiSSELine(event string, requestLog *ReqeustLog) {
 		if data == "[DONE]" || data == "" {
 			continue
 		}
+		observeProviderRelayOutput(activity, []byte(data))
 		// 【优化】快速检查是否包含 usageMetadata，避免无效解析
 		if !strings.Contains(data, "usageMetadata") {
 			continue
@@ -1618,6 +1614,8 @@ func ReplaceModelInRequestBody(bodyBytes []byte, newModel string) ([]byte, error
 // geminiProxyHandler 处理 Gemini API 请求（支持 Level 分组降级和黑名单）
 func (prs *ProviderRelayService) geminiProxyHandler(apiVersion string) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		prs.beginProviderRelayActivity(c)
+		defer prs.finishProviderRelayActivity(c)
 		// 获取完整路径（例如 /v1beta/models/gemini-2.5-pro:generateContent）
 		fullPath := c.Param("any")
 		endpoint := apiVersion + fullPath
@@ -2001,7 +1999,7 @@ func (prs *ProviderRelayService) forwardGeminiRequest(
 		c.Status(resp.StatusCode)
 		c.Writer.Flush()
 		// 【重要】从 Flush() 开始，响应头已写入客户端，任何失败都不能重试
-		copyErr := streamGeminiResponseWithHook(resp.Body, c.Writer, requestLog)
+		copyErr := streamGeminiResponseWithHook(resp.Body, c.Writer, requestLog, providerRelayActivityFromContext(c))
 		if copyErr != nil {
 			fmt.Printf("[Gemini]   ⚠️ 流式传输中断: %s | 错误: %v\n", provider.Name, copyErr)
 			// 流式传输中断：已写入部分响应，客户端会收到不完整数据
@@ -2015,6 +2013,7 @@ func (prs *ProviderRelayService) forwardGeminiRequest(
 			// 【修复】此时 header 尚未写入客户端，可以重试/降级
 			return false, fmt.Sprintf("读取响应失败: %v", readErr), false
 		}
+		observeProviderRelayOutput(providerRelayActivityFromContext(c), body)
 		// 解析 Gemini 用量数据
 		parseGeminiUsageMetadata(body, requestLog)
 		// 读取成功后再写 header 和 body
@@ -2047,6 +2046,8 @@ func parseGeminiUsageMetadata(body []byte, reqLog *ReqeustLog) {
 // toolId 用于区分不同的 CLI 工具，对应 provider kind 为 "custom:{toolId}"
 func (prs *ProviderRelayService) customCliProxyHandler() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		prs.beginProviderRelayActivity(c)
+		defer prs.finishProviderRelayActivity(c)
 		// 从 URL 参数提取 toolId
 		toolId := c.Param("toolId")
 		if toolId == "" {

@@ -62,11 +62,7 @@ func forwardBufferedCodexStream(
 	buffered := newBufferedCodexResponseWriter(maxBufferedCodexStreamBytes)
 	tracker := &codexStreamCompletionTracker{}
 	hooks := []xrequest.ResponseHook{tracker.hook}
-	if converter != nil {
-		hooks = append(hooks, protocolConvertHook(converter, "codex", requestLog))
-	} else {
-		hooks = append(hooks, ReqeustLogHook(c, "codex", requestLog))
-	}
+	hooks = append(hooks, providerRelayResponseHooks(c, "codex", requestLog, true, converter)...)
 
 	if _, err := resp.ToHttpResponseWriter(buffered, hooks...); err != nil {
 		requestLog.HttpCode = http.StatusBadGateway

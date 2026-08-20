@@ -211,6 +211,20 @@ interface PetProviderReference {
   autoFallback: boolean
 }
 
+type PetActivityPhase = 'output' | 'completed' | 'failed' | 'cancelled'
+
+interface PetActivityEvent {
+  phase: PetActivityPhase
+  petId: string
+  requestId: string
+  sequence: number
+}
+
+interface PetActivityRequestState {
+  sequence: number
+  terminal: boolean
+}
+
 interface PetDreamResult {
   dream: string
   title: string
@@ -273,6 +287,7 @@ const PET_WINDOW_IDLE_SECONDS_METHOD = `${PET_WINDOW_SERVICE}.IdleSeconds`
 const PET_WINDOW_PLATFORMS_METHOD = `${PET_WINDOW_SERVICE}.${PET_WINDOW_RUNTIME_METHODS.platforms}`
 const PET_WINDOW_POINTER_EVENT = 'pet.window.pointer'
 const PET_WINDOW_PLATFORMS_EVENT = 'pet.window.platforms.changed'
+const PET_ACTIVITY_EVENT = 'pet.activity'
 const PET_PLATFORM_REFRESH_DEBOUNCE_MS = 100
 const PET_IDLE_DOZE_THRESHOLD_SECONDS = 300
 const PET_IDLE_WAKE_THRESHOLD_SECONDS = 5
@@ -363,6 +378,9 @@ const atlasImageFailed = ref(false)
 // dozing 是系统空闲造成的前端表现，不写入 PetSnapshot.sleeping，避免误触发梦境和持久化睡眠规则。
 const dozing = ref(false)
 const dreamPaused = ref(false)
+// 工作态以请求为单位计数；同一时间多个请求并发时，任一请求仍有真实输出，
+// 宠物都不能回到环境行为。使用 shallowRef 替换 Set，避免每个事件建立深层代理。
+const activePetActivityRequestIds = shallowRef<Set<string>>(new Set())
 
 let clockTimer: number | undefined
 let runtimeTickTimer: number | undefined
@@ -423,6 +441,8 @@ let stopPetAudioEvent: (() => void) | null = null
 let stopPetPointerEvent: (() => void) | null = null
 let stopPetSettingsEvent: (() => void) | null = null
 let stopPetPlatformsEvent: (() => void) | null = null
+let stopPetActivityEvent: (() => void) | null = null
+const petActivityRequestStates = new Map<string, PetActivityRequestState>()
 
 const state = computed(() => snapshot.value?.state ?? null)
 const experience = computed(() => snapshot.value?.experience.totalExp ?? 0)
@@ -449,6 +469,9 @@ const atlasBehavior = computed(() => {
   if (action === 'bathe') return 'bathe'
   if (action === 'soak') return 'soak'
   if (action === 'play') return 'play'
+  // 只有真实 Token 才会进入工作态；连接等待、usage 和空事件不会改变动作。
+  // zen 是现有 atlas 的稳定动作，避免为工作态额外扩展皮肤资源契约。
+  if (activePetActivityRequestIds.value.size > 0) return 'zen'
   if (ambientBehavior.value === 'eat' || ambientBehavior.value === 'munch') return 'feed'
   if (ambientBehavior.value) return ambientBehavior.value
   return 'idle'
@@ -1546,6 +1569,7 @@ function canRunAmbientBehavior(): boolean {
       !dozing.value &&
       !actionBusy.value &&
       !transientAction.value &&
+      activePetActivityRequestIds.value.size === 0 &&
       !contextMenuOpen.value &&
       !dragging.value &&
       petBubble.value?.source !== 'dream'
@@ -1615,6 +1639,7 @@ function runAmbientBehavior(): void {
 
 function scheduleNextAmbientBehavior(): void {
   if (petWindowUnmounted || petDropSettlementActive || petDropSettlementPending) return
+  if (activePetActivityRequestIds.value.size > 0) return
   if (ambientTimer !== undefined) window.clearTimeout(ambientTimer)
   if (ambientBehavior.value) return
   // OpenCowork 在宠物回到 idle 后用 2.5~6.5 秒随机延迟排下一次行为，
@@ -2639,6 +2664,91 @@ function decodeEventPayload(value: unknown): Record<string, unknown> {
   }
 }
 
+function decodePetActivityPayload(value: unknown): Record<string, unknown> {
+  const unwrapped = Array.isArray(value) && value.length === 1 ? value[0] : value
+  if (isRecord(unwrapped)) return unwrapped
+  if (typeof unwrapped !== 'string' || !unwrapped.trim()) return {}
+  try {
+    const parsed: unknown = JSON.parse(unwrapped)
+    const parsedValue = Array.isArray(parsed) && parsed.length === 1 ? parsed[0] : parsed
+    return isRecord(parsedValue) ? parsedValue : {}
+  } catch {
+    return {}
+  }
+}
+
+function normalizePetActivityEvent(value: unknown): PetActivityEvent | null {
+  const source = decodePetActivityPayload(value)
+  const nested = decodePetActivityPayload(source.data)
+  const phaseValue = source.phase ?? nested.phase
+  const requestValue = source.requestId ?? source.request_id ?? nested.requestId ?? nested.request_id
+  const petValue = source.petId ?? source.pet_id ?? nested.petId ?? nested.pet_id
+  const sequenceValue = source.sequence ?? nested.sequence
+  const phase = typeof phaseValue === 'string' ? phaseValue : ''
+  const requestId = typeof requestValue === 'string' ? requestValue.trim() : ''
+  if (
+    !requestId ||
+    (phase !== 'output' && phase !== 'completed' && phase !== 'failed' && phase !== 'cancelled')
+  ) {
+    return null
+  }
+  const sequence = typeof sequenceValue === 'number' && Number.isFinite(sequenceValue)
+    ? Math.max(0, Math.floor(sequenceValue))
+    : 0
+  return {
+    phase: phase as PetActivityPhase,
+    petId: typeof petValue === 'string' ? petValue : '',
+    requestId,
+    sequence
+  }
+}
+
+function setPetActivityRequestActive(requestId: string, active: boolean): void {
+  const next = new Set(activePetActivityRequestIds.value)
+  if (active) next.add(requestId)
+  else next.delete(requestId)
+  if (next.size !== activePetActivityRequestIds.value.size || active !== next.has(requestId)) {
+    activePetActivityRequestIds.value = next
+  }
+}
+
+function rememberPetActivityRequest(requestId: string, state: PetActivityRequestState): void {
+  petActivityRequestStates.set(requestId, state)
+  // 桌宠窗口长期驻留；限制迟到事件去重表大小，避免按请求 ID 无限增长。
+  if (petActivityRequestStates.size <= 256) return
+  const oldest = petActivityRequestStates.keys().next().value as string | undefined
+  if (oldest && oldest !== requestId && !activePetActivityRequestIds.value.has(oldest)) {
+    petActivityRequestStates.delete(oldest)
+  }
+}
+
+function handlePetActivityEvent(value: unknown): void {
+  const event = normalizePetActivityEvent(value)
+  if (!event || (event.petId && event.petId !== props.petId)) return
+
+  const previous = petActivityRequestStates.get(event.requestId)
+  // 终态之后的输出可能来自 provider 重试或 bridge 重连，不能重新唤醒宠物。
+  if (previous?.terminal) return
+  if (previous && event.sequence > 0 && event.sequence <= previous.sequence) return
+
+  rememberPetActivityRequest(event.requestId, {
+    sequence: Math.max(previous?.sequence ?? 0, event.sequence),
+    terminal: event.phase !== 'output'
+  })
+
+  if (event.phase === 'output') {
+    // 首次 Token 到达才打断环境行为；不显示过程气泡，也不干扰真实睡眠状态。
+    stopAmbientBehavior()
+    if (petBubble.value?.source === 'ambient') clearPetBubble('ambient')
+    if (dozing.value) dozing.value = false
+    setPetActivityRequestActive(event.requestId, true)
+    return
+  }
+
+  setPetActivityRequestActive(event.requestId, false)
+  if (activePetActivityRequestIds.value.size === 0) scheduleNextAmbientBehavior()
+}
+
 function matchesPetEvent(payload: Record<string, unknown>): boolean {
   const petId = typeof payload.petId === 'string' ? payload.petId : ''
   return !petId || petId === props.petId
@@ -3148,6 +3258,9 @@ onMounted(async () => {
   stopPetRuntimeEvent = Events.On('pet.runtime', (event) => {
     void handlePetRuntimeEvent(event.data)
   })
+  stopPetActivityEvent = Events.On(PET_ACTIVITY_EVENT, (event) => {
+    handlePetActivityEvent(event.data)
+  })
   stopPetSettingsEvent = Events.On(PET_SETTINGS_UPDATED_EVENT, (event) => {
     void handlePetSettingsUpdated(event.data)
   })
@@ -3205,6 +3318,7 @@ onBeforeUnmount(() => {
   transientToken += 1
   stopPetActionEvent?.()
   stopPetRuntimeEvent?.()
+  stopPetActivityEvent?.()
   stopPetReminderEvent?.()
   stopPetAudioEvent?.()
   stopPetPointerEvent?.()
@@ -3212,6 +3326,7 @@ onBeforeUnmount(() => {
   stopPetSettingsEvent?.()
   stopPetActionEvent = null
   stopPetRuntimeEvent = null
+  stopPetActivityEvent = null
   stopPetReminderEvent = null
   stopPetAudioEvent = null
   stopPetPointerEvent = null
@@ -3219,6 +3334,8 @@ onBeforeUnmount(() => {
   stopPetSettingsEvent = null
   stopProactiveSession()
   stopDreamSession()
+  activePetActivityRequestIds.value = new Set()
+  petActivityRequestStates.clear()
   petAudioPlayer.dispose()
 })
 </script>

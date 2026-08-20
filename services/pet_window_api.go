@@ -91,7 +91,7 @@ func (a *PetWindowAPI) SetAlwaysOnTop(alwaysOnTop bool) error {
 	return window.SetAlwaysOnTop(alwaysOnTop)
 }
 
-// SetPlatformLayer 将桌宠放到指定外部窗口上方；空字符串表示桌面普通层级。
+// SetPlatformLayer 将桌宠放到指定外部窗口上方；空字符串表示桌面地面并恢复常驻置顶。
 func (a *PetWindowAPI) SetPlatformLayer(platformID string) error {
 	window, err := a.getWindow()
 	if err != nil {

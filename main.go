@@ -199,6 +199,15 @@ func main() {
 	var petApp *application.App
 	var petBrowserBridge *services.PetBrowserBridge
 	petBrowserEvents := services.NewPetBrowserEventHub()
+	petActivityEmitter := services.PetActivityEmitterFunc(func(event services.PetActivityEvent) error {
+		// 活动态同时投递给 Wails 和 loopback bridge；它是 UI 旁路，不得因为
+		// 任一广播通道暂时不可用而阻断真实模型请求或 provider 降级。
+		petBrowserEvents.Publish("pet.activity", event)
+		if petApp != nil {
+			petApp.Event.Emit("pet.activity", event)
+		}
+		return nil
+	})
 	petRuntime := services.NewPetRuntime(petService, services.PetRuntimeOptions{
 		Emitter: services.PetRuntimeEmitterFunc(func(result services.PetRuntimeResult) {
 			petBrowserEvents.Publish("pet.runtime", result)
@@ -249,6 +258,7 @@ func main() {
 		SpeechSelectionReader: appSettings,
 		WorkspaceResolver:     petDAO,
 		Transport:             http.DefaultTransport,
+		ActivityEmitter:       petActivityEmitter,
 		Emitter: services.PetAIEventEmitterFunc(func(event services.PetAIEvent) error {
 			petBrowserEvents.Publish("pet.ai", event)
 			if event.Type == services.PetAIEventUsage {
@@ -317,6 +327,7 @@ func main() {
 		appSettings,
 		providerRelayAddr,
 	)
+	providerRelay.SetActivityEmitter(petActivityEmitter)
 	claudeSettings := services.NewClaudeSettingsService(providerRelay.Addr())
 	codexSettings := services.NewCodexSettingsService(providerRelay.Addr())
 	cliConfigService := services.NewCliConfigService(providerRelay.Addr())
