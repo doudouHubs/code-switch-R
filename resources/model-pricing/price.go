@@ -44,13 +44,13 @@ type Service struct {
 
 // PricingEntry 映射 JSON 内的字段。
 type PricingEntry struct {
-	InputCostPerToken           float64 `json:"input_cost_per_token"`
-	OutputCostPerToken          float64 `json:"output_cost_per_token"`
-	OutputCostPerImage          float64 `json:"output_cost_per_image"`
+	InputCostPerToken  float64 `json:"input_cost_per_token"`
+	OutputCostPerToken float64 `json:"output_cost_per_token"`
+	OutputCostPerImage float64 `json:"output_cost_per_image"`
 	// LiteLLM 的图片模型把单张生成价按像素记录在 input_cost_per_pixel；
 	// output_cost_per_pixel 通常为 0，但仍保留并优先读取，兼容两种字段口径。
-	InputCostPerPixel            float64 `json:"input_cost_per_pixel"`
-	OutputCostPerPixel           float64 `json:"output_cost_per_pixel"`
+	InputCostPerPixel           float64 `json:"input_cost_per_pixel"`
+	OutputCostPerPixel          float64 `json:"output_cost_per_pixel"`
 	OutputCostPerReasoningToken float64 `json:"output_cost_per_reasoning_token"`
 	CacheCreationInputTokenCost float64 `json:"cache_creation_input_token_cost"`
 	CacheReadInputTokenCost     float64 `json:"cache_read_input_token_cost"`

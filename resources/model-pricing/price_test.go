@@ -67,7 +67,7 @@ func TestCalculateCostForGPTImageUsesRequestedPixels(t *testing.T) {
 	}
 
 	got := service.CalculateCost("gpt-image-1", UsageSnapshot{
-		ImageCount: 2,
+		ImageCount:  2,
 		ImageWidth:  1024,
 		ImageHeight: 1536,
 	})
