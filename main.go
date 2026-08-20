@@ -480,11 +480,7 @@ func main() {
 		services.WriteRuntimeDiagnostic("pet-window-create-failed", fmt.Sprintf("err=%q", petWindowErr.Error()))
 		log.Printf("⚠️ 宠物窗口初始化失败: %v", petWindowErr)
 	} else {
-		// 置顶仍然是运行时策略，不写入宠物业务配置；当前桌宠恢复为置顶显示。
-		// 设置与窗口打开流程分开，失败只记录日志，不阻断后续初始化。
-		if topmostErr := petWindow.SetAlwaysOnTop(true); topmostErr != nil {
-			log.Printf("⚠️ 设置宠物窗口置顶失败: %v", topmostErr)
-		}
+		// 桌宠不再永久置顶；打开后由平台运行时根据当前站立窗口同步 Z 序。
 
 		windowConfig, configErr := petService.GetWindowConfig()
 		if configErr != nil {

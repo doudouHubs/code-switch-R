@@ -67,7 +67,9 @@ export const PET_WINDOW_RUNTIME_METHODS = {
   open: 'Open',
   close: 'Close',
   toggle: 'Toggle',
-  state: 'State'
+  state: 'State',
+  platforms: 'GetPlatforms',
+  setPlatformLayer: 'SetPlatformLayer'
 } as const
 
 export interface PetRuntimeAdapter {
@@ -85,6 +87,27 @@ export interface PetWindowRuntimeState {
   clickThrough: boolean
   focused: boolean
   alwaysOnTop: boolean
+}
+
+export interface PetWindowPlatformRect {
+  left: number
+  top: number
+  right: number
+  bottom: number
+}
+
+export interface PetWindowPlatform {
+  id: string
+  rect: PetWindowPlatformRect
+  zOrder: number
+}
+
+export interface PetWindowPlatformSnapshot {
+  available: boolean
+  overlay: PetWindowPlatformRect
+  platforms: PetWindowPlatform[]
+  occluders: PetWindowPlatform[]
+  movingWindowId: string
 }
 
 export interface PetApi {
@@ -274,8 +297,8 @@ function createFallbackWindowState(open: boolean): PetWindowRuntimeState {
     mode: 'passive',
     clickThrough: true,
     focused: false,
-    // 桌宠默认置顶；fallback 预览状态也必须和真实 Wails 窗口保持同一语义。
-    alwaysOnTop: true
+    // 桌宠默认使用普通层级；站到外部窗口后再由运行时同步目标窗口层级。
+    alwaysOnTop: false
   }
 }
 

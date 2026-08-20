@@ -7,10 +7,14 @@ import {
   BarChart3,
   Bot,
   Brain,
+  FolderOpen,
   Images,
   LayoutDashboard,
+  Monitor,
   Moon,
   PawPrint,
+  RefreshCw,
+  Trash2,
   Wand2
 } from '@lucide/vue'
 import type { GeminiProvider, Provider } from '../../../bindings/codeswitch/services/models'
@@ -1759,90 +1763,118 @@ onUnmounted(() => {
         </div>
 
         <div v-show="activeTab === 'skins'" class="pet-settings__skin-content">
-          <section class="pet-settings__skin-window">
-            <div class="pet-settings__skin-window-copy">
-              <span class="pet-settings__monitor-icon" aria-hidden="true"></span>
-              <div>
-                <strong>{{ t('pet.settings.overview.windowEnabled') }}</strong>
-                <span>{{ t(form.window.enabled ? 'pet.settings.skins.displayOn' : 'pet.settings.skins.displayOff') }}</span>
+          <section class="pet-settings__skin-toolbar" aria-labelledby="pet-settings-skins-title">
+            <div class="pet-settings__skin-toolbar-top">
+              <div class="pet-settings__skin-heading">
+                <h3 id="pet-settings-skins-title">{{ t('pet.settings.skins.title') }}</h3>
+                <p>{{ t('pet.settings.skins.subtitle') }}</p>
+              </div>
+
+              <div class="pet-settings__skin-window-control">
+                <Monitor class="pet-settings__skin-toolbar-icon" :size="17" :stroke-width="1.8" aria-hidden="true" />
+                <div class="pet-settings__skin-window-copy">
+                  <strong>{{ t('pet.settings.overview.windowEnabled') }}</strong>
+                  <span>{{ t(form.window.enabled ? 'pet.settings.skins.displayOn' : 'pet.settings.skins.displayOff') }}</span>
+                </div>
+                <label class="pet-settings__switch">
+                  <input
+                    v-model="form.window.enabled"
+                    type="checkbox"
+                    :aria-label="t('pet.settings.overview.windowEnabled')"
+                    @change="void saveSettings()"
+                  />
+                  <span aria-hidden="true"></span>
+                </label>
               </div>
             </div>
-            <label class="pet-settings__switch">
-              <input v-model="form.window.enabled" type="checkbox" @change="void saveSettings()" />
-              <span aria-hidden="true"></span>
-            </label>
+
+            <div class="pet-settings__skin-directory-row">
+              <span
+                class="pet-settings__managed-directory"
+                :title="skinRoot || t('pet.settings.skins.directoryUnavailable')"
+              >
+                {{ skinRoot || t('pet.settings.skins.directoryUnavailable') }}
+              </span>
+              <div class="pet-settings__skin-actions">
+                <button type="button" class="pet-settings__secondary-button" :disabled="skinRootLoading" @click="openSkinRoot">
+                  <FolderOpen class="pet-settings__button-icon" :size="14" :stroke-width="1.9" aria-hidden="true" />
+                  <span>{{ t('pet.settings.skins.openFolder') }}</span>
+                </button>
+                <button type="button" class="pet-settings__secondary-button" :disabled="skinRefreshing" @click="refreshSkins">
+                  <RefreshCw :class="['pet-settings__button-icon', { 'is-spinning': skinRefreshing }]" :size="14" :stroke-width="1.9" aria-hidden="true" />
+                  <span>{{ skinRefreshing ? t('pet.common.refreshing') : t('pet.settings.skins.refresh') }}</span>
+                </button>
+              </div>
+            </div>
+            <p class="pet-settings__drop-hint">{{ t('pet.settings.skins.dropHint') }}</p>
           </section>
 
-          <div class="pet-settings__section-title">
-            <div>
-              <h3>{{ t('pet.settings.skins.title') }}</h3>
-              <p>{{ t('pet.settings.skins.subtitle') }}</p>
-            </div>
-          </div>
-
-          <div class="pet-settings__skin-directory-row">
-            <span class="pet-settings__managed-directory">{{ skinRoot || t('pet.settings.skins.directoryUnavailable') }}</span>
-            <div class="pet-settings__field-actions">
-              <button type="button" class="pet-settings__secondary-button" :disabled="skinRootLoading" @click="openSkinRoot">
-                {{ t('pet.settings.skins.openFolder') }}
-              </button>
-              <button type="button" class="pet-settings__secondary-button" :disabled="skinRefreshing" @click="refreshSkins">
-                {{ skinRefreshing ? t('pet.common.refreshing') : t('pet.settings.skins.refresh') }}
-              </button>
-            </div>
-          </div>
-          <p class="pet-settings__drop-hint">{{ t('pet.settings.skins.dropHint') }}</p>
-
           <div class="pet-settings__skin-list">
-            <div class="pet-settings__skin-row">
+            <article class="pet-settings__skin-card" :class="{ 'is-active': defaultSkinActive }">
               <div class="pet-settings__skin-thumb">
                 <PetAtlasFrame
                   v-if="defaultAtlas"
                   :image-url="defaultAtlas.src"
                   :manifest="defaultAtlas.manifest"
                   action="idle"
-                   :display-height="48"
+                  :display-height="96"
                 />
-                <span v-else aria-hidden="true">·</span>
+                <span v-else class="pet-settings__skin-preview-placeholder" aria-hidden="true">·</span>
               </div>
               <div class="pet-settings__skin-copy">
                 <strong>{{ t('pet.settings.skins.default') }}</strong>
                 <span>{{ t('pet.settings.skins.builtinHint') }}</span>
               </div>
-              <span v-if="defaultSkinActive" class="pet-settings__skin-status is-active">{{ t('pet.settings.skins.inUse') }}</span>
-              <button v-else type="button" class="pet-settings__secondary-button" :disabled="saving" @click="void bindSkin(null)">{{ t('pet.settings.skins.use') }}</button>
-            </div>
+              <div class="pet-settings__skin-card-footer">
+                <span v-if="defaultSkinActive" class="pet-settings__skin-status is-active">{{ t('pet.settings.skins.inUse') }}</span>
+                <button v-else type="button" class="pet-settings__secondary-button" :disabled="saving" @click="void bindSkin(null)">
+                  {{ t('pet.settings.skins.use') }}
+                </button>
+              </div>
+            </article>
 
-            <div v-for="skin in selectableSkinRecords" :key="skin.skinId" class="pet-settings__skin-row">
+            <article
+              v-for="skin in selectableSkinRecords"
+              :key="skin.skinId"
+              class="pet-settings__skin-card"
+              :class="{ 'is-active': form.skinSelection.activeSkinId === skin.skinId }"
+            >
               <div class="pet-settings__skin-thumb">
                 <PetAtlasFrame
                   v-if="skinPreviews[skin.skinId]"
                   :image-url="skinPreviews[skin.skinId].src"
                   :manifest="skinPreviews[skin.skinId].manifest"
                   action="idle"
-                   :display-height="48"
+                  :display-height="96"
                 />
-                <span v-else aria-hidden="true">{{ skinPreviewLoading[skin.skinId] ? '…' : '·' }}</span>
+                <span v-else class="pet-settings__skin-preview-placeholder" aria-hidden="true">
+                  {{ skinPreviewLoading[skin.skinId] ? '…' : '·' }}
+                </span>
               </div>
               <div class="pet-settings__skin-copy">
                 <strong>{{ skin.name }}</strong>
                 <span>{{ skin.skinId }}{{ skin.modelId ? ` · ${skin.modelId}` : '' }} · {{ t('pet.settings.skins.poseCount', { count: skinPoseCount(skin) }) }}</span>
               </div>
-              <span v-if="form.skinSelection.activeSkinId === skin.skinId" class="pet-settings__skin-status is-active">{{ t('pet.settings.skins.inUse') }}</span>
-              <button v-else type="button" class="pet-settings__secondary-button" :disabled="saving" @click="void bindSkin(skin.skinId)">{{ t('pet.settings.skins.use') }}</button>
+              <div class="pet-settings__skin-card-footer">
+                <span v-if="form.skinSelection.activeSkinId === skin.skinId" class="pet-settings__skin-status is-active">{{ t('pet.settings.skins.inUse') }}</span>
+                <button v-else type="button" class="pet-settings__secondary-button" :disabled="saving" @click="void bindSkin(skin.skinId)">
+                  {{ t('pet.settings.skins.use') }}
+                </button>
+              </div>
               <button
                 v-if="!skin.builtin"
                 type="button"
-                class="pet-settings__icon-button"
+                class="pet-settings__icon-button pet-settings__skin-delete"
                 :disabled="deletingSkinId !== null || skinRefreshing"
                 :title="t('pet.settings.skins.delete')"
+                :aria-label="t('pet.settings.skins.delete')"
                 @click="deleteSkin(skin)"
               >
-                ×
+                <Trash2 :size="14" :stroke-width="1.9" aria-hidden="true" />
               </button>
-            </div>
+            </article>
           </div>
-          <p v-if="selectableSkinRecords.length === 0" class="pet-settings__hint">{{ t('pet.settings.skins.emptyHint') }}</p>
+          <p v-if="selectableSkinRecords.length === 0" class="pet-settings__skin-empty-hint">{{ t('pet.settings.skins.emptyHint') }}</p>
         </div>
 
         <div v-show="activeTab === 'stats'" class="pet-settings__stats-content">
@@ -2103,6 +2135,19 @@ onUnmounted(() => {
   opacity: 0.55;
 }
 
+/* 旧版 Wails 模板会给所有 button 注入固定尺寸；设置页按钮必须由自身内容和状态决定尺寸。 */
+.pet-settings__save,
+.pet-settings__retry,
+.pet-settings__text-button {
+  width: auto;
+  min-width: 0;
+  height: auto;
+  margin: 0;
+  line-height: 1.25;
+  box-sizing: border-box;
+  white-space: nowrap;
+}
+
 .pet-settings__content {
   display: flex;
   flex-direction: column;
@@ -2313,15 +2358,26 @@ onUnmounted(() => {
 }
 
 .pet-settings__secondary-button {
+  display: inline-flex;
+  width: auto;
+  min-width: 0;
+  height: auto;
   flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   border: 1px solid var(--settings-line);
   border-radius: 8px;
+  margin: 0;
   padding: 7px 10px;
   background: color-mix(in srgb, var(--settings-strong-surface) 72%, transparent);
   color: var(--settings-ink);
   cursor: pointer;
   font: inherit;
   font-size: 11px;
+  line-height: 1.25;
+  box-sizing: border-box;
+  white-space: nowrap;
 }
 
 .pet-settings__secondary-button:disabled {
@@ -2338,12 +2394,14 @@ onUnmounted(() => {
   justify-content: center;
   border: 1px solid transparent;
   border-radius: 7px;
+  margin: 0;
   background: transparent;
   color: var(--settings-muted);
   cursor: pointer;
   font: inherit;
   font-size: 16px;
   line-height: 1;
+  box-sizing: border-box;
 }
 
 .pet-settings__icon-button:hover {
@@ -2722,42 +2780,63 @@ onUnmounted(() => {
 }
 
 .pet-settings__skin-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  align-items: stretch;
+  gap: 12px;
 }
 
-.pet-settings__skin-row {
+.pet-settings__skin-card {
+  position: relative;
   display: flex;
   min-width: 0;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--settings-line) 88%, transparent);
-  border-radius: 9px;
-  padding: 8px;
-  background: color-mix(in srgb, var(--settings-strong-surface) 40%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--settings-surface) 82%, transparent);
+  transition: border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+}
+
+.pet-settings__skin-card:hover {
+  border-color: color-mix(in srgb, var(--mac-accent, #0a84ff) 30%, var(--settings-line));
+  background: color-mix(in srgb, var(--settings-surface) 94%, var(--settings-strong-surface));
+}
+
+.pet-settings__skin-card.is-active {
+  border-color: color-mix(in srgb, var(--mac-accent, #0a84ff) 65%, var(--settings-line));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--mac-accent, #0a84ff) 12%, transparent);
 }
 
 .pet-settings__skin-thumb {
   display: flex;
-  width: 48px;
-  height: 48px;
-  flex: 0 0 48px;
+  position: relative;
+  width: 100%;
+  height: 136px;
+  flex: 0 0 136px;
   align-items: flex-end;
   justify-content: center;
+  box-sizing: border-box;
   overflow: hidden;
-  border-radius: 8px;
+  padding: 10px;
   background: color-mix(in srgb, var(--settings-strong-surface) 78%, transparent);
   color: var(--settings-muted);
   font-size: 18px;
 }
 
+.pet-settings__skin-preview-placeholder {
+  display: inline-flex;
+  min-height: 96px;
+  align-items: flex-end;
+  justify-content: center;
+}
+
 .pet-settings__skin-copy {
   display: flex;
   min-width: 0;
-  flex: 1 1 auto;
   flex-direction: column;
   gap: 4px;
+  padding: 12px 12px 0;
 }
 
 .pet-settings__skin-copy strong,
@@ -2768,53 +2847,119 @@ onUnmounted(() => {
 }
 
 .pet-settings__skin-copy strong {
+  display: block;
+  min-height: 32px;
   color: var(--settings-ink);
+  line-height: 1.35;
   font-size: 12px;
   font-weight: 600;
 }
 
 .pet-settings__skin-copy span {
+  display: -webkit-box;
+  min-height: 29px;
   color: var(--settings-muted);
   font-size: 10px;
+  line-height: 1.45;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .pet-settings__skin-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 4px 7px;
+  background: color-mix(in srgb, #328c5d 12%, transparent);
   color: var(--settings-muted);
   font-size: 10px;
+  font-weight: 600;
   white-space: nowrap;
+}
+
+.pet-settings__skin-status::before {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  content: '';
 }
 
 .pet-settings__skin-status.is-active {
   color: #328c5d;
 }
 
+.pet-settings__skin-card-footer {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  gap: 8px;
+  margin-top: auto;
+  padding: 10px 12px 12px;
+}
+
+.pet-settings__skin-card-footer .pet-settings__secondary-button {
+  padding: 6px 10px;
+}
+
 .pet-settings__skin-content {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
 }
 
-.pet-settings__skin-window {
+.pet-settings__skin-toolbar {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  min-width: 0;
+  flex-direction: column;
+  gap: 12px;
   border: 1px solid var(--settings-line);
-  border-radius: 8px;
-  padding: 12px;
+  border-radius: 10px;
+  padding: 14px;
   background: color-mix(in srgb, var(--settings-surface) 80%, transparent);
 }
 
-.pet-settings__skin-window-copy {
+.pet-settings__skin-toolbar-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+}
+
+.pet-settings__skin-heading {
+  min-width: 0;
+}
+
+.pet-settings__skin-heading h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.pet-settings__skin-heading p {
+  margin: 3px 0 0;
+  color: var(--settings-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.pet-settings__skin-window-control {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
 }
 
-.pet-settings__skin-window-copy > div {
+.pet-settings__skin-toolbar-icon {
+  flex: 0 0 auto;
+  color: var(--mac-accent, #0a84ff);
+}
+
+.pet-settings__skin-window-copy {
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -2822,53 +2967,85 @@ onUnmounted(() => {
 }
 
 .pet-settings__skin-window-copy strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 12px;
 }
 
-.pet-settings__skin-window-copy span:not(.pet-settings__monitor-icon) {
+.pet-settings__skin-window-copy span {
+  overflow: hidden;
   color: var(--settings-muted);
   font-size: 10px;
-}
-
-.pet-settings__monitor-icon {
-  position: relative;
-  display: inline-block;
-  width: 16px;
-  height: 12px;
-  flex: 0 0 16px;
-  border: 1.5px solid var(--settings-muted);
-  border-radius: 2px;
-}
-
-.pet-settings__monitor-icon::after {
-  position: absolute;
-  bottom: -5px;
-  left: 4px;
-  width: 6px;
-  height: 1.5px;
-  background: var(--settings-muted);
-  box-shadow: 2px 2px 0 -0.25px var(--settings-muted);
-  content: '';
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pet-settings__skin-directory-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--settings-line) 72%, transparent);
 }
 
 .pet-settings__skin-directory-row .pet-settings__managed-directory {
   min-width: 0;
-  flex: 1 1 auto;
   margin-top: 0;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.pet-settings__skin-directory-row .pet-settings__field-actions {
+.pet-settings__skin-actions {
+  display: flex;
   flex: 0 0 auto;
-  margin-top: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.pet-settings__skin-actions .pet-settings__secondary-button {
+  min-height: 30px;
+}
+
+.pet-settings__button-icon {
+  flex: 0 0 auto;
+}
+
+.pet-settings__button-icon.is-spinning {
+  animation: pet-settings-spin 0.9s linear infinite;
+}
+
+.pet-settings__skin-toolbar .pet-settings__drop-hint {
+  margin: 0;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--settings-line) 72%, transparent);
+  border-radius: 0;
+  padding: 10px 0 0;
+  font-size: 10px;
+}
+
+.pet-settings__skin-delete {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  background: color-mix(in srgb, var(--settings-surface) 78%, transparent);
+}
+
+.pet-settings__skin-empty-hint {
+  margin: 0;
+  color: var(--settings-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+@keyframes pet-settings-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .pet-settings__dream-ranges {
@@ -3207,6 +3384,17 @@ onUnmounted(() => {
   }
 }
 
+@media (max-width: 760px) {
+  .pet-settings__skin-toolbar-top {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: flex-start;
+  }
+
+  .pet-settings__skin-window-control {
+    align-self: stretch;
+  }
+}
+
 @media (max-width: 640px) {
   .pet-settings {
     padding: 16px 12px;
@@ -3254,35 +3442,21 @@ onUnmounted(() => {
     flex-direction: column;
   }
 
-  .pet-settings__skin-row {
-    align-items: flex-start;
-    flex-wrap: wrap;
-  }
-
-  .pet-settings__skin-copy {
-    flex-basis: calc(100% - 68px);
-  }
-
-  .pet-settings__skin-status,
-  .pet-settings__skin-row > .pet-settings__secondary-button,
-  .pet-settings__skin-row > .pet-settings__icon-button {
-    margin-left: 0;
-  }
-
   .pet-settings__stats-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .pet-settings__skin-directory-row {
     align-items: flex-start;
-    flex-direction: column;
+    grid-template-columns: minmax(0, 1fr);
   }
 
-  .pet-settings__skin-directory-row .pet-settings__field-actions {
+  .pet-settings__skin-actions {
     width: 100%;
+    justify-content: stretch;
   }
 
-  .pet-settings__skin-directory-row .pet-settings__secondary-button {
+  .pet-settings__skin-actions .pet-settings__secondary-button {
     flex: 1 1 auto;
   }
 

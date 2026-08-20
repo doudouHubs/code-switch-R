@@ -606,6 +606,14 @@ func (b *PetBrowserBridge) dispatch(ctx context.Context, method string, args []j
 			return nil, err
 		}
 		return nil, b.requireWindow().SetAlwaysOnTop(alwaysOnTop)
+	case "codeswitch/services.PetWindowAPI.SetPlatformLayer":
+		var platformID string
+		if err := decodePetBrowserArg(args, 0, &platformID); err != nil {
+			return nil, err
+		}
+		return nil, b.requireWindow().SetPlatformLayer(platformID)
+	case "codeswitch/services.PetWindowAPI.GetPlatforms":
+		return b.requireWindow().GetPlatforms()
 
 	case "codeswitch/services.ProviderService.LoadProviders":
 		var kind string

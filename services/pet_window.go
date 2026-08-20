@@ -100,6 +100,7 @@ type petWindowDriver interface {
 	SetPosition(x, y int) error
 	SetSize(width, height int) error
 	SetAlwaysOnTop(alwaysOnTop bool) error
+	SetPlatformLayer(platformID string) (bool, error)
 	IsFocused() bool
 }
 
@@ -190,9 +191,9 @@ func newPetWindowWithDriver(driver petWindowDriver, options PetWindowOptions) (*
 		x:           normalized.X,
 		y:           normalized.Y,
 		mode:        PetWindowPassive,
-		// 桌宠默认置顶；窗口仍保持点击穿透和不可激活，置顶只负责 Z-order，
-		// 不应改变用户当前正在使用的应用焦点。
-		alwaysOnTop: true,
+		// 桌宠默认使用普通窗口层级；站到外部窗口后再由运行时按目标窗口的
+		// Z 序提升到目标上方，不能在没有平台时永久占据 topmost 层。
+		alwaysOnTop: false,
 	}
 	// 系统关闭事件由原生 driver 反向通知状态机；主动关闭由宿主自身完成状态落盘，
 	// driver 会抑制同一窗口代次的同步 hook 回调，避免和宿主锁形成死锁。
@@ -280,6 +281,9 @@ func (w *PetWindow) Close() error {
 		return fmt.Errorf("close pet window: %w", err)
 	}
 	w.open = false
+	// 置顶只属于当前站立平台的运行时层级；窗口关闭后必须清零，避免下一次
+	// Open 在平台快照尚未返回前沿用旧层级，重新变成永久置顶窗口。
+	w.alwaysOnTop = false
 	return nil
 }
 
@@ -296,6 +300,7 @@ func (w *PetWindow) Toggle() error {
 			return fmt.Errorf("toggle close pet window: %w", err)
 		}
 		w.open = false
+		w.alwaysOnTop = false
 		return nil
 	}
 	return w.openLocked()
@@ -311,6 +316,7 @@ func (w *PetWindow) handleDriverClosed() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.open = false
+	w.alwaysOnTop = false
 }
 
 func (w *PetWindow) IsOpen() bool {
@@ -440,7 +446,7 @@ func (w *PetWindow) Focus() error {
 	return nil
 }
 
-// SetAlwaysOnTop 设置置顶状态；默认值为 true，关闭期间的变更会在下次 Open 生效。
+// SetAlwaysOnTop 保留兼容调用；桌宠运行时的层级由 SetPlatformLayer 负责。
 func (w *PetWindow) SetAlwaysOnTop(alwaysOnTop bool) error {
 	if w == nil {
 		return nil
@@ -457,6 +463,30 @@ func (w *PetWindow) SetAlwaysOnTop(alwaysOnTop bool) error {
 		}
 	}
 	w.alwaysOnTop = alwaysOnTop
+	return nil
+}
+
+// SetPlatformLayer 将桌宠放到指定平台窗口上方；空 platformID 表示回到桌面普通层级。
+// 返回的 topmost 只反映目标窗口是否本身处于 topmost 层，用于同步 State 快照。
+func (w *PetWindow) SetPlatformLayer(platformID string) error {
+	if w == nil {
+		return ErrPetWindowNilDriver
+	}
+
+	platformID = strings.TrimSpace(platformID)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.open {
+		// 与其它窗口 setter 一致：关闭期间不触碰不存在的 HWND；打开后由前端
+		// 重新读取平台快照并补做一次层级同步。
+		w.alwaysOnTop = false
+		return nil
+	}
+	topmost, err := w.driver.SetPlatformLayer(platformID)
+	if err != nil {
+		return fmt.Errorf("set pet window platform layer: %w", err)
+	}
+	w.alwaysOnTop = topmost
 	return nil
 }
 

@@ -91,6 +91,25 @@ func (a *PetWindowAPI) SetAlwaysOnTop(alwaysOnTop bool) error {
 	return window.SetAlwaysOnTop(alwaysOnTop)
 }
 
+// SetPlatformLayer 将桌宠放到指定外部窗口上方；空字符串表示桌面普通层级。
+func (a *PetWindowAPI) SetPlatformLayer(platformID string) error {
+	window, err := a.getWindow()
+	if err != nil {
+		return err
+	}
+	return window.SetPlatformLayer(platformID)
+}
+
+// GetPlatforms 返回当前桌宠所在工作区内的外部窗口平台。
+// 平台检测失败时由平台 driver 返回 Available=false；这条增强能力不能阻断桌宠本身运行。
+func (a *PetWindowAPI) GetPlatforms() (PetWindowPlatformSnapshot, error) {
+	window, err := a.getWindow()
+	if err != nil {
+		return PetWindowPlatformSnapshot{}, err
+	}
+	return window.GetPlatforms()
+}
+
 func (a *PetWindowAPI) State() PetWindowState {
 	if a == nil || a.window == nil {
 		return PetWindowState{

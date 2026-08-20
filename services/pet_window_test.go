@@ -17,21 +17,26 @@ type fakePetWindowDriver struct {
 	captureFocusCalls int
 	closedFn          func()
 
-	ignoreMouseCalls []bool
-	positionCalls    [][2]int
-	sizeCalls        [][2]int
-	topCalls         []bool
+	ignoreMouseCalls   []bool
+	positionCalls      [][2]int
+	sizeCalls          [][2]int
+	topCalls           []bool
+	platformLayerCalls []string
+	platformSnapshot   PetWindowPlatformSnapshot
+	platformErr        error
 
-	opened          bool
-	focused         bool
-	focusErr        error
-	releaseFocusErr error
-	openErr         error
-	closeErr        error
-	ignoreErr       error
-	positionErr     error
-	sizeErr         error
-	topErr          error
+	opened               bool
+	focused              bool
+	focusErr             error
+	releaseFocusErr      error
+	openErr              error
+	closeErr             error
+	ignoreErr            error
+	positionErr          error
+	sizeErr              error
+	topErr               error
+	platformLayerTopmost bool
+	platformLayerErr     error
 }
 
 func (f *fakePetWindowDriver) Open(config petWindowOpenConfig) error {
@@ -150,6 +155,28 @@ func (f *fakePetWindowDriver) SetAlwaysOnTop(alwaysOnTop bool) error {
 	return nil
 }
 
+func (f *fakePetWindowDriver) SetPlatformLayer(platformID string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.platformLayerErr != nil {
+		return false, f.platformLayerErr
+	}
+	f.platformLayerCalls = append(f.platformLayerCalls, platformID)
+	if platformID == "" {
+		return false, nil
+	}
+	return f.platformLayerTopmost, nil
+}
+
+func (f *fakePetWindowDriver) GetPlatforms() (PetWindowPlatformSnapshot, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.platformErr != nil {
+		return PetWindowPlatformSnapshot{}, f.platformErr
+	}
+	return f.platformSnapshot, nil
+}
+
 func (f *fakePetWindowDriver) IsFocused() bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -201,7 +228,7 @@ func TestPetWindowOpenCloseToggleAreIdempotent(t *testing.T) {
 	window, driver := newTestPetWindow(t)
 
 	state := window.State()
-	if state.Open || state.Mode != PetWindowPassive || !state.ClickThrough || !state.AlwaysOnTop {
+	if state.Open || state.Mode != PetWindowPassive || !state.ClickThrough || state.AlwaysOnTop {
 		t.Fatalf("initial state = %#v", state)
 	}
 
@@ -218,7 +245,7 @@ func TestPetWindowOpenCloseToggleAreIdempotent(t *testing.T) {
 		t.Fatalf("repeated Open() should refresh the existing driver window, calls = %d", driver.openCalls)
 	}
 	config := driver.openConfigs[0]
-	if !config.IgnoreMouseEvents || !config.AlwaysOnTop || config.Width != 320 || config.Height != 240 {
+	if !config.IgnoreMouseEvents || config.AlwaysOnTop || config.Width != 320 || config.Height != 240 {
 		t.Fatalf("open config = %#v", config)
 	}
 
@@ -347,6 +374,40 @@ func TestPetWindowMoveResizeAndTopmostCacheWhileClosed(t *testing.T) {
 	}
 }
 
+func TestPetWindowPlatformLayerUpdatesZOrderState(t *testing.T) {
+	window, driver := newTestPetWindow(t)
+	if err := window.Open(); err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+
+	driver.platformLayerTopmost = true
+	if err := window.SetPlatformLayer("0x1234"); err != nil {
+		t.Fatalf("SetPlatformLayer() error = %v", err)
+	}
+	if len(driver.platformLayerCalls) != 1 || driver.platformLayerCalls[0] != "0x1234" {
+		t.Fatalf("platform layer calls = %v", driver.platformLayerCalls)
+	}
+	if state := window.State(); !state.AlwaysOnTop {
+		t.Fatalf("platform layer state = %#v, want topmost target state", state)
+	}
+
+	if err := window.SetPlatformLayer(""); err != nil {
+		t.Fatalf("SetPlatformLayer(empty) error = %v", err)
+	}
+	if state := window.State(); state.AlwaysOnTop {
+		t.Fatalf("ground layer state = %#v, want ordinary layer", state)
+	}
+	if err := window.Close(); err != nil {
+		t.Fatalf("Close() after platform layer error = %v", err)
+	}
+	if err := window.Open(); err != nil {
+		t.Fatalf("Open() after platform layer error = %v", err)
+	}
+	if config := driver.openConfigs[len(driver.openConfigs)-1]; config.AlwaysOnTop {
+		t.Fatalf("reopened window config = %#v, want ordinary layer", config)
+	}
+}
+
 func TestPetWindowPropagatesActiveDriverOperationErrors(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -386,9 +447,18 @@ func TestPetWindowPropagatesActiveDriverOperationErrors(t *testing.T) {
 				driver.topErr = errors.New("topmost failed")
 			},
 			action: func(window *PetWindow) error {
-				// 桌宠默认置顶；切换到非置顶才能真正经过 driver，
+				// 桌宠默认普通层级；切换到置顶才能真正经过 driver，
 				// 这样注入的底层错误才是在“活动操作”上生效，而不是被同值幂等短路。
-				return window.SetAlwaysOnTop(false)
+				return window.SetAlwaysOnTop(true)
+			},
+		},
+		{
+			name: "platform layer",
+			setup: func(driver *fakePetWindowDriver) {
+				driver.platformLayerErr = errors.New("platform layer failed")
+			},
+			action: func(window *PetWindow) error {
+				return window.SetPlatformLayer("0x1234")
 			},
 		},
 	}

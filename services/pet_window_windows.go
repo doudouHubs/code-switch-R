@@ -5,6 +5,8 @@ package services
 import (
 	"fmt"
 	"log"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 	"unsafe"
@@ -26,6 +28,7 @@ var (
 	isWindowProc         = user32PetWindow.NewProc("IsWindow")
 	setFocusProc         = user32PetWindow.NewProc("SetFocus")
 	setForegroundProc    = user32PetWindow.NewProc("SetForegroundWindow")
+	getWindowProc        = user32PetWindow.NewProc("GetWindow")
 	kernel32PetWindow    = windows.NewLazySystemDLL("kernel32.dll")
 	getTickCount64Proc   = kernel32PetWindow.NewProc("GetTickCount64")
 )
@@ -79,11 +82,13 @@ const (
 	petWindowWSOverlapped     = 0x00cf0000
 	petWindowWSPopup          = 0x80000000
 	petWindowWSExNoActivate   = 0x08000000
+	petWindowWSExTopmost      = 0x00000008
 	petWindowWMMouseActivate  = 0x0021
 	petWindowMANoActivate     = 3
+	petWindowGWPrev           = 3
 	// 只用于发现透明窗口的 hover 进入/离开；事件本身只在坐标或窗口边界变化时发出。
 	// 50ms 对人眼交互已经足够，避免把 Wails bridge 当成 60Hz 鼠标转发总线。
-	petWindowPointerInterval  = 50 * time.Millisecond
+	petWindowPointerInterval = 50 * time.Millisecond
 )
 
 func petWindowStyleIndex() uintptr {
@@ -295,6 +300,107 @@ func petWindowSetNativeTopmost(hwnd windows.HWND, topMost bool) error {
 	return nil
 }
 
+func petWindowParsePlatformHWND(platformID string) (windows.HWND, error) {
+	platformID = strings.TrimSpace(platformID)
+	if platformID == "" {
+		return 0, nil
+	}
+	value, err := strconv.ParseUint(platformID, 0, strconv.IntSize)
+	if err != nil || value == 0 {
+		if err == nil {
+			err = fmt.Errorf("empty or zero window handle")
+		}
+		return 0, fmt.Errorf("invalid platform window id %q: %w", platformID, err)
+	}
+	hwnd := windows.HWND(value)
+	valid, _, callErr := isWindowProc.Call(uintptr(hwnd))
+	if valid == 0 {
+		if callErr != windows.ERROR_SUCCESS {
+			return 0, fmt.Errorf("platform window %q is invalid: %w", platformID, callErr)
+		}
+		return 0, fmt.Errorf("platform window %q is not a window", platformID)
+	}
+	return hwnd, nil
+}
+
+func petWindowIsTopmost(hwnd windows.HWND) bool {
+	if hwnd == 0 {
+		return false
+	}
+	exStyle, _, _ := getWindowLongProc.Call(uintptr(hwnd), petWindowExStyleIndex())
+	return uint32(exStyle)&uint32(petWindowWSExTopmost) != 0
+}
+
+func petWindowZOrderPredecessor(hwnd windows.HWND) windows.HWND {
+	if hwnd == 0 {
+		return 0
+	}
+	previous, _, _ := getWindowProc.Call(uintptr(hwnd), uintptr(petWindowGWPrev))
+	return windows.HWND(previous)
+}
+
+func petWindowSetNativePlatformLayer(hwnd, platform windows.HWND) (bool, error) {
+	if hwnd == 0 {
+		return false, fmt.Errorf("pet window native handle is unavailable")
+	}
+	if platform == hwnd {
+		return false, fmt.Errorf("platform window cannot be the pet window itself")
+	}
+	if platform == 0 {
+		if err := petWindowSetNativeTopmost(hwnd, false); err != nil {
+			return false, err
+		}
+		if err := petWindowSetNativePosition(hwnd, 0, 0, 0, 0, false, false); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+	if !windows.IsWindowVisible(platform) {
+		return false, fmt.Errorf("platform window %#x is not visible", uintptr(platform))
+	}
+
+	topMost := petWindowIsTopmost(platform)
+	previous := petWindowZOrderPredecessor(platform)
+	if previous == hwnd && petWindowIsTopmost(hwnd) == topMost {
+		// 桌宠已经紧邻目标窗口上方；仍需确保它处于目标窗口所属的 topmost
+		// 分组，层级和位置都已正确，不能再次 SetWindowPos 造成 Z 序抖动。
+		return topMost, nil
+	}
+	if err := petWindowSetNativeTopmost(hwnd, topMost); err != nil {
+		return false, err
+	}
+
+	// 切换 topmost 分组本身会改变桌宠的 Z 序；必须重新读取目标窗口的前置
+	// 窗口，不能复用切换前的 predecessor，否则桌宠可能被插到错误的分组。
+	insertAfter := petWindowZOrderPredecessor(platform)
+	if insertAfter == hwnd {
+		return topMost, nil
+	}
+	if insertAfter == 0 || petWindowIsTopmost(insertAfter) != topMost {
+		// 同一 Z 序分组没有可直接插入的前置窗口时，放到该分组最前面；
+		// 它仍只高于目标窗口所属层级，不会伪装成永久 topmost。
+		if topMost {
+			insertAfter = windows.HWND(petWindowHWNDTopMost)
+		} else {
+			insertAfter = windows.HWND(petWindowHWNDTop)
+		}
+	}
+	flags := uintptr(petWindowSWPNoActivate | petWindowSWPNoSize | petWindowSWPNoMove | petWindowSWPNoOwnerZOrder)
+	result, _, _ := setWindowPosProc.Call(
+		uintptr(hwnd),
+		uintptr(insertAfter),
+		0,
+		0,
+		0,
+		0,
+		flags,
+	)
+	if result == 0 {
+		return false, petWindowLastError("SetWindowPos platform layer")
+	}
+	return topMost, nil
+}
+
 func showPetWindowWithoutActivation(window application.Window, topMost bool) error {
 	if window == nil {
 		return ErrPetWindowNotReady
@@ -371,13 +477,28 @@ type wailsPetWindowDriver struct {
 	windowShowing  bool
 	windowShown    bool
 	pendingFocus   bool
+	platforms      *petWindowPlatformMonitor
 }
 
 func newPetWindowDriver(app *application.App, options PetWindowOptions) (petWindowDriver, error) {
 	if app == nil || app.Window == nil {
 		return nil, ErrPetWindowNilApplication
 	}
-	return &wailsPetWindowDriver{app: app}, nil
+	return &wailsPetWindowDriver{
+		app:       app,
+		platforms: newPetWindowPlatformMonitor(app),
+	}, nil
+}
+
+func (d *wailsPetWindowDriver) GetPlatforms() (PetWindowPlatformSnapshot, error) {
+	d.mu.Lock()
+	monitor := d.platforms
+	shown := d.windowShown
+	d.mu.Unlock()
+	if monitor == nil || !shown {
+		return PetWindowPlatformSnapshot{}, nil
+	}
+	return monitor.GetPlatforms()
 }
 
 func (d *wailsPetWindowDriver) SetWindowClosedCallback(callback func()) {
@@ -447,18 +568,19 @@ func (d *wailsPetWindowDriver) Open(config petWindowOpenConfig) error {
 			// Close() 只停止轮询，窗口复用时必须把轮询重新接上；否则第一次关闭/再开
 			// 后 renderer 再也收不到屏幕坐标，透明窗口会卡在上一次交互模式。
 			d.startPointerTracking(version, window)
+			d.startPlatformMonitor(version, window)
 			return nil
 		}
 	}
 
 	windowOptions := application.WebviewWindowOptions{
-		Name:             config.Name,
-		Title:            config.Title,
-		Width:            config.Width,
-		Height:           config.Height,
-		AlwaysOnTop:      config.AlwaysOnTop,
-		URL:              config.URL,
-		DisableResize:    true,
+		Name:          config.Name,
+		Title:         config.Title,
+		Width:         config.Width,
+		Height:        config.Height,
+		AlwaysOnTop:   config.AlwaysOnTop,
+		URL:           config.URL,
+		DisableResize: true,
 		// 不把 Frameless 交给 Wails alpha.38；它的初始化会用无 SWP_NOACTIVATE 的
 		// SetWindowPos 抢一次前台。窗口创建后由 petWindowMakeFramelessWithoutActivation
 		// 在隐藏状态下完成同等的 WS_POPUP 切换。
@@ -533,7 +655,11 @@ func (d *wailsPetWindowDriver) Close() error {
 	}
 	d.closingVersion = d.windowVersion
 	d.stopPointerTrackingLocked()
+	monitor := d.platforms
 	d.mu.Unlock()
+	if monitor != nil {
+		monitor.Stop()
+	}
 	window.Close()
 	// Wails alpha.38 的 Close() 没有错误返回值，而且 WindowClosing 事件通过
 	// 事件队列异步分发；不能用“调用返回时 hook 尚未执行”伪造关闭失败。
@@ -558,6 +684,7 @@ func (d *wailsPetWindowDriver) detachPetWindowLocked(window application.Window, 
 	d.windowShowing = false
 	d.windowShown = false
 	d.pendingFocus = false
+	d.alwaysOnTop = false
 	if d.closingVersion == version {
 		d.closingVersion = 0
 	}
@@ -574,7 +701,11 @@ func (d *wailsPetWindowDriver) cleanupFailedPetWindow(window application.Window,
 	}
 	d.closingVersion = version
 	d.stopPointerTrackingLocked()
+	monitor := d.platforms
 	d.mu.Unlock()
+	if monitor != nil {
+		monitor.Stop()
+	}
 
 	window.Close()
 	window.Hide()
@@ -765,6 +896,37 @@ func (d *wailsPetWindowDriver) SetAlwaysOnTop(alwaysOnTop bool) error {
 	return nil
 }
 
+func (d *wailsPetWindowDriver) SetPlatformLayer(platformID string) (bool, error) {
+	d.mu.Lock()
+	window := d.window
+	d.mu.Unlock()
+	if window == nil {
+		return false, nil
+	}
+
+	topMost := false
+	err := application.InvokeSyncWithError(func() error {
+		hwnd, err := petWindowHWND(window)
+		if err != nil {
+			return err
+		}
+		platform, err := petWindowParsePlatformHWND(platformID)
+		if err != nil {
+			return err
+		}
+		topMost, err = petWindowSetNativePlatformLayer(hwnd, platform)
+		return err
+	})
+	if err != nil {
+		return false, fmt.Errorf("set pet window platform layer: %w", err)
+	}
+
+	d.mu.Lock()
+	d.alwaysOnTop = topMost
+	d.mu.Unlock()
+	return topMost, nil
+}
+
 func (d *wailsPetWindowDriver) IsFocused() bool {
 	d.mu.Lock()
 	window := d.window
@@ -788,7 +950,11 @@ func (d *wailsPetWindowDriver) handleWindowClosing(version uint64) {
 		d.closingVersion = 0
 	}
 	callback := d.windowClosedFn
+	monitor := d.platforms
 	d.mu.Unlock()
+	if monitor != nil {
+		monitor.Stop()
+	}
 	if !wasExplicitClose && callback != nil {
 		callback()
 	}
@@ -835,8 +1001,31 @@ func (d *wailsPetWindowDriver) handleWindowNavigationCompleted(version uint64, w
 	// 指针观测与点击穿透是两条不同职责：只有窗口真正显示后才启动采样，
 	// 避免初始化期间向尚未可见的 renderer 投递一串无效坐标事件。
 	d.startPointerTracking(version, window)
+	d.startPlatformMonitor(version, window)
 	if shouldFocus {
 		window.Focus()
+	}
+}
+
+func (d *wailsPetWindowDriver) startPlatformMonitor(version uint64, window application.Window) {
+	d.mu.Lock()
+	if d.window != window || d.windowVersion != version || !d.windowShown || d.platforms == nil {
+		d.mu.Unlock()
+		return
+	}
+	monitor := d.platforms
+	hwnd := windows.HWND(uintptr(window.NativeWindow()))
+	d.mu.Unlock()
+
+	if hwnd == 0 {
+		return
+	}
+	err := application.InvokeSyncWithError(func() error {
+		return monitor.Start(hwnd)
+	})
+	if err != nil {
+		WriteRuntimeDiagnostic("pet-platform-monitor-start-failed", fmt.Sprintf("hwnd=%#x err=%q", uintptr(hwnd), err.Error()))
+		log.Printf("[PetWindow] 启动窗口平台监视失败: %v", err)
 	}
 }
 

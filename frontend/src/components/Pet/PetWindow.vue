@@ -30,9 +30,26 @@ import {
 import {
   normalizePetRuntimeState,
   petApi,
+  PET_WINDOW_RUNTIME_METHODS,
   settlePetRuntimeState,
-  type PetRuntimeMode
+  type PetRuntimeMode,
+  type PetWindowPlatformSnapshot
 } from './petApi'
+import {
+  findLowerPetPlatform,
+  findPetDropPlatform,
+  getLowerPlatformLandingX,
+  getPetGroundY,
+  getPetPlatformBounds,
+  getPetPlatformLift,
+  isPetPlatformPlacementValid,
+  normalizePetPlatformSnapshot,
+  platformOverlapsPet,
+  toLocalPetPlatforms,
+  toLocalPetOccluders,
+  type PetLocalPlatform,
+  type PetPlatformSupport
+} from './petPlatformPhysics'
 import {
   buildPetProactiveInstruction,
   formatPetPersonaMemories,
@@ -253,7 +270,10 @@ const PET_DREAM_METHODS = {
 const PET_WINDOW_SERVICE = 'codeswitch/services.PetWindowAPI'
 const PET_WINDOW_MODE_METHOD = `${PET_WINDOW_SERVICE}.SetMode`
 const PET_WINDOW_IDLE_SECONDS_METHOD = `${PET_WINDOW_SERVICE}.IdleSeconds`
+const PET_WINDOW_PLATFORMS_METHOD = `${PET_WINDOW_SERVICE}.${PET_WINDOW_RUNTIME_METHODS.platforms}`
 const PET_WINDOW_POINTER_EVENT = 'pet.window.pointer'
+const PET_WINDOW_PLATFORMS_EVENT = 'pet.window.platforms.changed'
+const PET_PLATFORM_REFRESH_DEBOUNCE_MS = 100
 const PET_IDLE_DOZE_THRESHOLD_SECONDS = 300
 const PET_IDLE_WAKE_THRESHOLD_SECONDS = 5
 const PET_IDLE_CHECK_INTERVAL_MS = 5_000
@@ -319,6 +339,7 @@ const initialPetX =
 const petX = ref(initialPetX)
 const petLift = ref(0)
 const petAnchorRef = ref<HTMLElement | null>(null)
+const petMenuRef = ref<HTMLElement | null>(null)
 // 位置动画是桌宠最频繁的更新源；保留在普通变量中，避免每个 requestAnimationFrame
 // 都触发整个 PetWindow 的响应式渲染。业务边界变化时再同步回 petX/petLift。
 let renderedPetX = initialPetX
@@ -329,6 +350,10 @@ const petMetrics = ref<PetAtlasMetrics>({
   visibleWidth: PET_WIDTH,
   visibleHeight: PET_STAGE_HEIGHT
 })
+const petPlatforms = ref<PetLocalPlatform[]>([])
+const petOccluders = ref<PetLocalPlatform[]>([])
+const movingPetWindowId = ref('')
+const petSupport = ref<PetPlatformSupport>({ kind: 'ground' })
 const dragGestureMoved = ref(false)
 const squashing = ref(false)
 const petBubble = ref<PetBubbleState | null>(null)
@@ -370,6 +395,10 @@ let roamToken = 0
 let lastLateNightAt = 0
 let lastCoinPickupAt = 0
 let liftFrame: number | undefined
+let platformRefreshTimer: number | undefined
+let platformRefreshGeneration = 0
+let petDropSettlementActive = false
+let petDropSettlementPending = false
 let menuCloseTimer: number | undefined
 let squashTimer: number | undefined
 let petPointerGesture: PetPointerGesture | null = null
@@ -378,6 +407,12 @@ let requestedWindowMode: PetWindowMode = 'passive'
 let appliedWindowMode: PetWindowMode = 'passive'
 let windowModeQueue: Promise<void> = Promise.resolve()
 let forceWindowModeSync = false
+let platformLayerBridgeUnavailable = false
+let requestedPlatformLayer = ''
+let appliedPlatformLayer = ''
+let platformLayerQueue: Promise<void> = Promise.resolve()
+let platformLayerGeneration = 0
+let forcePlatformLayerSync = false
 let petWindowUnmounted = false
 let idleCheckInFlight = false
 let idleBridgeUnavailable = false
@@ -387,6 +422,7 @@ let stopPetReminderEvent: (() => void) | null = null
 let stopPetAudioEvent: (() => void) | null = null
 let stopPetPointerEvent: (() => void) | null = null
 let stopPetSettingsEvent: (() => void) | null = null
+let stopPetPlatformsEvent: (() => void) | null = null
 
 const state = computed(() => snapshot.value?.state ?? null)
 const experience = computed(() => snapshot.value?.experience.totalExp ?? 0)
@@ -452,10 +488,14 @@ function getRoamMaxX(): number {
 
 function applyPetAnchorTransform(): void {
   const anchor = petAnchorRef.value
-  if (!anchor) return
   // 和 OpenCowork 的 motion value 一样，只更新承载宠物、气泡和 HUD 的移动层，
   // 不让漫游位置变化重新执行整个 Vue 模板的依赖计算。
-  anchor.style.transform = `translate3d(${renderedPetX}px, ${renderedPetLift}px, 0)`
+  if (anchor) anchor.style.transform = `translate3d(${renderedPetX}px, ${renderedPetLift}px, 0)`
+
+  const menu = petMenuRef.value
+  // 菜单和宠物是场景中的兄弟节点，不能依赖 bottom 的响应式重算；直接复用同一帧
+  // 的 lift，保证拖拽、平台吸附和回弹动画期间菜单始终跟随宠物高度。
+  if (menu) menu.style.transform = `translate3d(0, ${renderedPetLift}px, 0)`
 }
 
 function setRenderedPetPosition(x: number, lift: number): void {
@@ -537,17 +577,276 @@ function getSidePanelLeft(panelWidth: number): number {
   return clamp(left, 8, Math.max(8, viewportWidth - width - 8))
 }
 
-function animatePetDrop(): void {
+function getCurrentPetPlatform(): PetLocalPlatform | null {
+  const support = petSupport.value
+  if (support.kind !== 'platform' || !support.id) return null
+  return petPlatforms.value.find((platform) => platform.id === support.id) ?? null
+}
+
+function getPetPlatformOccluders(): PetLocalPlatform[] {
+  // 工作区外遮挡窗口和工作区内的其它平台共用同一个 Z 序集合；后者也可能
+  // 压住更低窗口的顶部，不能只把原生返回的 occluders 当成遮挡来源。
+  return [...petPlatforms.value, ...petOccluders.value]
+}
+
+function getPetFootY(): number {
+  return getPetGroundY(getViewportHeight(), PET_GROUND_PADDING) + renderedPetLift
+}
+
+function setPetGroundSupport(): void {
+  const wasPlatform = petSupport.value.kind === 'platform'
+  petSupport.value = { kind: 'ground' }
+  if (wasPlatform) requestPetPlatformLayer('')
+}
+
+function setPetPlatformSupport(platform: PetLocalPlatform): void {
+  petSupport.value = {
+    kind: 'platform',
+    id: platform.id,
+    // 保存相对窗口左边缘的偏移；窗口移动时桌宠跟随窗口，而不是固定在原屏幕坐标。
+    offsetX: renderedPetX - platform.left
+  }
+  requestPetPlatformLayer(platform.id)
+}
+
+function requestPetPlatformLayer(platformID: string, force = false): void {
+  const normalized = platformID.trim()
+  if (platformLayerBridgeUnavailable) return
+  if (force) forcePlatformLayerSync = true
+  if (!force && normalized === requestedPlatformLayer && normalized === appliedPlatformLayer) return
+  requestedPlatformLayer = normalized
+  const generation = ++platformLayerGeneration
+
+  platformLayerQueue = platformLayerQueue.then(async () => {
+    while (!platformLayerBridgeUnavailable && !petWindowUnmounted) {
+      const target = requestedPlatformLayer
+      const forceTarget = forcePlatformLayerSync
+      forcePlatformLayerSync = false
+      if (target === appliedPlatformLayer && !forceTarget) return
+      try {
+        await callPetBridge(`${PET_WINDOW_SERVICE}.${PET_WINDOW_RUNTIME_METHODS.setPlatformLayer}`, target)
+        // 新的支撑平台可能在原生调用返回前已经落地；旧请求不能把 State
+        // 视作已同步，否则下一次同 ID 请求会被去重，留下错误 Z 序。
+        if (petWindowUnmounted || generation !== platformLayerGeneration) return
+        appliedPlatformLayer = target
+      } catch (error) {
+        if (isMissingPetBindingError(error)) {
+          platformLayerBridgeUnavailable = true
+          return
+        }
+        console.warn('[Pet] window platform layer update failed:', error)
+        if (target === requestedPlatformLayer) requestedPlatformLayer = appliedPlatformLayer
+        return
+      }
+    }
+  })
+}
+
+function cancelPetPositionAnimation(): void {
+  if (liftFrame !== undefined) window.cancelAnimationFrame(liftFrame)
+  liftFrame = undefined
+}
+
+function cancelPetRoamingFrame(): void {
+  if (roamFrame !== undefined) window.cancelAnimationFrame(roamFrame)
+  roamFrame = undefined
+  roamToken += 1
+}
+
+function setPetPlatformCache(snapshot: PetWindowPlatformSnapshot): void {
+  petPlatforms.value = toLocalPetPlatforms(snapshot, getViewportWidth(), getViewportHeight())
+  petOccluders.value = toLocalPetOccluders(snapshot, getViewportWidth(), getViewportHeight())
+  movingPetWindowId.value = snapshot.movingWindowId
+}
+
+function settlePetDropFromCachedPlatforms(): void {
+  const groundY = getPetGroundY(getViewportHeight(), PET_GROUND_PADDING)
+  const target = findPetDropPlatform(
+    petPlatforms.value,
+    renderedPetX,
+    petMetrics.value.width,
+    getPetFootY(),
+    groundY,
+    getPetPlatformOccluders(),
+    getViewportWidth()
+  )
+  if (target) {
+    setPetPlatformSupport(target)
+    animatePetDrop(getPetPlatformLift(target, groundY))
+    return
+  }
+  setPetGroundSupport()
+  animatePetDrop(0)
+}
+
+function reconcilePetPlatform(): void {
+  if (dragging.value || petSupport.value.kind !== 'platform') return
+  const groundY = getPetGroundY(getViewportHeight(), PET_GROUND_PADDING)
+  const current = getCurrentPetPlatform()
+  if (!current) {
+    // 窗口拖出当前工作区时，Win32 快照会暂时没有该平台，但 movesize 尚未
+    // 结束。保留上一帧支撑状态，等结束事件带来最终矩形后再决定是否下落。
+    if (movingPetWindowId.value && movingPetWindowId.value === petSupport.value.id) return
+    const next = findPetDropPlatform(
+      petPlatforms.value,
+      renderedPetX,
+      petMetrics.value.width,
+      getPetFootY(),
+      groundY,
+      getPetPlatformOccluders(),
+      getViewportWidth()
+    )
+    if (next) {
+      setPetPlatformSupport(next)
+      animatePetDrop(getPetPlatformLift(next, groundY))
+    } else {
+      setPetGroundSupport()
+      animatePetDrop(0)
+    }
+    return
+  }
+  const isCurrentWindowMoving = movingPetWindowId.value === current.id
+  // 窗口可能移动到工作区底部的任务栏预留区；静止时它虽然仍在 Win32 快照中，
+  // 但顶部已经低于桌面地面，继续跟随会把宠物推到可见区域之外，必须回到地面。
+  // movesize 期间暂不做这个收敛，避免拖动中的中间矩形触发提前下落。
+  if (!isCurrentWindowMoving && current.top > groundY + 2) {
+    setPetGroundSupport()
+    animatePetDrop(0)
+    return
+  }
+
+  const offsetX = petSupport.value.offsetX ?? renderedPetX - current.left
+  // movesize 期间窗口矩形每帧都在变化；先跟随当前窗口，不在拖动中途因为
+  // 暂时遮挡或边界穿过而下落，等 EVENT_SYSTEM_MOVESIZEEND 后再做一次决策。
+  const bounds = getPetPlatformBounds(
+    current,
+    petMetrics.value.width,
+    getViewportWidth(),
+    0,
+    isCurrentWindowMoving ? [] : getPetPlatformOccluders()
+  )
+  if (bounds.segments.length === 0 && isCurrentWindowMoving) {
+    // 窗口正在移动但尚未完整落回工作区时，保留当前坐标，避免宠物在拖动
+    // 过程中被异步快照反复弹回桌面；移动结束后再由失效快照收敛。
+    return
+  }
+  const carriedX = clamp(offsetX + current.left, bounds.minX, bounds.maxX)
+  if (!platformOverlapsPet(current, carriedX, petMetrics.value.width) ||
+      (!isCurrentWindowMoving && !isPetPlatformPlacementValid(
+        current,
+        carriedX,
+        petMetrics.value.width,
+        getViewportWidth(),
+        getPetPlatformOccluders()
+      ))) {
+    if (!isCurrentWindowMoving) {
+      const lower = findLowerPetPlatform(
+        petPlatforms.value,
+        current,
+        groundY,
+        petMetrics.value.width,
+        getViewportWidth(),
+        getPetPlatformOccluders()
+      )
+      if (lower) {
+        startPetPlatformFall('walk', current, lower)
+        return
+      }
+      setPetGroundSupport()
+      animatePetDrop(0)
+    }
+    return
+  }
+
+  // 当前平台变化时取消旧的局部动画，否则旧帧会把刚跟随窗口的坐标覆盖回去。
+  cancelPetPositionAnimation()
+  cancelPetRoamingFrame()
+  setRenderedPetPosition(carriedX, getPetPlatformLift(current, getPetGroundY(getViewportHeight(), PET_GROUND_PADDING)))
+  commitPetPosition()
+  // 重新快照时顺手重试一次层级同步，覆盖窗口刚被重建、句柄短暂失效后
+  // 原生调用失败的情况；请求队列会对已经同步的 ID 去重。
+  requestPetPlatformLayer(current.id, true)
+}
+
+function applyPetPlatformSnapshot(snapshot: PetWindowPlatformSnapshot): void {
+  setPetPlatformCache(snapshot)
+  if (!snapshot.available) {
+    setPetGroundSupport()
+    if (!dragging.value) {
+      animatePetDrop(0)
+      petDropSettlementPending = false
+      scheduleNextAmbientBehavior()
+    }
+    return
+  }
+  // 落点查询期间如果窗口事件先刷新了缓存，使用最新快照完成同一次落点，
+  // 不能让较早返回的查询结果把宠物留在半空。
+  if (petDropSettlementPending && !dragging.value) {
+    settlePetDropFromCachedPlatforms()
+    petDropSettlementPending = false
+    scheduleNextAmbientBehavior()
+    return
+  }
+  reconcilePetPlatform()
+}
+
+async function refreshPetPlatforms(): Promise<void> {
+  const generation = ++platformRefreshGeneration
+  try {
+    const raw = await callPetBridge<unknown>(PET_WINDOW_PLATFORMS_METHOD)
+    if (petWindowUnmounted || generation !== platformRefreshGeneration) return
+    applyPetPlatformSnapshot(normalizePetPlatformSnapshot(raw))
+  } catch (error) {
+    if (petWindowUnmounted || generation !== platformRefreshGeneration) return
+    // 平台属于增强能力；查询失败时清空运行时平台状态，不能让宠物卡在已经失效的窗口上。
+    console.warn('[Pet] window platform query failed:', error)
+    applyPetPlatformSnapshot(normalizePetPlatformSnapshot(null))
+  }
+}
+
+function schedulePetPlatformRefresh(): void {
+  if (platformRefreshTimer !== undefined) window.clearTimeout(platformRefreshTimer)
+  platformRefreshTimer = window.setTimeout(() => {
+    platformRefreshTimer = undefined
+    void refreshPetPlatforms()
+  }, PET_PLATFORM_REFRESH_DEBOUNCE_MS)
+}
+
+async function settlePetDrop(): Promise<void> {
+  // 落点查询跨越 bridge；在结果回来前禁止自主漫游接管同一条位置通道，
+  // 否则慢查询会让漫游帧和平台吸附互相覆盖最终坐标。
+  petDropSettlementActive = true
+  petDropSettlementPending = true
+  const generation = ++platformRefreshGeneration
+  try {
+    const raw = await callPetBridge<unknown>(PET_WINDOW_PLATFORMS_METHOD)
+    if (petWindowUnmounted || generation !== platformRefreshGeneration) return
+    const snapshot = normalizePetPlatformSnapshot(raw)
+    setPetPlatformCache(snapshot)
+    settlePetDropFromCachedPlatforms()
+    petDropSettlementPending = false
+  } catch (error) {
+    if (petWindowUnmounted || generation !== platformRefreshGeneration) return
+    console.warn('[Pet] settling pet on window platform failed:', error)
+    applyPetPlatformSnapshot(normalizePetPlatformSnapshot(null))
+  } finally {
+    petDropSettlementActive = false
+    if (!petWindowUnmounted && !petDropSettlementPending) scheduleNextAmbientBehavior()
+  }
+}
+
+function animatePetDrop(targetLift = 0): void {
+  cancelPetPositionAnimation()
   if (liftFrame !== undefined) window.cancelAnimationFrame(liftFrame)
   const startedLift = renderedPetLift
-  if (startedLift >= 0) {
-    setRenderedPetPosition(renderedPetX, 0)
+  if (Math.abs(startedLift - targetLift) < 0.25) {
+    setRenderedPetPosition(renderedPetX, targetLift)
     commitPetPosition()
     return
   }
   const startedAt = typeof performance === 'undefined' ? Date.now() : performance.now()
-  // 用与原版 Framer Motion 接近的欠阻尼弹簧解算落地，不用固定分段插值，
-  // 这样不同拖起高度的回弹速度和过冲比例保持一致。
+  // 用与原版 Framer Motion 接近的欠阻尼弹簧解算落地；目标可以是桌面或窗口顶部，
+  // 但仍保持原有回弹手感，不把平台吸附做成生硬的瞬移。
   const stiffness = 320
   const damping = 15
   const naturalFrequency = Math.sqrt(stiffness)
@@ -559,10 +858,10 @@ function animatePetDrop(): void {
     const envelope = Math.exp(-dampingRatio * naturalFrequency * elapsed)
     const oscillation = Math.cos(dampedFrequency * elapsed)
       + (dampingRatio * naturalFrequency / dampedFrequency) * Math.sin(dampedFrequency * elapsed)
-    const nextLift = startedLift * envelope * oscillation
+    const nextLift = targetLift + (startedLift - targetLift) * envelope * oscillation
     setRenderedPetPosition(renderedPetX, nextLift)
-    if (elapsed >= duration / 1_000 || Math.abs(nextLift) < 0.25) {
-      setRenderedPetPosition(renderedPetX, 0)
+    if (elapsed >= duration / 1_000 || Math.abs(nextLift - targetLift) < 0.25) {
+      setRenderedPetPosition(renderedPetX, targetLift)
       commitPetPosition()
       liftFrame = undefined
       return
@@ -574,7 +873,7 @@ function animatePetDrop(): void {
 
 const petMenuStyle = computed(() => ({
   left: `${getSidePanelLeft(PET_CONTEXT_MENU_WIDTH)}px`,
-  // 菜单是窗口级面板；原版拖起宠物时菜单仍贴地，不能跟着精灵一起升高。
+  // 菜单保留自己的底部安全间距；垂直位置由 applyPetAnchorTransform 与宠物共享 lift。
   bottom: `${PANEL_BOTTOM_PADDING}px`,
   width: `${Math.min(PET_CONTEXT_MENU_WIDTH, Math.max(1, getViewportWidth() - 24))}px`
 }))
@@ -1031,12 +1330,119 @@ function stopPetRoaming(): void {
   commitPetPosition()
 }
 
+function startPetPlatformFall(
+  behavior: 'walk' | 'swim',
+  current: PetLocalPlatform,
+  target: PetLocalPlatform | null
+): number {
+  cancelPetPositionAnimation()
+  cancelPetRoamingFrame()
+  // 下落期间不再把旧平台当作支撑；窗口事件刷新时只能更新候选缓存，
+  // 不能把正在下落的宠物瞬间拉回旧窗口顶部。
+  setPetGroundSupport()
+  if (ambientBehaviorTimer !== undefined) window.clearTimeout(ambientBehaviorTimer)
+  ambientBehaviorTimer = undefined
+
+  const groundY = getPetGroundY(getViewportHeight(), PET_GROUND_PADDING)
+  const fromX = clampPetX(renderedPetX)
+  const targetX = target
+    ? getLowerPlatformLandingX(
+      current,
+      target,
+      fromX,
+      petMetrics.value.width,
+      getViewportWidth(),
+      getPetPlatformOccluders()
+    )
+    : null
+  const hasTarget = target !== null && targetX !== null
+  const landingX = targetX ?? fromX
+  const targetLift = hasTarget && target ? getPetPlatformLift(target, groundY) : 0
+  const startedLift = renderedPetLift
+  const startedAt = typeof performance === 'undefined' ? Date.now() : performance.now()
+  const duration = Math.max(520, Math.abs(landingX - fromX) / Math.max(1, WALK_SPEED) * 1_000 + 320)
+  const token = ++roamToken
+
+  const tick = (timestamp: number): void => {
+    if (token !== roamToken || petWindowUnmounted) return
+    const elapsed = timestamp - startedAt
+    const progress = Math.min(1, elapsed / duration)
+    const horizontalProgress = 1 - (1 - progress) ** 2
+    const verticalProgress = progress * progress
+      setRenderedPetPosition(
+       fromX + (landingX - fromX) * horizontalProgress,
+      startedLift + (targetLift - startedLift) * verticalProgress
+    )
+    if (progress >= 1) {
+      // WinEvent 到达和快照刷新都可能晚于动画最后一帧；不能把已经关闭或
+      // 上移的窗口重新写成当前支撑平台。完成帧重新取同 ID 的实时缓存，并
+      // 重新夹紧横坐标，失效时宁可落到桌面地面。
+      const liveCurrent = petPlatforms.value.find((platform) => platform.id === current.id)
+      const liveTarget = target
+        ? petPlatforms.value.find((platform) => platform.id === target.id)
+        : null
+      const sourceTop = liveCurrent?.top ?? current.top
+      const liveTargetX = liveCurrent && liveTarget
+        ? getLowerPlatformLandingX(
+          liveCurrent,
+          liveTarget,
+          fromX,
+          petMetrics.value.width,
+          getViewportWidth(),
+          getPetPlatformOccluders()
+        )
+        : null
+      const canLandOnTarget = Boolean(
+        liveTarget &&
+        liveTargetX !== null &&
+        liveTarget.top > sourceTop + 2 &&
+        liveTarget.top <= groundY + 2
+      )
+      if (canLandOnTarget && liveTarget) {
+        setRenderedPetPosition(liveTargetX!, getPetPlatformLift(liveTarget, groundY))
+        setPetPlatformSupport(liveTarget)
+      } else {
+        setRenderedPetPosition(fromX, 0)
+        setPetGroundSupport()
+      }
+      commitPetPosition()
+      roamFrame = undefined
+      if (ambientBehavior.value === behavior) ambientBehavior.value = null
+      scheduleNextAmbientBehavior()
+      return
+    }
+    roamFrame = window.requestAnimationFrame(tick)
+  }
+
+  roamFrame = window.requestAnimationFrame(tick)
+  return duration
+}
+
 function startPetRoaming(behavior: 'walk' | 'swim', speed = behavior === 'swim' ? SWIM_SPEED : WALK_SPEED): number {
-  if (dozing.value || contextMenuOpen.value || chatOpen.value || dragging.value || state.value?.awayTask) return 0
-  const minX = getRoamMinX()
-  const maxX = getRoamMaxX()
+  if (dozing.value || contextMenuOpen.value || chatOpen.value || dragging.value || petDropSettlementActive || petDropSettlementPending || state.value?.awayTask) return 0
+  const currentPlatform = getCurrentPetPlatform()
+  const platformBounds = currentPlatform
+    ? getPetPlatformBounds(
+      currentPlatform,
+      petMetrics.value.width,
+      getViewportWidth(),
+      EDGE_MARGIN,
+      getPetPlatformOccluders()
+    )
+    : null
+  if (currentPlatform && (!platformBounds || platformBounds.segments.length === 0)) return 0
+  const minX = platformBounds?.minX ?? getRoamMinX()
+  const maxX = platformBounds?.maxX ?? getRoamMaxX()
   const from = clampPetX(renderedPetX)
-  let target = minX + Math.random() * Math.max(0, maxX - minX)
+  const activeSegment = currentPlatform
+    ? platformBounds?.segments.find((segment) => from >= segment.minX && from <= segment.maxX) ?? platformBounds?.segments[0]
+    : null
+  const roamMinX = activeSegment?.minX ?? minX
+  const roamMaxX = activeSegment?.maxX ?? maxX
+  // 平台漫游有一部分概率走向边缘；抵达边缘后才检查低平台，避免宠物刚落地就瞬移。
+  const target = currentPlatform && Math.random() < 0.35
+    ? (Math.random() < 0.5 ? roamMinX : roamMaxX)
+    : roamMinX + Math.random() * Math.max(0, roamMaxX - roamMinX)
   // 原版把 48px 以内的随机目标视为“本轮不走”；强行改成远端会让宠物
   // 在屏幕边缘突然长距离折返，破坏原版的随机停留节奏。
   if (Math.abs(target - from) < 48) return 0
@@ -1049,7 +1455,7 @@ function startPetRoaming(behavior: 'walk' | 'swim', speed = behavior === 'swim' 
   const startedAt = typeof performance === 'undefined' ? Date.now() : performance.now()
   const distance = Math.abs(target - from)
   const isDash = speed >= DASH_SPEED && distance >= 160
-  // 原版短 dash 会退回普通散步；保留同一目标即可避免递归抽样导致极端情况下
+  // 原版短 dash 会退回普通行走；保留同一目标即可避免递归抽样导致极端情况下
   // 连续命中近目标，同时仍保持“短距离不突然加速”的可感知语义。
   const effectiveSpeed = isDash ? speed : Math.min(speed, WALK_SPEED)
   const duration = Math.max(320, distance / Math.max(1, effectiveSpeed) * 1_000)
@@ -1064,8 +1470,36 @@ function startPetRoaming(behavior: 'walk' | 'swim', speed = behavior === 'swim' 
     setRenderedPetPosition(from + (target - from) * easedProgress, renderedPetLift)
     if (progress >= 1) {
       setRenderedPetPosition(target, renderedPetLift)
-      commitPetPosition()
       roamFrame = undefined
+      if (currentPlatform) {
+        const reachedEdge = target <= roamMinX + EDGE_MARGIN || target >= roamMaxX - EDGE_MARGIN
+        if (reachedEdge) {
+          // 自主迁移只比较更低的平台；用户手动拖拽的落点不经过这条限制。
+          const lower = findLowerPetPlatform(
+            petPlatforms.value,
+            currentPlatform,
+            getPetGroundY(getViewportHeight(), PET_GROUND_PADDING),
+            petMetrics.value.width,
+            getViewportWidth(),
+            getPetPlatformOccluders()
+          )
+          if (lower) {
+            startPetPlatformFall(behavior, currentPlatform, lower)
+          } else {
+            // 没有更低平台时，边缘就是活动范围终点；不能把宠物继续推过
+            // 窗口边缘，也不能为了“找路”凭空落回桌面地面。
+            setPetPlatformSupport(currentPlatform)
+            commitPetPosition()
+            if (ambientBehavior.value === behavior) ambientBehavior.value = null
+            if (ambientBehaviorTimer !== undefined) window.clearTimeout(ambientBehaviorTimer)
+            ambientBehaviorTimer = undefined
+            scheduleNextAmbientBehavior()
+          }
+          return
+        }
+        setPetPlatformSupport(currentPlatform)
+      }
+      commitPetPosition()
       if (ambientBehavior.value === behavior) ambientBehavior.value = null
       if (ambientBehaviorTimer !== undefined) window.clearTimeout(ambientBehaviorTimer)
       ambientBehaviorTimer = undefined
@@ -1180,7 +1614,7 @@ function runAmbientBehavior(): void {
 }
 
 function scheduleNextAmbientBehavior(): void {
-  if (petWindowUnmounted) return
+  if (petWindowUnmounted || petDropSettlementActive || petDropSettlementPending) return
   if (ambientTimer !== undefined) window.clearTimeout(ambientTimer)
   if (ambientBehavior.value) return
   // OpenCowork 在宠物回到 idle 后用 2.5~6.5 秒随机延迟排下一次行为，
@@ -1438,10 +1872,9 @@ function finishPetPointer(event: PointerEvent, cancelled = false): void {
     } else {
       commitPetPosition()
     }
-    if (!cancelled) animatePetDrop()
+    if (!cancelled) void settlePetDrop()
     dragGestureMoved.value = false
     syncPetWindowModeAtPointer(event)
-    scheduleNextAmbientBehavior()
     return
   }
   dragGestureMoved.value = false
@@ -1465,6 +1898,7 @@ function handlePetViewportResize(): void {
   // 窗口变矮时收回超出上边界的拖拽位置，避免宠物主体或气泡永久落在不可见区域。
   renderedPetLift = Math.max(getPetMinLift(), Math.min(0, renderedPetLift))
   commitPetPosition()
+  schedulePetPlatformRefresh()
 }
 
 function createPetRequestId(prefix: string): string {
@@ -2645,7 +3079,10 @@ watch(
     if (!away) {
       // 进入 away 时会清掉所有旧计时器；只有任务真正结束后才恢复漫游，
       // 避免任务胶囊存在期间不断排队无效行为，也避免结束瞬间没有下一次排期。
-      if (previousAway) scheduleNextAmbientBehavior()
+      if (previousAway) {
+        schedulePetPlatformRefresh()
+        scheduleNextAmbientBehavior()
+      }
       return
     }
     // 进入 away 后精灵会卸载；所有仍指向旧精灵的视觉和交互状态必须同时撤销，
@@ -2666,6 +3103,16 @@ watch(
   () => {
     // away 状态会卸载并重新创建锚点；模板 ref 恢复后补写当前的非响应式位置。
     applyPetAnchorTransform()
+  },
+  { flush: 'post' }
+)
+
+watch(
+  contextMenuOpen,
+  (open) => {
+    if (!open) return
+    // 菜单由 v-if 动态创建；等节点挂载后补写 transform，避免打开瞬间仍停在窗口底部。
+    void nextTick(() => applyPetAnchorTransform())
   },
   { flush: 'post' }
 )
@@ -2692,6 +3139,9 @@ onMounted(async () => {
   petWindowUnmounted = false
   applyPetAnchorTransform()
   requestPetWindowMode('passive', true)
+  // 平台层级是当前窗口实例的运行时状态；挂载时先回到普通层级，避免
+  // 上一实例关闭时正站在 topmost 窗口上，导致本次尚未完成探测就永久置顶。
+  requestPetPlatformLayer('', true)
   stopPetActionEvent = Events.On('pet.action', (event) => {
     void handlePetActionEvent(event.data)
   })
@@ -2707,7 +3157,9 @@ onMounted(async () => {
     petAudioPlayer.handleEvent(event.data, props.petId)
   })
   stopPetPointerEvent = Events.On(PET_WINDOW_POINTER_EVENT, (event) => handleNativePetPointer(event.data))
+  stopPetPlatformsEvent = Events.On(PET_WINDOW_PLATFORMS_EVENT, () => schedulePetPlatformRefresh())
   await Promise.all([loadSnapshot(true), loadBundledAtlas()])
+  void refreshPetPlatforms()
   clockTimer = window.setInterval(() => {
     now.value = Date.now()
   }, 500)
@@ -2737,6 +3189,10 @@ onBeforeUnmount(() => {
   if (idleTimer !== undefined) window.clearInterval(idleTimer)
   if (reportTimer !== undefined) window.clearTimeout(reportTimer)
   if (proactiveTimer !== undefined) window.clearInterval(proactiveTimer)
+  if (platformRefreshTimer !== undefined) window.clearTimeout(platformRefreshTimer)
+  platformRefreshTimer = undefined
+  platformRefreshGeneration += 1
+  platformLayerGeneration += 1
   stopAmbientBehavior()
   stopPetRoaming()
   cancelContextMenuClose()
@@ -2752,12 +3208,14 @@ onBeforeUnmount(() => {
   stopPetReminderEvent?.()
   stopPetAudioEvent?.()
   stopPetPointerEvent?.()
+  stopPetPlatformsEvent?.()
   stopPetSettingsEvent?.()
   stopPetActionEvent = null
   stopPetRuntimeEvent = null
   stopPetReminderEvent = null
   stopPetAudioEvent = null
   stopPetPointerEvent = null
+  stopPetPlatformsEvent = null
   stopPetSettingsEvent = null
   stopProactiveSession()
   stopDreamSession()
@@ -2896,6 +3354,7 @@ onBeforeUnmount(() => {
 
       <aside
         v-if="contextMenuOpen"
+        ref="petMenuRef"
         class="pet-window__context-menu"
         :style="petMenuStyle"
         :aria-label="t('pet.window.contextMenu.label')"
@@ -3699,7 +4158,6 @@ onBeforeUnmount(() => {
   margin: 0;
   overflow: visible;
   pointer-events: auto;
-  transform: none;
 }
 
 .pet-window__inline-state {

@@ -39,6 +39,11 @@ func (d *wailsPetWindowDriver) SetWindowClosedCallback(callback func()) {
 
 func (d *wailsPetWindowDriver) CaptureFocusRestore() {}
 
+// 非 Windows 没有统一的顶层窗口枚举能力；返回不可用快照，让前端继续使用桌面地面。
+func (d *wailsPetWindowDriver) GetPlatforms() (PetWindowPlatformSnapshot, error) {
+	return PetWindowPlatformSnapshot{}, nil
+}
+
 // 非 Windows 没有统一、可靠的系统级最后输入时间；返回 0 并明确报 unsupported，
 // 让前端关闭 dozing 增强能力，而不是把缺失能力误判成用户刚刚活动。
 func readPetWindowIdleSeconds() (int, error) {
@@ -183,6 +188,11 @@ func (d *wailsPetWindowDriver) SetAlwaysOnTop(alwaysOnTop bool) error {
 		window.SetAlwaysOnTop(alwaysOnTop)
 	}
 	return nil
+}
+
+func (d *wailsPetWindowDriver) SetPlatformLayer(_ string) (bool, error) {
+	// 非 Windows 没有统一的跨窗口 Z 序查询；保持普通层级，不伪造 topmost。
+	return false, nil
 }
 
 func (d *wailsPetWindowDriver) IsFocused() bool {
