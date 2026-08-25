@@ -110,6 +110,9 @@ const PET_POINTER_DRAG_THRESHOLD = 6
 const PET_CONTEXT_MENU_WIDTH = 236
 const PET_CHAT_WIDTH = 292
 const PET_REPORT_TIME_BUBBLE_MS = 5_200
+// Windows IME 在 composition/focusout 之间可能短暂把 relatedTarget 置空；
+// 这段保护窗口用于避免原生 ReleaseFocus 抢走中文输入焦点。
+const PET_KEYBOARD_FOCUS_GRACE_MS = 420
 // 这些数值只用于菜单展示，动作能否执行仍由 PetService 判定；菜单不能复制业务规则。
 const PET_FEED_COST = 10
 const PET_BATHE_COST = 6
@@ -425,6 +428,9 @@ let requestedWindowMode: PetWindowMode = 'passive'
 let appliedWindowMode: PetWindowMode = 'passive'
 let windowModeQueue: Promise<void> = Promise.resolve()
 let forceWindowModeSync = false
+let keyboardFocusGraceUntil = 0
+let keyboardFocusGraceTimer: number | undefined
+let textCompositionActive = false
 let platformLayerBridgeUnavailable = false
 let requestedPlatformLayer = ''
 let appliedPlatformLayer = ''
@@ -1042,10 +1048,74 @@ function isKeyboardTarget(value: EventTarget | null): boolean {
   return value instanceof HTMLElement && value.matches('input, textarea, select, [contenteditable="true"]')
 }
 
-function shouldRetainKeyboardMode(): boolean {
-  // 普通菜单焦点和透明空白不能把整条底部 overlay 锁成可交互窗口，否则用户当前
-  // 应用会再次被挡住；聊天输入和图片预览则必须持续接收焦点及鼠标事件。
-  return Boolean(petImagePreviewUrl.value) || (chatOpen.value && isKeyboardTarget(document.activeElement))
+function clearKeyboardFocusGrace(): void {
+  if (keyboardFocusGraceTimer === undefined) return
+  window.clearTimeout(keyboardFocusGraceTimer)
+  keyboardFocusGraceTimer = undefined
+}
+
+function hasKeyboardFocusProtection(): boolean {
+  if (!chatOpen.value) return false
+  return textCompositionActive ||
+    Date.now() < keyboardFocusGraceUntil ||
+    isKeyboardTarget(document.activeElement)
+}
+
+function scheduleKeyboardFocusRelease(): void {
+  clearKeyboardFocusGrace()
+  // 输入框已经重新拿回焦点时，keyboard 模式本身就是稳定状态；继续
+  // 每 16ms 重排定时器只会造成后台空转。IME 组合期间同理，等 compositionend
+  // 重新计算释放时机，避免把临时的 focusout 当成真实失焦。
+  if (isKeyboardTarget(document.activeElement) || textCompositionActive) return
+  const remaining = Math.max(0, keyboardFocusGraceUntil - Date.now())
+  if (remaining <= 0) {
+    if (!dragging.value) requestPetWindowMode(getWindowModeAfterPointerExit())
+    return
+  }
+  keyboardFocusGraceTimer = window.setTimeout(() => {
+    keyboardFocusGraceTimer = undefined
+    if (isKeyboardTarget(document.activeElement) || textCompositionActive) {
+      // 焦点已回到输入控件或 IME 仍在组合，当前 keyboard 模式无需继续轮询；
+      // 后续 focusout/compositionend 会再次进入这里并决定是否释放。
+      return
+    }
+    if (Date.now() < keyboardFocusGraceUntil) {
+      scheduleKeyboardFocusRelease()
+      return
+    }
+    if (!dragging.value) requestPetWindowMode(getWindowModeAfterPointerExit())
+  }, Math.max(remaining, 16))
+}
+
+function preserveKeyboardFocus(): void {
+  if (!chatOpen.value) return
+  keyboardFocusGraceUntil = Date.now() + PET_KEYBOARD_FOCUS_GRACE_MS
+  requestPetWindowMode('keyboard')
+  scheduleKeyboardFocusRelease()
+}
+
+function handleTextCompositionStart(event: CompositionEvent): void {
+  if (!isKeyboardTarget(event.target)) return
+  textCompositionActive = true
+  preserveKeyboardFocus()
+}
+
+function handleTextCompositionEnd(event: CompositionEvent): void {
+  if (!isKeyboardTarget(event.target)) return
+  textCompositionActive = false
+  preserveKeyboardFocus()
+}
+
+function handleWindowKeyboardInteraction(event: Event): void {
+  if (!isKeyboardTarget(event.target)) return
+  preserveKeyboardFocus()
+}
+
+function getWindowModeAfterPointerExit(): PetWindowMode {
+  // 输入框仍有焦点时必须保持 keyboard；否则切到 passive 会触发原生 ReleaseFocus，
+  // Windows 会把键盘焦点交还给其他窗口，导致用户连续输入时 textarea 突然失焦。
+  const shouldKeepKeyboardMode = Boolean(petImagePreviewUrl.value) || hasKeyboardFocusProtection()
+  return shouldKeepKeyboardMode ? 'keyboard' : 'passive'
 }
 
 function isInteractiveTarget(value: EventTarget | null): boolean {
@@ -1072,12 +1142,12 @@ function syncPetWindowModeAtPointer(event: PointerEvent): void {
     : document.elementFromPoint(event.clientX, event.clientY)
   syncPetHoverState(hovered)
   if (isInteractiveTarget(hovered)) {
-    requestPetWindowMode(petImagePreviewUrl.value || isKeyboardTarget(document.activeElement) ? 'keyboard' : 'interactive')
+    requestPetWindowMode(petImagePreviewUrl.value || hasKeyboardFocusProtection() ? 'keyboard' : 'interactive')
     return
   }
   // 全屏 overlay 的根节点没有真实可交互内容；鼠标离开宠物/菜单/聊天后必须恢复穿透，
   // 不能因为菜单或聊天仍然打开，就把整个工作区继续变成挡鼠标的原生窗口。
-  if (!dragging.value) requestPetWindowMode(shouldRetainKeyboardMode() ? 'keyboard' : 'passive')
+  if (!dragging.value) requestPetWindowMode(getWindowModeAfterPointerExit())
 }
 
 function handleNativePetPointer(value: unknown): void {
@@ -1086,7 +1156,7 @@ function handleNativePetPointer(value: unknown): void {
   const inside = source.inside === true
   if (!inside) {
     syncPetHoverState(null)
-    if (!dragging.value) requestPetWindowMode(shouldRetainKeyboardMode() ? 'keyboard' : 'passive')
+    if (!dragging.value) requestPetWindowMode(getWindowModeAfterPointerExit())
     return
   }
   const screenX = typeof source.screenX === 'number' ? source.screenX : NaN
@@ -1095,6 +1165,7 @@ function handleNativePetPointer(value: unknown): void {
   const windowY = typeof source.windowY === 'number' ? source.windowY : NaN
   if (![screenX, screenY, windowX, windowY].every(Number.isFinite)) {
     syncPetHoverState(null)
+    if (!dragging.value) requestPetWindowMode(getWindowModeAfterPointerExit())
     return
   }
 
@@ -1106,6 +1177,7 @@ function handleNativePetPointer(value: unknown): void {
   const viewportHeight = Math.max(1, window.innerHeight)
   if (![windowWidth, windowHeight].every((item) => Number.isFinite(item) && item > 0)) {
     syncPetHoverState(null)
+    if (!dragging.value) requestPetWindowMode(getWindowModeAfterPointerExit())
     return
   }
   // Native GetWindowRect 使用物理像素，WebView 的 DOM 使用 CSS/DIP；按窗口比例换算，
@@ -1115,25 +1187,25 @@ function handleNativePetPointer(value: unknown): void {
   const hovered = document.elementFromPoint(localX, localY)
   syncPetHoverState(hovered)
   if (isInteractiveTarget(hovered)) {
-    requestPetWindowMode(petImagePreviewUrl.value || isKeyboardTarget(document.activeElement) ? 'keyboard' : 'interactive')
+    requestPetWindowMode(petImagePreviewUrl.value || hasKeyboardFocusProtection() ? 'keyboard' : 'interactive')
   } else if (!dragging.value) {
     // interactive 状态下原生窗口覆盖整个 work area，不会再触发 DOM pointerleave；
     // 轮询命中透明空白后主动恢复 WS_EX_TRANSPARENT，避免一次碰到宠物就永久挡住桌面。
-    requestPetWindowMode(shouldRetainKeyboardMode() ? 'keyboard' : 'passive')
+    requestPetWindowMode(getWindowModeAfterPointerExit())
   }
 }
 
 function handleWindowPointerOver(event: PointerEvent): void {
   syncPetHoverState(event.target)
   if (isInteractiveTarget(event.target)) {
-    requestPetWindowMode(petImagePreviewUrl.value ? 'keyboard' : 'interactive')
+    requestPetWindowMode(petImagePreviewUrl.value || hasKeyboardFocusProtection() ? 'keyboard' : 'interactive')
   }
 }
 
 function handleWindowPointerLeave(): void {
   syncPetHoverState(null)
   if (dragging.value) return
-  requestPetWindowMode(shouldRetainKeyboardMode() ? 'keyboard' : 'passive')
+  requestPetWindowMode(getWindowModeAfterPointerExit())
 }
 
 function handleWindowFocusIn(event: FocusEvent): void {
@@ -1144,8 +1216,15 @@ function handleWindowFocusOut(event: FocusEvent): void {
   const currentTarget = event.currentTarget
   const nextTarget = event.relatedTarget
   if (currentTarget instanceof HTMLElement && nextTarget instanceof Node && currentTarget.contains(nextTarget)) return
+  if (hasKeyboardFocusProtection()) {
+    // IME 提交候选词时 focusout 可能先于下一次 focusin 到达；立即切 passive
+    // 会触发原生 ReleaseFocus，后续中文字符就会落到别的窗口。
+    requestPetWindowMode('keyboard')
+    scheduleKeyboardFocusRelease()
+    return
+  }
   syncPetHoverState(null)
-  if (!dragging.value) requestPetWindowMode(shouldRetainKeyboardMode() ? 'keyboard' : 'passive')
+  if (!dragging.value) requestPetWindowMode(getWindowModeAfterPointerExit())
 }
 
 function isPetChatActive(): boolean {
@@ -1216,7 +1295,7 @@ function clearPetBubble(source?: PetBubbleSource): void {
   bubbleTimer = undefined
   petBubble.value = null
   if (!chatOpen.value && !contextMenuOpen.value && !dragging.value) {
-    requestPetWindowMode(shouldRetainKeyboardMode() ? 'keyboard' : 'passive')
+    requestPetWindowMode(getWindowModeAfterPointerExit())
   }
 }
 
@@ -1265,7 +1344,7 @@ function showPetBubble(
     petBubble.value = null
     bubbleTimer = undefined
     if (!chatOpen.value && !contextMenuOpen.value && !dragging.value) {
-      requestPetWindowMode(shouldRetainKeyboardMode() ? 'keyboard' : 'passive')
+      requestPetWindowMode(getWindowModeAfterPointerExit())
     }
   }, getPetBubbleDuration(normalized, source, duration))
 }
@@ -1284,7 +1363,7 @@ function closePetImagePreview(): void {
   if (!petImagePreviewUrl.value) return
   petImagePreviewUrl.value = ''
   if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
-  requestPetWindowMode(shouldRetainKeyboardMode() ? 'keyboard' : 'passive')
+  requestPetWindowMode(getWindowModeAfterPointerExit())
 }
 
 function handlePetEscape(): void {
@@ -1685,7 +1764,7 @@ function scheduleContextMenuClose(): void {
   menuCloseTimer = window.setTimeout(() => {
     menuCloseTimer = undefined
     contextMenuOpen.value = false
-    requestPetWindowMode(shouldRetainKeyboardMode() ? 'keyboard' : 'passive')
+    requestPetWindowMode(getWindowModeAfterPointerExit())
     scheduleNextAmbientBehavior()
   }, 500)
 }
@@ -1741,6 +1820,9 @@ function openPetChat(): void {
   cancelContextMenuClose()
   contextMenuOpen.value = false
   chatOpen.value = true
+  textCompositionActive = false
+  keyboardFocusGraceUntil = Date.now() + PET_KEYBOARD_FOCUS_GRACE_MS
+  clearKeyboardFocusGrace()
   requestPetWindowMode('keyboard')
 
   const focusInput = (): void => {
@@ -1752,6 +1834,9 @@ function openPetChat(): void {
 
 function closePetChat(): void {
   chatOpen.value = false
+  textCompositionActive = false
+  keyboardFocusGraceUntil = 0
+  clearKeyboardFocusGrace()
   if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
   requestPetWindowMode('passive')
   scheduleNextAmbientBehavior()
@@ -1821,7 +1906,7 @@ function onPetPointerEnter(): void {
 function onPetPointerLeave(): void {
   hoveringPet.value = false
   if (!dragging.value) {
-    requestPetWindowMode(shouldRetainKeyboardMode() ? 'keyboard' : 'passive')
+    requestPetWindowMode(getWindowModeAfterPointerExit())
   }
 }
 
@@ -3294,6 +3379,9 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   petWindowUnmounted = true
+  clearKeyboardFocusGrace()
+  keyboardFocusGraceUntil = 0
+  textCompositionActive = false
   snapshotGeneration += 1
   refreshRequested = false
   if (runtimeTickTimer !== undefined) window.clearInterval(runtimeTickTimer)
@@ -3348,6 +3436,10 @@ onBeforeUnmount(() => {
     @pointerleave="handleWindowPointerLeave"
     @focusin="handleWindowFocusIn"
     @focusout="handleWindowFocusOut"
+    @compositionstart="handleTextCompositionStart"
+    @compositionend="handleTextCompositionEnd"
+    @keydown="handleWindowKeyboardInteraction"
+    @input="handleWindowKeyboardInteraction"
     @keydown.esc="handlePetEscape"
   >
     <main class="pet-window__scene">
@@ -3602,7 +3694,6 @@ onBeforeUnmount(() => {
         :pet-name="petName"
         :agent="snapshot?.agent ?? null"
         :dreams="snapshot?.dreams ?? []"
-        :provider-platform="snapshot?.agent.providerPlatform ?? props.providerPlatform"
         @status-change="handlePetChatStatus"
         @bubble="handlePetChatBubble"
         @close="closePetChat"

@@ -34,7 +34,7 @@ func (dbRequestLogSink) WriteRequestLog(ctx context.Context, requestLog *Reqeust
 		requestLogQueueUnavailableWarning.Do(func() {
 			fmt.Printf("⚠️  写入 request_log 失败: 队列未初始化\n")
 		})
-		return nil
+		return errors.New("request log queue unavailable")
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -58,7 +58,7 @@ func (dbRequestLogSink) WriteRequestLog(ctx context.Context, requestLog *Reqeust
 			reasoning_tokens, is_stream, duration_sec,
 			ephemeral_5m_tokens, ephemeral_1h_tokens, service_tier,
 			requested_model, billable_input_tokens, usage_accounting_version, usage_raw_json
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		requestLog.Platform,
 		requestLog.Model,

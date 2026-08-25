@@ -3,6 +3,7 @@ package services
 import (
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 
@@ -346,18 +347,24 @@ func (w *PetWindow) SetMode(mode PetWindowMode) error {
 	if w.open {
 		previousClickThrough := petWindowModeClickThrough(w.mode)
 		previousMode := w.mode
-		if previousMode == PetWindowKeyboard && mode != PetWindowKeyboard {
-			if err := w.driver.ReleaseFocus(); err != nil {
-				return fmt.Errorf("release pet window focus: %w", err)
-			}
-		}
-		if previousClickThrough && !petWindowModeClickThrough(mode) {
+		targetClickThrough := petWindowModeClickThrough(mode)
+		if mode == PetWindowKeyboard || (previousClickThrough && !targetClickThrough) {
 			// 必须在解除点击穿透前记录外部前台窗口；解除后 Windows 可能已经把桌宠
-			// 视为当前前台，再记录就无法恢复用户原来的输入目标。
+			// 视为当前前台，再记录就无法恢复用户原来的输入目标。即使当前已经处于
+			// interactive，也要在切入 keyboard 前重新捕获，避免上一次交互没有留下句柄。
 			w.driver.CaptureFocusRestore()
 		}
-		if err := w.driver.SetIgnoreMouseEvents(petWindowModeClickThrough(mode)); err != nil {
+		// 点击穿透是全屏透明层的安全边界，必须先落地；焦点恢复失败不能阻断
+		// passive，否则外部窗口会被整块桌宠 overlay 挡住。
+		if err := w.driver.SetIgnoreMouseEvents(targetClickThrough); err != nil {
 			return fmt.Errorf("set pet window mouse mode: %w", err)
+		}
+		if previousMode == PetWindowKeyboard && mode != PetWindowKeyboard {
+			if err := w.driver.ReleaseFocus(); err != nil {
+				// 原生焦点恢复是 best-effort；鼠标穿透已经生效，继续收敛状态比
+				// 把错误抛回前端并回滚到 keyboard 更重要。Windows driver 保留诊断日志。
+				log.Printf("[PetWindow] release focus after mouse mode change failed: %v", err)
+			}
 		}
 		if mode == PetWindowKeyboard {
 			if err := w.driver.Focus(); err != nil {

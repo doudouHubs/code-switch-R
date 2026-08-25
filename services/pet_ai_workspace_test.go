@@ -104,13 +104,13 @@ func TestPetAIWorkspaceResolverRejectsMissingBoundDirectory(t *testing.T) {
 	})
 	if err == nil {
 		failed := emitter.waitFor(t, PetAIEventFailed)
-		if failed.Error == nil || failed.Error.Code != string(PET_AI_INVALID_REQUEST) {
+		if failed.Error == nil || failed.Error.Code != string(PET_AI_WORKSPACE_UNAVAILABLE) {
 			t.Fatalf("missing workspace failed event = %#v", failed)
 		}
 		return
 	}
-	if petAIErrorCodeForWorkspaceTest(err) != string(PET_AI_INVALID_REQUEST) {
-		t.Fatalf("missing workspace error = %v, want %s", err, PET_AI_INVALID_REQUEST)
+	if petAIErrorCodeForWorkspaceTest(err) != string(PET_AI_WORKSPACE_UNAVAILABLE) {
+		t.Fatalf("missing workspace error = %v, want %s", err, PET_AI_WORKSPACE_UNAVAILABLE)
 	}
 }
 

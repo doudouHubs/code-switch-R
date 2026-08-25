@@ -10,6 +10,7 @@ import {
   FolderOpen,
   Images,
   LayoutDashboard,
+  MessageSquareText,
   Monitor,
   Moon,
   PawPrint,
@@ -22,6 +23,7 @@ import { fetchProjectManagerSnapshot, refreshProjectManagerSnapshot, type Projec
 import { petApi } from './petApi'
 import PetAtlasFrame from './PetAtlasFrame.vue'
 import PetDreamHistoryPanel from './PetDreamHistoryPanel.vue'
+import PetChatHistoryPanel from './PetChatHistoryPanel.vue'
 import PetMemoryPanel from './PetMemoryPanel.vue'
 import PetStudio from './PetStudio.vue'
 import { PetAudioPlayer } from './petAudio'
@@ -95,7 +97,7 @@ const PET_BUILTIN_AGENT_PROMPT = `你是 {{name}}，一只住在用户电脑桌�
 // 与 PetWindow 的默认梦境入口保持同一文案，用户编辑页展示的是空配置实际会使用的内容。
 const PET_BUILTIN_DREAM_PROMPT = '你正在睡觉并处于梦境中，这不是主人发来的消息。请以宠物的第一人称做一个具体、完整的随机短梦。梦境可以温暖、有趣、荒诞、紧张或偶尔令人害怕，但不要每次都做噩梦。'
 
-type PetTab = 'overview' | 'stats' | 'agent' | 'sleep' | 'skins' | 'memory' | 'dream-history' | 'studio'
+type PetTab = 'overview' | 'stats' | 'agent' | 'sleep' | 'skins' | 'memory' | 'dream-history' | 'chat-history' | 'studio'
 
 const PET_TABS: ReadonlyArray<{ id: PetTab; icon: Component }> = [
   { id: 'overview', icon: LayoutDashboard },
@@ -105,7 +107,8 @@ const PET_TABS: ReadonlyArray<{ id: PetTab; icon: Component }> = [
   { id: 'memory', icon: Brain },
   { id: 'agent', icon: Bot },
   { id: 'sleep', icon: Moon },
-  { id: 'dream-history', icon: Images }
+  { id: 'dream-history', icon: Images },
+  { id: 'chat-history', icon: MessageSquareText }
 ]
 
 interface PetExperienceLogEntry {
@@ -1351,6 +1354,8 @@ const companionDateLabel = computed(() => {
 })
 
 const overviewName = computed(() => snapshot.value?.state.name ?? nameDraft.value)
+const chatHistoryAgent = computed(() => snapshot.value?.agent ?? null)
+const chatHistoryPetName = computed(() => overviewName.value.trim() || 'Kapi')
 const proactiveDailyCap = computed(() => PET_PROACTIVE_DAILY_CAP[form.agent.proactiveFreq])
 
 onUnmounted(() => {
@@ -1363,10 +1368,6 @@ onUnmounted(() => {
 <template>
   <div class="pet-settings">
     <header class="pet-settings__header">
-      <div class="pet-settings__heading">
-        <h2>{{ t('pet.settings.title') }}</h2>
-        <p>{{ t('pet.settings.subtitle') }}</p>
-      </div>
       <nav class="pet-settings__tabs" role="tablist" :aria-label="t('pet.settings.tabsAria')">
         <button
           v-for="tab in PET_TABS"
@@ -1482,6 +1483,9 @@ onUnmounted(() => {
 
         <p v-show="activeTab === 'agent'" class="pet-settings__tab-description">
           {{ t('pet.settings.agent.description') }}
+        </p>
+        <p v-show="activeTab === 'agent'" class="pet-settings__hint">
+          {{ t('pet.settings.agent.codexDefaultHint') }}
         </p>
         <section v-show="activeTab === 'agent'" class="pet-settings__section">
           <div class="pet-settings__section-title">
@@ -2032,6 +2036,14 @@ onUnmounted(() => {
       <div v-show="activeTab === 'dream-history'" class="pet-settings__wide-content">
         <PetDreamHistoryPanel :pet-id="props.petId" />
       </div>
+
+      <div v-if="activeTab === 'chat-history'" class="pet-settings__wide-content">
+        <PetChatHistoryPanel
+          :pet-id="props.petId"
+          :pet-name="chatHistoryPetName"
+          :agent="chatHistoryAgent"
+        />
+      </div>
     </div>
   </div>
 </template>
@@ -2056,7 +2068,6 @@ onUnmounted(() => {
   font-family: var(--mac-font, system-ui, sans-serif);
 }
 
-.pet-settings__header,
 .pet-settings__header-actions,
 .pet-settings__setting-row,
 .pet-settings__inline-controls,
@@ -2067,13 +2078,8 @@ onUnmounted(() => {
 }
 
 .pet-settings__header {
-  display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(0, auto);
-  align-items: end;
-  gap: 16px 28px;
-}
-
-.pet-settings__heading {
+  display: block;
+  width: 100%;
   min-width: 0;
 }
 
@@ -2089,19 +2095,12 @@ onUnmounted(() => {
   letter-spacing: 0;
 }
 
-.pet-settings__heading p,
 .pet-settings__section-title p,
 .pet-settings__setting-row span,
 .pet-settings__hint {
   color: var(--settings-muted);
   font-size: 12px;
   line-height: 1.55;
-}
-
-.pet-settings__heading p {
-  margin-top: 4px;
-  font-size: 14px;
-  line-height: 20px;
 }
 
 .pet-settings__header-actions {
@@ -2169,9 +2168,10 @@ onUnmounted(() => {
 
 .pet-settings__tabs {
   display: flex;
+  width: 100%;
   min-width: 0;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   flex-wrap: wrap;
   gap: 6px;
 }
@@ -3374,11 +3374,6 @@ onUnmounted(() => {
 }
 
 @media (max-width: 1100px) {
-  .pet-settings__header {
-    grid-template-columns: minmax(0, 1fr);
-    align-items: flex-start;
-  }
-
   .pet-settings__tabs {
     justify-content: flex-start;
   }
@@ -3398,12 +3393,6 @@ onUnmounted(() => {
 @media (max-width: 640px) {
   .pet-settings {
     padding: 16px 12px;
-  }
-
-  .pet-settings__header {
-    grid-template-columns: minmax(0, 1fr);
-    align-items: flex-start;
-    gap: 12px;
   }
 
   .pet-settings__tabs {

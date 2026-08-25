@@ -129,6 +129,15 @@ CREATE TABLE IF NOT EXISTS pet_memory (
 CREATE INDEX IF NOT EXISTS idx_pet_memory_updated_at
     ON pet_memory(pet_id, updated_at DESC, id DESC);
 
+CREATE TABLE IF NOT EXISTS pet_codex_session (
+    pet_id TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL,
+    workspace TEXT NOT NULL,
+    persona_fingerprint TEXT NOT NULL,
+    protocol_version INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS pet_migration_markers (
     migration_key TEXT PRIMARY KEY,
     version INTEGER NOT NULL,
@@ -989,8 +998,9 @@ func (d *PetDAO) LoadAgent(ctx context.Context, petID string) (*PetAgentConfig, 
 	return snapshot.Agent, err
 }
 
-// Resolve 按宠物 ID 返回已持久化的 workspace 引用；空字符串表示该宠物没有绑定项目。
-// 解析只读取 pet_agent，不接受调用方传入的路径，从这里统一建立 AI 工具的 source of truth。
+// Resolve 保留旧版仅按 projectFolder 读取的兼容入口；主聊天使用
+// NewPetProjectWorkspaceResolver 从 ProjectManagerService 校验 projectId 后再取路径。
+// 该方法仍只读取持久化数据，不接受调用方传入的路径。
 func (d *PetDAO) Resolve(ctx context.Context, petID string) (string, error) {
 	agent, err := d.LoadAgent(ctx, petID)
 	if err != nil {

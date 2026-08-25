@@ -160,3 +160,60 @@
 - 本轮没有运行生产构建或重新生成 bindings；当前仍有旧进程 `F:\下载\CodeSwitch.exe`（PID `15224`），未按进程名清理。
 
 当前停止点仍是 Windows 最新 bundle 的原生手工验收；浏览器/静态证据不能替代真实窗口、provider 流式响应、麦克风和 Wails 事件验证。
+
+## 2026-08-21 Codex Chat Runtime Slice
+
+- [completed] 主聊天已由 `PetAIAPIService` 接入独立 `PetCodexRuntime`；每只宠物按 `petId` 持有独立 app-server、thread 和持久化 session。
+- [completed] `turn/start` 失败与 app-server 进程退出的 active 所有权竞态已补回归；失败终态事件不会重复，宠物状态不会残留 `in-flight`。
+- [completed] 定向 runtime/app-server/session/API 测试、`^TestPet` 专项和前端 `vue-tsc` 检查均通过。
+- [needs-verification] `-race` 未能执行：当前环境 `CGO_ENABLED=0` 且未安装 `gcc`/`clang`；不改变功能测试结论，但仍是并发证据缺口。
+
+## Resume State Hint
+
+如果继续本任务，先保留当前未提交工作树，读取本节和 `90-evidence.md`；不要回退频道/provider 改动。下一步优先使用启用 CGO 的环境重跑 `go test ./services -race -run 'Test(CodexAppServer|PetCodexRuntime)' -count=1`，然后再进行最新 desktop bundle 的原生聊天验收。
+
+## 2026-08-22 Workspace Binding Repair Slice
+
+- [completed] 新增 `PetProjectWorkspaceResolver`：以持久化 `projectId` 查询 `ProjectManagerService.ListProjects()`，返回当前 `ProjectSummary.Path`；旧 `projectFolder` 仅在没有 `projectId` 时兼容读取。
+- [completed] `PetAIService` 与 `PetCodexRuntime` 共用同一个 resolver；请求中的 `projectFolder` 不再参与主聊天 workspace 解析。
+- [completed] 新增 `PET_AI_WORKSPACE_UNAVAILABLE`，前端中英文错误提示改为明确要求重新绑定项目；普通 `PET_AI_INVALID_REQUEST` 仍保留通用输入校验语义。
+- [completed] 补充 projectId 解析、旧字段兼容、项目缺失、路径安全、多宠物隔离和 Codex `thread/start` fixture 回归。
+- [needs-verification] 最新 desktop bundle 的真实 Codex 配置和 Wails 原生聊天尚未手工验收；现有代码级 fixture 已确认不传 model/provider/reasoning override。
+
+## Resume State Hint
+
+继续时先读取本节与 `90-evidence.md`，保留工作区前序频道/provider 改动；不要把 `PetDAO.Resolve` 恢复成主聊天事实源。若做原生验收，应启动隔离的最新 bundle，不要批量结束已有 `CodeSwitch.exe` 进程。
+
+## 2026-08-24 Codex Chat Timeout Closure
+
+- [completed] 将 app-server RPC、session 持久化和 UI activity emitter 移出 `state.mu` 长临界区；通知消费不再被 `turn/start` 响应或慢 emitter 反向堵住。
+- [completed] `turn/start` 超时、取消先于响应、通知先于 RPC 响应和 app-server 退出均有独立回归；超时会关闭旧 client，下一轮重新初始化，避免迟到通知污染新 turn。
+- [completed] 修正 Windows fixture 回归的初始化时间预算，并通过目标 runtime/app-server 测试 3 次及完整 `^TestPet` 回归。
+- [needs-verification] `-race` 仍受 `CGO_ENABLED=0` 且缺少 `gcc`/`clang` 限制；最新 desktop bundle 的真实 Wails/Codex 聊天仍需重启新二进制手工验收。
+
+## Resume State Hint
+
+继续时保留当前未提交工作树；优先使用新构建的 desktop bundle 验证真实 Codex 默认配置、流式回复和超时后的重试。不要把旧 PID `14508` 的运行结果当作本轮 runtime 证据，也不要批量结束已有 `CodeSwitch.exe` 进程。
+
+## 2026-08-24 Codex Default And Focus Follow-up
+
+- [completed] 使用本机默认 Codex 配置执行真实单点：app-server 完成一次 turn，读取到 `modelProvider="code-switch-r"`、`model="gpt-5.6-luna"`，未向请求注入模型覆盖。
+- [completed] 最新 `^TestPet`、`vue-tsc`、locale JSON 和 `git diff --check` 均通过；Codex runtime 继续保持独立 thread、超时重建和 stale turn 隔离。
+- [completed] 修复 `PetWindow.vue` 焦点保护定时器在输入框持续聚焦时每 16ms 自我重排的问题；输入焦点或 IME 组合期间不再启动无意义轮询。
+- [completed] 对齐旧宠物兼容契约：`PetChat` 的 workspace 门禁同时接受 `projectId` 和遗留 `projectFolder`，历史面板也监听遗留字段变化。
+- [needs-verification] 未构建或重启最新桌面 bundle；真实 Windows Wails 输入法交互仍需用户在新 bundle 上验收。
+
+## Resume State Hint
+
+保留当前未提交工作树；真实单点已经证明本机默认 Codex 配置可用，后续若继续只需使用最新 bundle 做原生 UI 验收，不要回退 `PetChat` 的 thread 复用或 `PetWindow` 的焦点保护逻辑。
+
+## 2026-08-25 Pet Chat Floating Transcript Removal
+
+- [completed] 按确认方案移除聊天浮窗的用户/助手消息列表、空状态、自动滚动和消息专属 CSS；浮窗只保留输入、附件、录音、发送/取消、关闭和运行状态反馈。
+- [completed] 保留 Codex 流式文本清洗、计划解析、宠物气泡回复、失败/重试、取消和 watchdog；未修改长会话、历史 API 或设置页历史模块。
+- [completed] 静态扫描确认 `PetChat.vue` 不再包含 transcript DOM、消息列表状态或消息列表样式；`GetChatHistory` 仍只存在于设置页历史组件。
+- [needs-verification] 未构建或重启最新桌面 bundle；真实 Wails 窗口截图和交互仍需新资源手工验收。
+
+## Resume State Hint
+
+继续时保留当前未提交工作树；不要把 `PetChat` 的消息列表恢复为长会话展示，完整历史唯一入口是宠物设置页，实时回复唯一展示出口是 `PetWindow` 宠物气泡。

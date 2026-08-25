@@ -2,6 +2,7 @@ package services
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -371,38 +372,29 @@ func updateProjectManagerCodexFeatureText(content, preferredKey string) string {
 }
 
 func trustProjectManagerCodexHooks(codexHome string) error {
-	cmd := buildProjectManagerAppServerCommand()
-	stdin, err := cmd.StdinPipe()
+	client, err := NewCodexAppServerClient(CodexAppServerClientOptions{
+		Executable:     resolveProjectManagerCodexExecutable(),
+		CommandFactory: CodexAppServerCommandFactory(projectManagerAppServerCommandFactory),
+	})
 	if err != nil {
 		return err
 	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	defer cleanupProjectManagerAppServerProcess(cmd, stdin)
-	responses, scanErrs := scanProjectManagerAppServerStdout(stdout)
+	defer func() { _ = client.Close() }()
 
-	if err := writeProjectManagerAppServerMessage(stdin, projectManagerCodexInitializeRequest(1)); err != nil {
+	initialize := projectManagerCodexInitializeRequest(1)
+	initializeParams, ok := initialize["params"].(map[string]any)
+	if !ok {
+		return errors.New("Codex initialize 参数无效")
+	}
+	if _, err := client.Call(context.Background(), "initialize", initializeParams); err != nil {
 		return err
 	}
-	if _, err := readProjectManagerAppServerResponse(responses, scanErrs, 1, &stderr); err != nil {
+	if err := client.Notify("initialized", map[string]any{}); err != nil {
 		return err
 	}
-	if err := writeProjectManagerAppServerMessage(stdin, map[string]any{"method": "initialized", "params": map[string]any{}}); err != nil {
-		return err
-	}
-	if err := writeProjectManagerAppServerMessage(stdin, map[string]any{
-		"id": 2, "method": "hooks/list", "params": map[string]any{"cwds": []string{codexHome}},
-	}); err != nil {
-		return err
-	}
-	response, err := readProjectManagerAppServerResponse(responses, scanErrs, 2, &stderr)
+	response, err := client.Call(context.Background(), "hooks/list", map[string]any{
+		"cwds": []string{codexHome},
+	})
 	if err != nil {
 		return err
 	}
@@ -417,7 +409,7 @@ func trustProjectManagerCodexHooks(codexHome string) error {
 			} `json:"hooks"`
 		} `json:"data"`
 	}
-	if err := json.Unmarshal(response.Result, &listed); err != nil {
+	if err := json.Unmarshal(response, &listed); err != nil {
 		return err
 	}
 	trusts := map[string]any{}
@@ -435,17 +427,10 @@ func trustProjectManagerCodexHooks(codexHome string) error {
 	if len(trusts) == 0 {
 		return nil
 	}
-	if err := writeProjectManagerAppServerMessage(stdin, map[string]any{
-		"id":     3,
-		"method": "config/batchWrite",
-		"params": map[string]any{
-			"edits":            []any{map[string]any{"keyPath": "hooks.state", "value": trusts, "mergeStrategy": "upsert"}},
-			"reloadUserConfig": true,
-		},
-	}); err != nil {
-		return err
-	}
-	_, err = readProjectManagerAppServerResponse(responses, scanErrs, 3, &stderr)
+	_, err = client.Call(context.Background(), "config/batchWrite", map[string]any{
+		"edits":            []any{map[string]any{"keyPath": "hooks.state", "value": trusts, "mergeStrategy": "upsert"}},
+		"reloadUserConfig": true,
+	})
 	return err
 }
 

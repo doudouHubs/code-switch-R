@@ -6,12 +6,13 @@ import { fetchAppSettings } from '../../services/appSettings'
 import { ImagePlus, Loader2, Mic, SendHorizontal, Square, X } from '@lucide/vue'
 import { petApi } from './petApi'
 import {
-  buildPetPlanInstructions,
+  buildPetRuntimeContext,
   cleanPetAssistantText,
   extractPetPlan,
   formatPlanError,
   localPetTimeZone
 } from './petPlan'
+import { buildPetChatPersona } from './petChatProtocol'
 import type {
   PetAgentConfig,
   PetDreamHistoryRecord,
@@ -24,40 +25,26 @@ interface PetChatProps {
   petName?: string
   agent?: PetAgentConfig | null
   dreams?: PetDreamHistoryRecord[]
-  /** 兼容宿主显式传入平台；正常路径优先使用快照里的 agent.providerPlatform。 */
-  providerPlatform?: string
 }
 
 const props = withDefaults(defineProps<PetChatProps>(), {
   petId: 'default',
   petName: 'Kapi',
   agent: null,
-  dreams: () => [],
-  providerPlatform: ''
+  dreams: () => []
 })
 const emit = defineEmits<{
   (event: 'close'): void
-  // PetWindow 用这些事件把聊天状态同步到跟随宠物的气泡；会话历史只留在组件内
-  // 供下一次请求构造 history，不再复制到聊天浮层中。
+  // PetWindow 用这些事件把聊天状态同步到跟随宠物的气泡；Codex thread
+  // 是历史事实源，聊天浮窗只负责当前请求状态，不展示 transcript。
   (event: 'status-change', payload: { text: string; tone: 'muted' | 'error' }): void
   (event: 'bubble', payload: { text: string; tone: 'muted' | 'error'; duration?: number }): void
 }>()
 const { t } = useI18n()
 
-type ChatRole = 'user' | 'assistant'
-type ChatMessageStatus = 'complete' | 'streaming' | 'cancelled' | 'error'
 type ChatPhase = 'idle' | 'starting' | 'streaming' | 'cancelling' | 'error' | 'unavailable'
 type PlanPhase = 'idle' | 'loading' | 'ready' | 'error'
-type NormalizedEventType = 'started' | 'delta' | 'completed' | 'failed' | 'cancelled'
-
-interface ChatMessage {
-  id: string
-  role: ChatRole
-  content: string
-  images: PetChatImage[]
-  createdAt: number
-  status: ChatMessageStatus
-}
+type NormalizedEventType = 'started' | 'progress' | 'delta' | 'completed' | 'failed' | 'cancelled'
 
 interface PetChatImage {
   id: string
@@ -89,19 +76,10 @@ interface ChatAvailability {
 interface PetChatRequest {
   petId: string
   requestId: string
-  provider: {
-    platform: string
-    providerId: string
-    model: string
-    capability: 'chat'
-    autoFallback: boolean
-  }
   persona: string
+  runtimeContext: string
   userText: string
   images: PetChatImagePayload[]
-  history: Array<{ role: ChatRole; content: string; images?: PetChatImagePayload[] }>
-  projectFolder: string | null
-  reasoning?: string
 }
 
 interface PetTranscriptionRequest {
@@ -148,7 +126,12 @@ const PET_SCHEDULER_METHODS = {
 // 主控把核心 PetAIService 包装为 PetAIAPIService 后注册；事件仍由核心 emitter 统一转发。
 const PET_AI_EVENT = 'pet.ai'
 
-const messages = ref<ChatMessage[]>([])
+function hasChatWorkspaceBinding(agent: PetAgentConfig | null | undefined): boolean {
+  // 新配置以 projectId 为事实源，旧版本只保存 projectFolder；后端 resolver
+  // 已明确保留旧字段兼容读取，前端门禁必须与这个契约一致，不能提前拦截老宠物。
+  return Boolean(agent?.projectId?.trim() || agent?.projectFolder?.trim())
+}
+
 const inputText = ref('')
 const phase = ref<ChatPhase>('idle')
 const failureMessage = ref('')
@@ -175,15 +158,11 @@ const PET_CHAT_MAX_VOICE_DURATION_MS = 60_000
 // 默认 Go multipart 请求上限是 256 KiB；预留表单字段和边界开销，前端在
 // 录音阶段先停住，避免用户录完才收到一个必然失败的上传请求。
 const PET_CHAT_MAX_VOICE_BYTES = 240 * 1024
-// Go 端默认请求超时为 90s；前端多留 5s 只负责把失联的 UI 收口，实际取消仍由后端 context 执行。
-const PET_CHAT_REQUEST_WATCHDOG_MS = 95_000
-
-const configuredProviderPlatform = computed(() =>
-  props.agent?.providerPlatform?.trim() || props.providerPlatform.trim()
-)
+// Codex turn 是长生命周期请求，浏览器/MCP 工具链可以稳定运行数分钟；这里的
+// 计时器只负责捕获“长时间没有任何协议进展”的失联状态，收到 progress/delta 后续期。
+const PET_CHAT_REQUEST_WATCHDOG_MS = 5 * 60_000
 
 let activeRequestId = ''
-let activeAssistantId = ''
 let activeRawAssistantText = ''
 let lastEventSequence = 0
 let lastFailedText = ''
@@ -211,16 +190,13 @@ const chatAvailability = computed<ChatAvailability>(() => {
   if (!props.agent) {
     return { ready: false, message: t('pet.chat.availability.loading') }
   }
-  if (!props.agent.providerId || !props.agent.modelId) {
+  // Codex runtime 会按 petId 从后端解析 project，前端只用绑定 ID 做发送门禁；
+  // provider/model 已不再属于主聊天请求，避免 UI 维护第二套路由事实源。
+  if (!hasChatWorkspaceBinding(props.agent)) {
     return { ready: false, message: t('pet.chat.availability.bindingRequired') }
-  }
-  if (!configuredProviderPlatform.value) {
-    return { ready: false, message: t('pet.chat.availability.platformRequired') }
   }
   return { ready: true, message: '' }
 })
-
-const petName = computed(() => props.petName?.trim() || 'Kapi')
 
 const isBusy = computed(() =>
   phase.value === 'starting' || phase.value === 'streaming' || phase.value === 'cancelling'
@@ -231,7 +207,7 @@ const isComposerBusy = computed(() =>
 )
 
 // 配置缺失不能把发送入口直接锁死，否则 sendMessage 内已有的可读配置提示永远无法触发；
-// 真正发起请求前仍由 chatAvailability 做硬校验，避免静默调用错误的 provider/model。
+// 真正发起请求前仍由 chatAvailability 做硬校验，避免把未绑定项目的消息送进 runtime。
 const canSend = computed(() =>
   !isComposerBusy.value &&
   (inputText.value.trim().length > 0 || pendingImages.value.length > 0)
@@ -297,7 +273,9 @@ function normalizeChatEvent(value: unknown): ChatEvent | null {
   const typeMap: Record<string, NormalizedEventType | undefined> = {
     start: 'started',
     started: 'started',
+    progress: 'progress',
     delta: 'delta',
+    usage: 'progress',
     completed: 'completed',
     done: 'completed',
     failed: 'failed',
@@ -338,86 +316,28 @@ function cloneImages(images: PetChatImage[]): PetChatImage[] {
   return images.map((image) => ({ ...image }))
 }
 
-function createMessage(
-  role: ChatRole,
-  content: string,
-  status: ChatMessageStatus,
-  images: PetChatImage[] = []
-): ChatMessage {
-  return {
-    id: role + '-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
-    role,
-    content,
-    images: cloneImages(images),
-    createdAt: Date.now(),
-    status
-  }
-}
-
-function buildHistory(excludeMessageId = ''): Array<{ role: ChatRole; content: string; images?: PetChatImagePayload[] }> {
-  return messages.value
-    .filter((message) =>
-      message.id !== excludeMessageId &&
-      (message.content.trim() || message.images.length > 0) &&
-      message.status === 'complete'
-    )
-    .slice(-24)
-    .map((message) => ({
-      role: message.role,
-      content: message.content,
-      ...(message.images.length > 0
-        ? { images: message.images.map(({ data, mediaType }) => ({ data, mediaType })) }
-        : {})
-    }))
-}
-
 function buildPersona(): string {
-  const configured = props.agent?.systemPrompt.trim() ?? ''
-  const base = configured || '你是' + petName.value + '，一个简短、友善、会记得当前对话的桌面宠物。'
-  // 计划标签是模型与 UI 之间的隐藏协议；只传用户自定义 persona 会让模型
-  // 不知道何时生成协议，也会把“稍后提醒”退化成普通文字回答。
-  return `${base}\n\n${buildPetPlanInstructions()}`
-}
-
-function resolveProjectFolder(): string | null {
-  const projectFolder = props.agent?.projectFolder
-  if (typeof projectFolder !== 'string') return null
-
-  const normalized = projectFolder.trim()
-  // 目录只能来自后端 agent 快照；当前项目没有跨页面的选中项目状态，
-  // 因此无法安全取得时必须显式传 null，不能用 projectName、项目列表或用户文本猜路径。
-  return normalized || null
+  return buildPetChatPersona(props.agent?.systemPrompt, props.petName)
 }
 
 function buildChatRequest(
   requestId: string,
   userText: string,
-  images: PetChatImage[],
-  excludeMessageId = ''
+  images: PetChatImage[]
 ): PetChatRequest {
   const agent = props.agent
-  if (!agent?.providerId || !agent.modelId || !configuredProviderPlatform.value) {
+  if (!hasChatWorkspaceBinding(agent)) {
     throw new Error('PET_CHAT_NOT_CONFIGURED')
   }
 
   const request: PetChatRequest = {
     petId: props.petId,
     requestId,
-    provider: {
-      platform: configuredProviderPlatform.value,
-      providerId: agent.providerId.trim(),
-      model: agent.modelId.trim(),
-      capability: 'chat',
-      autoFallback: true
-    },
     persona: buildPersona(),
+    runtimeContext: buildPetRuntimeContext(),
     userText,
-    images: images.map(({ data, mediaType }) => ({ data, mediaType })),
-    history: buildHistory(excludeMessageId),
-    projectFolder: resolveProjectFolder()
+    images: images.map(({ data, mediaType }) => ({ data, mediaType }))
   }
-  // request 只携带 provider/model 引用；API Key 和 provider 实体由后端 resolver 读取。
-  if (agent.reasoningEffort) request.reasoning = agent.reasoningEffort
   return request
 }
 
@@ -884,10 +804,6 @@ function removePendingImage(imageId: string): void {
   attachmentMessage.value = ''
 }
 
-function findMessage(messageId: string): ChatMessage | undefined {
-  return messages.value.find((message) => message.id === messageId)
-}
-
 function isCurrentEvent(event: ChatEvent): boolean {
   if (!activeRequestId || event.requestId !== activeRequestId) return false
   if (event.petId && event.petId !== props.petId) return false
@@ -924,21 +840,32 @@ function armRequestWatchdog(requestId: string, userText: string): void {
 function settleRequest(): void {
   clearRequestWatchdog()
   activeRequestId = ''
-  activeAssistantId = ''
   activeRawAssistantText = ''
   lastEventSequence = 0
 }
 
 function safeErrorMessage(errorCode: string): string {
   const messageKeys: Record<string, string> = {
+    PET_AI_INVALID_REQUEST: 'pet.chat.errors.invalidRequest',
     PET_AI_REQUEST_CANCELLED: 'pet.chat.errors.cancelled',
     PET_AI_TIMEOUT: 'pet.chat.errors.timeout',
     PET_AI_REQUEST_IN_FLIGHT: 'pet.chat.errors.inFlight',
+    PET_AI_REQUEST_TOO_LARGE: 'pet.chat.errors.requestTooLarge',
+    PET_AI_RESPONSE_TOO_LARGE: 'pet.chat.errors.responseTooLarge',
+    PET_AI_RESPONSE_INVALID: 'pet.chat.errors.responseInvalid',
+    PET_AI_SSE_INVALID: 'pet.chat.errors.sseInvalid',
+    PET_AI_EVENT_ERROR: 'pet.chat.errors.eventError',
+    // PET_AI_UPSTREAM_ERROR 的稳定值历史上是 PET_UPSTREAM_ERROR；两种写法
+    // 都保留，兼容 Wails 直接返回常量名或错误值的不同版本。
+    PET_UPSTREAM_ERROR: 'pet.chat.errors.upstream',
+    PET_AI_UPSTREAM_ERROR: 'pet.chat.errors.upstream',
     PET_PROVIDER_NOT_FOUND: 'pet.chat.errors.providerNotFound',
     PET_MODEL_NOT_CONFIGURED: 'pet.chat.errors.modelNotConfigured',
     PET_MODEL_UNSUPPORTED: 'pet.chat.errors.modelUnsupported',
     PET_REFERENCE_INVALID: 'pet.chat.errors.referenceInvalid',
     PET_CAPABILITY_UNSUPPORTED: 'pet.chat.errors.capabilityUnsupported',
+    PET_CHAT_NOT_CONFIGURED: 'pet.chat.errors.notConfigured',
+    PET_AI_WORKSPACE_UNAVAILABLE: 'pet.chat.errors.workspaceUnavailable',
     PET_AI_DEPENDENCY_UNAVAILABLE: 'pet.chat.errors.dependencyUnavailable'
   }
   return messageKeys[errorCode] ? t(messageKeys[errorCode]) : t('pet.chat.errors.generic')
@@ -1044,12 +971,6 @@ function isMissingBindingError(error: unknown): boolean {
 
 function settleFailure(requestId: string, userText: string, errorCode = ''): void {
   if (activeRequestId !== requestId) return
-  const assistant = findMessage(activeAssistantId)
-  if (assistant) {
-    assistant.content = cleanPetAssistantText(assistant.content)
-    assistant.content = assistant.content || t('pet.chat.message.incomplete')
-    assistant.status = 'error'
-  }
   lastFailedText = userText
   failureMessage.value = safeErrorMessage(errorCode)
   settleRequest()
@@ -1061,60 +982,55 @@ function handleChatEvent(value: unknown): void {
   const event = normalizeChatEvent(value)
   if (!event || !isCurrentEvent(event)) return
 
+  // 不把“收到事件”误当成完成；只续期空闲保护，最终状态仍由 completed/failed/cancelled
+  // 事件决定。这样 tool call 期间没有可见文本时，Codex 仍能继续工作。
+  armRequestWatchdog(activeRequestId, lastFailedText)
+
   if (event.type === 'started') {
     phase.value = 'streaming'
     emit('status-change', { text: t('pet.chat.status.connecting'), tone: 'muted' })
     emit('bubble', { text: t('pet.chat.status.connecting'), tone: 'muted', duration: 60_000 })
     return
   }
+  if (event.type === 'progress') {
+    phase.value = 'streaming'
+    return
+  }
   if (event.type === 'delta') {
-    const assistant = findMessage(activeAssistantId)
-    if (!assistant) return
     // 先保留原始流，再按完整前缀清洗；未闭合协议从起点开始整段隐藏，
     // 否则 JSON 会随着 delta 碎片短暂闪现在气泡里。
     activeRawAssistantText += event.delta
-    assistant.content = cleanPetAssistantText(activeRawAssistantText)
-    assistant.status = 'streaming'
+    const visibleText = cleanPetAssistantText(activeRawAssistantText)
     phase.value = 'streaming'
     emit('status-change', { text: t('pet.chat.status.replying'), tone: 'muted' })
     emit('bubble', {
-      text: assistant.content || t('pet.chat.status.replying'),
+      text: visibleText || t('pet.chat.status.replying'),
       tone: 'muted',
-      duration: assistant.content ? undefined : 60_000
+      duration: visibleText ? undefined : 60_000
     })
     return
   }
   if (event.type === 'completed') {
-    const assistant = findMessage(activeAssistantId)
     // completed 事件携带全文；没有全文时退回已累积的原始 delta。
     const rawReply = event.text || activeRawAssistantText
     if (event.text) activeRawAssistantText = event.text
     const extractedPlan = extractPetPlan(rawReply)
-    if (assistant) assistant.content = cleanPetAssistantText(rawReply)
-    if (assistant) {
-      assistant.status = 'complete'
-      assistant.content = assistant.content || t('pet.chat.message.noText')
-    }
+    const visibleText = cleanPetAssistantText(rawReply) || t('pet.chat.message.noText')
     settleRequest()
     phase.value = 'idle'
     failureMessage.value = ''
     emit('status-change', { text: '', tone: 'muted' })
-    if (assistant?.content) emit('bubble', { text: assistant.content, tone: 'muted' })
+    emit('bubble', { text: visibleText, tone: 'muted' })
     if (extractedPlan.error) {
       showPlanError(extractedPlan.error)
     } else if (extractedPlan.plan) {
-      // 计划失败不能回滚已经完成的聊天消息；只在计划面板显示错误，保证
+      // 计划失败不能回滚已经完成的回复；只在计划面板显示错误，保证
       // malformed JSON 或调度服务故障不会把流式聊天状态打成失败。
       void schedulePetPlan(extractedPlan.plan)
     }
     return
   }
   if (event.type === 'cancelled') {
-    const assistant = findMessage(activeAssistantId)
-    if (assistant) {
-      assistant.content = assistant.content || t('pet.chat.message.cancelled')
-      assistant.status = 'cancelled'
-    }
     settleRequest()
     phase.value = 'idle'
     emit('status-change', { text: '', tone: 'muted' })
@@ -1134,9 +1050,6 @@ async function sendMessage(textOverride?: string, imagesOverride?: PetChatImage[
   }
 
   const requestId = createRequestId()
-  const userMessage = createMessage('user', text, 'complete', images)
-  const assistantMessage = createMessage('assistant', '', 'streaming')
-  messages.value.push(userMessage, assistantMessage)
   inputText.value = ''
   pendingImages.value = []
   attachmentMessage.value = ''
@@ -1145,7 +1058,6 @@ async function sendMessage(textOverride?: string, imagesOverride?: PetChatImage[
   lastFailedText = text
   lastFailedImages = cloneImages(images)
   activeRequestId = requestId
-  activeAssistantId = assistantMessage.id
   activeRawAssistantText = ''
   lastEventSequence = 0
   armRequestWatchdog(requestId, text)
@@ -1154,7 +1066,7 @@ async function sendMessage(textOverride?: string, imagesOverride?: PetChatImage[
   emit('bubble', { text: t('pet.chat.status.connecting'), tone: 'muted', duration: 60_000 })
 
   try {
-    const request = buildChatRequest(requestId, text, images, userMessage.id)
+    const request = buildChatRequest(requestId, text, images)
     const result = await Call.ByName(PET_AI_METHODS.startChat, request)
     if (activeRequestId !== requestId) return
     if (isRecord(result) && result.requestId && result.requestId !== requestId) {
@@ -1165,17 +1077,19 @@ async function sendMessage(textOverride?: string, imagesOverride?: PetChatImage[
     phase.value = 'streaming'
   } catch (error) {
     if (activeRequestId !== requestId) return
+    // Wails 可能把 Go 的结构化错误包装成 Error.message；优先保留后端
+    // 错误码，避免 workspace/provider 等可定位故障被吞成统一的“回复失败”。
+    const errorCode = petErrorCode(error)
     settleFailure(
       requestId,
       text,
-      isMissingBindingError(error) ? 'PET_AI_DEPENDENCY_UNAVAILABLE' : ''
+      errorCode || (isMissingBindingError(error) ? 'PET_AI_DEPENDENCY_UNAVAILABLE' : '')
     )
   }
 }
 
 async function cancelMessage(): Promise<void> {
   const requestId = activeRequestId
-  const assistantId = activeAssistantId
   if (!requestId || !isBusy.value) return
 
   phase.value = 'cancelling'
@@ -1183,14 +1097,8 @@ async function cancelMessage(): Promise<void> {
   // 先让 UI 失去这条 request 的所有权，再请求后端取消；这样晚到的 delta
   // 即便已经排进 runtime 事件队列，也无法污染下一次会话。
   activeRequestId = ''
-  activeAssistantId = ''
   activeRawAssistantText = ''
   lastEventSequence = 0
-  const assistant = findMessage(assistantId)
-  if (assistant) {
-    assistant.content = assistant.content || t('pet.chat.message.cancelled')
-    assistant.status = 'cancelled'
-  }
 
   try {
     await Call.ByName(PET_AI_METHODS.cancelChat, requestId)
@@ -1222,16 +1130,14 @@ watch(
   () => props.petId,
   () => {
     const requestId = activeRequestId
-    // 宠物切换时必须清空会话内历史，避免把上一只宠物的上下文串进下一条请求。
+    // 宠物切换时必须清空当前请求状态，避免旧请求的事件污染下一只宠物。
     imageSelectionGeneration += 1
     discardVoiceCapture()
     isTranscribing.value = false
     voiceInputMessage.value = ''
     clearRequestWatchdog()
     activeRequestId = ''
-    activeAssistantId = ''
     lastEventSequence = 0
-    messages.value = []
     inputText.value = ''
     pendingImages.value = []
     attachmentMessage.value = ''
@@ -1267,7 +1173,6 @@ onBeforeUnmount(() => {
   const requestId = activeRequestId
   clearRequestWatchdog()
   activeRequestId = ''
-  activeAssistantId = ''
   lastEventSequence = 0
   if (requestId) {
     // 组件销毁时只发取消信号，不等待结果，也不把 runtime 错误写入新页面状态。

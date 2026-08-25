@@ -512,14 +512,17 @@ func (d *wailsPetWindowDriver) SetWindowClosedCallback(callback func()) {
 func (d *wailsPetWindowDriver) CaptureFocusRestore() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.focusRestore != 0 || d.window == nil {
+	if d.window == nil {
 		return
 	}
 	petHWND := windows.HWND(uintptr(d.window.NativeWindow()))
 	foreground := windows.GetForegroundWindow()
-	if foreground != 0 && foreground != petHWND {
-		d.focusRestore = foreground
+	// 每次进入需要窗口接管的模式都以当前外部前台为准；不能因为上一次
+	// interactive 交互留下旧句柄就跳过捕获，否则用户切换应用后会恢复到旧窗口。
+	if foreground == 0 || foreground == petHWND {
+		return
 	}
+	d.focusRestore = foreground
 }
 
 func (d *wailsPetWindowDriver) Open(config petWindowOpenConfig) error {
@@ -791,13 +794,14 @@ func (d *wailsPetWindowDriver) ReleaseFocus() error {
 	shown := d.windowShown
 	d.pendingFocus = false
 	d.mu.Unlock()
+	// 一次模式切换只消费一个恢复句柄；即使 Windows 拒绝恢复前台，也不能把
+	// 失效句柄留给下一轮聊天交互，否则后续捕获会被旧状态短路。
+	defer d.clearFocusRestore()
 	if window == nil || !shown {
-		d.clearFocusRestore()
 		return nil
 	}
 	petHWND := windows.HWND(uintptr(window.NativeWindow()))
 	if petHWND == 0 || windows.GetForegroundWindow() != petHWND {
-		d.clearFocusRestore()
 		return nil
 	}
 	foregroundBefore := windows.GetForegroundWindow()
@@ -824,7 +828,6 @@ func (d *wailsPetWindowDriver) ReleaseFocus() error {
 	if foreground == petHWND {
 		return fmt.Errorf("foreground window remained the pet window")
 	}
-	d.clearFocusRestore()
 	return nil
 }
 

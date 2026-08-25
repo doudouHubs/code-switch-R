@@ -5,16 +5,19 @@ import (
 	"context"
 	"embed"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"log"
 	"math"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
 	"time"
 
+	"codeswitch/services/channels"
 	"github.com/daodao97/xgo/xdb"
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
@@ -36,6 +39,121 @@ type AppService struct {
 	App        *application.App
 	MainWindow application.Window
 	TrayWindow application.Window
+}
+
+// channelBrowserBridgeAdapter 把 channels.ChannelService 适配到 services 包的
+// 浏览器窄接口。跨包只传 JSON 字节，避免 services 反向 import channels 形成循环依赖。
+type channelBrowserBridgeAdapter struct {
+	service *channels.ChannelService
+}
+
+func (a channelBrowserBridgeAdapter) ListDescriptors() (interface{}, error) {
+	if a.service == nil {
+		return nil, fmt.Errorf("channel service is unavailable")
+	}
+	return a.service.ListDescriptors(), nil
+}
+
+func (a channelBrowserBridgeAdapter) ListInstances() (interface{}, error) {
+	if a.service == nil {
+		return nil, fmt.Errorf("channel service is unavailable")
+	}
+	return a.service.ListInstances()
+}
+
+func (a channelBrowserBridgeAdapter) ListProjects() (interface{}, error) {
+	if a.service == nil {
+		return nil, fmt.Errorf("channel service is unavailable")
+	}
+	return a.service.ListProjects()
+}
+
+func (a channelBrowserBridgeAdapter) SaveInstance(payload []byte) error {
+	if a.service == nil {
+		return fmt.Errorf("channel service is unavailable")
+	}
+	var instance channels.ChannelInstance
+	if err := json.Unmarshal(payload, &instance); err != nil {
+		return fmt.Errorf("channel instance payload is invalid: %w", err)
+	}
+	return a.service.SaveInstance(instance)
+}
+
+func (a channelBrowserBridgeAdapter) RemoveInstance(id string) error {
+	if a.service == nil {
+		return fmt.Errorf("channel service is unavailable")
+	}
+	return a.service.RemoveInstance(id)
+}
+
+func (a channelBrowserBridgeAdapter) SetEnabled(id string, enabled bool) error {
+	if a.service == nil {
+		return fmt.Errorf("channel service is unavailable")
+	}
+	return a.service.SetEnabled(id, enabled)
+}
+
+func (a channelBrowserBridgeAdapter) Start(id string) error {
+	if a.service == nil {
+		return fmt.Errorf("channel service is unavailable")
+	}
+	return a.service.Start(id)
+}
+
+func (a channelBrowserBridgeAdapter) Stop(id string) error {
+	if a.service == nil {
+		return fmt.Errorf("channel service is unavailable")
+	}
+	return a.service.Stop(id)
+}
+
+func (a channelBrowserBridgeAdapter) GetStatus(id string) (interface{}, error) {
+	if a.service == nil {
+		return nil, fmt.Errorf("channel service is unavailable")
+	}
+	return a.service.GetStatus(id), nil
+}
+
+func (a channelBrowserBridgeAdapter) ListSessions(instanceID string) (interface{}, error) {
+	if a.service == nil {
+		return nil, fmt.Errorf("channel service is unavailable")
+	}
+	return a.service.ListSessions(instanceID)
+}
+
+func (a channelBrowserBridgeAdapter) ListMessages(sessionID string, limit int) (interface{}, error) {
+	if a.service == nil {
+		return nil, fmt.Errorf("channel service is unavailable")
+	}
+	return a.service.ListMessages(sessionID, limit)
+}
+
+func (a channelBrowserBridgeAdapter) SendMessage(instanceID, chatID, content string) (string, error) {
+	if a.service == nil {
+		return "", fmt.Errorf("channel service is unavailable")
+	}
+	return a.service.SendMessage(instanceID, chatID, content)
+}
+
+func (a channelBrowserBridgeAdapter) StartWeixinLogin(instanceID string) (interface{}, error) {
+	if a.service == nil {
+		return nil, fmt.Errorf("channel service is unavailable")
+	}
+	return a.service.StartWeixinLogin(instanceID)
+}
+
+func (a channelBrowserBridgeAdapter) WaitWeixinLogin(instanceID, sessionKey string) (interface{}, error) {
+	if a.service == nil {
+		return nil, fmt.Errorf("channel service is unavailable")
+	}
+	return a.service.WaitWeixinLogin(instanceID, sessionKey)
+}
+
+func (a channelBrowserBridgeAdapter) CancelWeixinLogin(instanceID, sessionKey string) error {
+	if a.service == nil {
+		return fmt.Errorf("channel service is unavailable")
+	}
+	return a.service.CancelWeixinLogin(instanceID, sessionKey)
 }
 
 func (a *AppService) SetApp(app *application.App) {
@@ -242,6 +360,9 @@ func main() {
 	settingsService := services.NewSettingsService()
 	autoStartService := services.NewAutoStartService()
 	projectManagerService := services.NewProjectManagerService()
+	// 宠物绑定保存的是 projectId；解析必须回到 ProjectManager 的项目列表取当前路径，
+	// 这样项目重命名或旧迁移数据不会让 Codex runtime 启动到过期目录。
+	petProjectWorkspaceResolver := services.NewPetProjectWorkspaceResolver(petDAO, projectManagerService)
 	appSettings := services.NewAppSettingsService(autoStartService, projectManagerService)
 	notificationService := services.NewNotificationService(appSettings) // 通知服务
 	blacklistService := services.NewBlacklistService(settingsService, notificationService)
@@ -252,55 +373,80 @@ func main() {
 		providerRelayAddr = "127.0.0.1:18100"
 	}
 	geminiService := services.NewGeminiService(providerRelayAddr)
+	// 频道和桌面客户端都复用同一个 Relay；频道只读取 Codex 默认模型，
+	// Provider 选择、项目路由、降级和轮询继续由 Relay 统一处理。
+	providerRelay := services.NewProviderRelayService(
+		providerService,
+		geminiService,
+		blacklistService,
+		notificationService,
+		appSettings,
+		providerRelayAddr,
+	)
+	providerRelay.SetActivityEmitter(petActivityEmitter)
+	clientDefaultCodexProviderReader := services.NewClientDefaultCodexProviderReader(providerRelay.Addr())
 	petAIProviderReader := services.NewPetAIProviderReader(providerService, geminiService)
+	petAIEventEmitter := services.PetAIEventEmitterFunc(func(event services.PetAIEvent) error {
+		petBrowserEvents.Publish("pet.ai", event)
+		if event.Type != services.PetAIEventDelta || event.Sequence <= 2 {
+			go services.WriteRuntimeDiagnostic(
+				"pet-ai-event",
+				fmt.Sprintf("type=%q", event.Type),
+				fmt.Sprintf("pet_id=%q", event.PetID),
+				fmt.Sprintf("request_id=%q", event.RequestID),
+				fmt.Sprintf("sequence=%d", event.Sequence),
+				fmt.Sprintf("delta_bytes=%d", len(event.Delta)),
+				fmt.Sprintf("text_bytes=%d", len(event.Text)),
+				fmt.Sprintf("app_ready=%t", petApp != nil),
+			)
+		}
+		if event.Type == services.PetAIEventUsage {
+			// usage 账本使用 requestId 作为稳定幂等键；入账失败只记录日志，
+			// 不能因为经验或 canonical pricing 异常把已经完成的聊天变成失败。
+			usageEvent, err := event.Usage.ToPetUsageEvent()
+			if err != nil {
+				log.Printf("⚠️ 宠物 AI usage 载荷无效: %v", err)
+			} else {
+				petID := strings.TrimSpace(event.PetID)
+				if petID == "" {
+					log.Printf("⚠️ 宠物 AI usage 缺少 petId")
+				} else {
+					petUsageServicesMu.Lock()
+					usageService := petUsageServices[petID]
+					if usageService == nil {
+						usageService = services.NewPetServiceForPet(petDAO, petID)
+						petUsageServices[petID] = usageService
+					}
+					petUsageServicesMu.Unlock()
+					if _, err := usageService.AddExperienceFromUsage(usageEvent); err != nil {
+						log.Printf("⚠️ 宠物 AI usage 经验入账失败: %v", err)
+					}
+				}
+			}
+		}
+		// 记忆指令只允许从完成事件落盘；流式 delta 可能仍处于未闭合状态，
+		// 提前写入会把半截内部协议当成长期事实。
+		if event.Type == services.PetAIEventCompleted {
+			facts := services.ExtractPetMemoryDirectives(event.Text)
+			if len(facts) > 0 {
+				memoryService := services.NewPetMemoryServiceForPet(petDAO, event.PetID)
+				if _, err := memoryService.Append(facts); err != nil {
+					log.Printf("⚠️ 保存宠物 AI 记忆失败: %v", err)
+				}
+			}
+		}
+		if petApp != nil {
+			petApp.Event.Emit("pet.ai", event)
+		}
+		return nil
+	})
 	petAIService := services.NewPetAIServiceWithDependencies(services.PetAIDependencies{
 		ProviderReader:        petAIProviderReader,
 		SpeechSelectionReader: appSettings,
-		WorkspaceResolver:     petDAO,
+		WorkspaceResolver:     petProjectWorkspaceResolver,
 		Transport:             http.DefaultTransport,
 		ActivityEmitter:       petActivityEmitter,
-		Emitter: services.PetAIEventEmitterFunc(func(event services.PetAIEvent) error {
-			petBrowserEvents.Publish("pet.ai", event)
-			if event.Type == services.PetAIEventUsage {
-				// usage 账本使用 requestId 作为稳定幂等键；入账失败只记录日志，
-				// 不能因为经验或 canonical pricing 异常把已经完成的聊天变成失败。
-				usageEvent, err := event.Usage.ToPetUsageEvent()
-				if err != nil {
-					log.Printf("⚠️ 宠物 AI usage 载荷无效: %v", err)
-				} else {
-					petID := strings.TrimSpace(event.PetID)
-					if petID == "" {
-						log.Printf("⚠️ 宠物 AI usage 缺少 petId")
-					} else {
-						petUsageServicesMu.Lock()
-						usageService := petUsageServices[petID]
-						if usageService == nil {
-							usageService = services.NewPetServiceForPet(petDAO, petID)
-							petUsageServices[petID] = usageService
-						}
-						petUsageServicesMu.Unlock()
-						if _, err := usageService.AddExperienceFromUsage(usageEvent); err != nil {
-							log.Printf("⚠️ 宠物 AI usage 经验入账失败: %v", err)
-						}
-					}
-				}
-			}
-			// 记忆指令只允许从完成事件落盘；流式 delta 可能仍处于未闭合状态，
-			// 提前写入会把半截内部协议当成长期事实。
-			if event.Type == services.PetAIEventCompleted {
-				facts := services.ExtractPetMemoryDirectives(event.Text)
-				if len(facts) > 0 {
-					memoryService := services.NewPetMemoryServiceForPet(petDAO, event.PetID)
-					if _, err := memoryService.Append(facts); err != nil {
-						log.Printf("⚠️ 保存宠物 AI 记忆失败: %v", err)
-					}
-				}
-			}
-			if petApp != nil {
-				petApp.Event.Emit("pet.ai", event)
-			}
-			return nil
-		}),
+		Emitter:               petAIEventEmitter,
 		// 音频 chunk 与文本事件共用同一生命周期，但单独使用 pet.audio 事件，
 		// 前端可以在取消时丢弃旧 request 的 PCM，不会把二进制塞进文本事件。
 		AudioEmitter: services.PetAudioEventEmitterFunc(func(event services.PetAudioEvent) error {
@@ -311,23 +457,91 @@ func main() {
 			return nil
 		}),
 	})
-	petAIAPIService := services.NewPetAIAPIService(petAIService)
+	petCodexRuntime := services.NewPetCodexRuntime(services.PetCodexRuntimeDependencies{
+		Sessions:          petDAO,
+		WorkspaceResolver: petProjectWorkspaceResolver,
+		Emitter:           petAIEventEmitter,
+		ActivityEmitter:   petActivityEmitter,
+		Executable:        strings.TrimSpace(os.Getenv("CODESWITCH_CODEX_EXECUTABLE")),
+	})
+
+	// 频道使用独立数据库和独立 Agent runtime：旧 OpenCowork 配置只导入一次，
+	// 项目绑定则每次从当前 ProjectManager 事实源解析，避免两个应用的项目 ID 漂移。
+	channelStore, channelStoreErr := channels.OpenDefaultStore()
+	if channelStoreErr != nil {
+		log.Fatalf("频道数据库初始化失败: %v", channelStoreErr)
+	}
+	if home, homeErr := os.UserHomeDir(); homeErr == nil {
+		importReport, importErr := channelStore.ImportOpenCoworkOnce(filepath.Join(home, ".open-cowork", "plugins.json"))
+		if importErr != nil {
+			log.Printf("⚠️ OpenCowork 频道配置导入失败: %v", importErr)
+		} else if importReport.Imported > 0 || importReport.Templates > 0 {
+			log.Printf("✅ OpenCowork 频道配置导入完成：插件=%d 模板=%d 跳过=%d", importReport.Imported, importReport.Templates, importReport.Skipped)
+		}
+	}
+	channelProjects := func() ([]channels.ProjectBinding, error) {
+		projects, err := projectManagerService.ListProjects()
+		if err != nil {
+			return nil, err
+		}
+		bindings := make([]channels.ProjectBinding, 0, len(projects))
+		for _, project := range projects {
+			name := strings.TrimSpace(project.DisplayName)
+			if name == "" {
+				name = strings.TrimSpace(project.SourceName)
+			}
+			bindings = append(bindings, channels.ProjectBinding{ID: project.ID, Path: project.Path, Name: name})
+		}
+		return bindings, nil
+	}
+	if _, ensureErr := channelStore.EnsureBuiltinInstances(); ensureErr != nil {
+		log.Printf("⚠️ 频道内置实例补齐失败: %v", ensureErr)
+	}
+	channelProjectResolve := func(ctx context.Context, projectID string) (string, error) {
+		bindings, err := channelProjects()
+		if err != nil {
+			return "", err
+		}
+		for _, project := range bindings {
+			if project.ID == projectID || strings.EqualFold(strings.TrimSpace(project.Path), strings.TrimSpace(projectID)) {
+				return project.Path, nil
+			}
+		}
+		return "", fmt.Errorf("bound project %q was not found", projectID)
+	}
+	channelProviderResolve := func(ctx context.Context, instance channels.ChannelInstance) (services.PetProviderReference, error) {
+		return resolveDefaultChannelProvider(ctx, instance, clientDefaultCodexProviderReader)
+	}
+	channelEventSink := func(event channels.ChannelEvent) {
+		petBrowserEvents.Publish("channels.event", event)
+		if petApp != nil {
+			petApp.Event.Emit("channels.event", event)
+		}
+	}
+	var channelRuntime *channels.AgentRuntime
+	channelManager := channels.NewManager(channelStore, func(event channels.ChannelEvent) {
+		if channelRuntime != nil {
+			channelRuntime.HandleEvent(event)
+			return
+		}
+		channelEventSink(event)
+	})
+	channelRuntime = channels.NewAgentRuntime(
+		channelStore,
+		channelManager,
+		channelProjectResolve,
+		clientDefaultCodexProviderReader,
+		http.DefaultTransport,
+		channelEventSink,
+		channelProviderResolve,
+	)
+	channelService := channels.NewChannelService(channelStore, channelManager, channelProjects, channelEventSink)
+	petAIAPIService := services.NewPetAIAPIServiceWithChatRuntime(petAIService, petCodexRuntime)
 	petImageService := services.NewPetImageService(petAIProviderReader, http.DefaultTransport)
 	petImageAPIService := services.NewPetImageAPIService(petImageService)
 	petMediaAPIService := services.NewPetMediaAPIService()
 	// Studio 的资源目录和皮肤记录必须共享同一个 PetDAO；否则前端保存后桌宠快照无法看到新皮肤。
 	petStudioAPIService := services.NewPetStudioAPIService(petDAO)
-	// relay 复用主应用的 Gemini、黑名单、通知和轮询配置；这些依赖共同维持
-	// provider 路由与请求日志的单一运行时状态，不能退回到宠物分支的简化代理。
-	providerRelay := services.NewProviderRelayService(
-		providerService,
-		geminiService,
-		blacklistService,
-		notificationService,
-		appSettings,
-		providerRelayAddr,
-	)
-	providerRelay.SetActivityEmitter(petActivityEmitter)
 	claudeSettings := services.NewClaudeSettingsService(providerRelay.Addr())
 	codexSettings := services.NewCodexSettingsService(providerRelay.Addr())
 	cliConfigService := services.NewCliConfigService(providerRelay.Addr())
@@ -416,6 +630,7 @@ func main() {
 			application.NewService(networkService),
 			application.NewService(radarService),
 			application.NewService(projectManagerService),
+			application.NewService(channelService),
 			application.NewService(petService),
 			application.NewService(petMemoryService),
 			application.NewService(petDreamAPIService),
@@ -433,6 +648,16 @@ func main() {
 		},
 	})
 	petApp = app
+	go func() {
+		started, failed, err := channelService.StartAuto()
+		if err != nil {
+			log.Printf("⚠️ 频道自动启动失败: %v", err)
+			return
+		}
+		if len(started) > 0 || len(failed) > 0 {
+			log.Printf("✅ 频道自动启动完成：成功=%d 失败=%d", len(started), len(failed))
+		}
+	}()
 	if runtime.GOOS == "windows" {
 		app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(_ *application.ApplicationEvent) {
 			// SetWinEventHook 的 OUTOFCONTEXT 回调要求注册线程拥有消息循环；
@@ -536,6 +761,7 @@ func main() {
 		Project:     projectManagerService,
 		AppSettings: appSettings,
 		Scheduler:   petSchedulerAPI,
+		Channels:    channelBrowserBridgeAdapter{service: channelService},
 		Events:      petBrowserEvents,
 	}, services.PetBrowserBridgeOptions{Addr: petBrowserBridgeAddr})
 	if err := petBrowserBridge.Start(); err != nil {
@@ -552,49 +778,129 @@ func main() {
 	projectManagerService.SetApp(app)
 	projectManagerService.StartCodexStatusMonitor(codexHookEnabled)
 
+	var shutdownOnce sync.Once
 	app.OnShutdown(func() {
-		log.Println("🛑 应用正在关闭，停止后台服务...")
-
-		if petBrowserBridge != nil {
-			bridgeCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			if err := petBrowserBridge.Stop(bridgeCtx); err != nil {
-				log.Printf("⚠️ 宠物浏览器 bridge 关闭失败: %v", err)
+		shutdownOnce.Do(func() {
+			log.Println("🛑 应用正在关闭，停止后台服务...")
+			// Wails 的 OnShutdown 是同步回调；所有阶段共用一个总预算，避免
+			// bridge、provider、Codex 和数据库各自拿一份 timeout 后叠加成假死。
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer shutdownCancel()
+			runShutdownStage := func(name string, action func(context.Context) error) error {
+				if err := shutdownCtx.Err(); err != nil {
+					services.WriteRuntimeDiagnostic("shutdown-stage-skipped", fmt.Sprintf("stage=%q error=%q", name, err.Error()))
+					return err
+				}
+				startedAt := time.Now()
+				services.WriteRuntimeDiagnostic("shutdown-stage-start", fmt.Sprintf("stage=%q", name))
+				done := make(chan error, 1)
+				go func() { done <- action(shutdownCtx) }()
+				select {
+				case err := <-done:
+					if err != nil {
+						log.Printf("⚠️ 关闭阶段 %s 失败: %v", name, err)
+						services.WriteRuntimeDiagnostic("shutdown-stage-error", fmt.Sprintf("stage=%q error=%q", name, err.Error()))
+					} else {
+						services.WriteRuntimeDiagnostic("shutdown-stage-complete", fmt.Sprintf("stage=%q elapsed_ms=%d", name, time.Since(startedAt).Milliseconds()))
+					}
+					return err
+				case <-shutdownCtx.Done():
+					log.Printf("⚠️ 关闭阶段 %s 超时，继续收口: %v", name, shutdownCtx.Err())
+					services.WriteRuntimeDiagnostic("shutdown-stage-timeout", fmt.Sprintf("stage=%q elapsed_ms=%d", name, time.Since(startedAt).Milliseconds()))
+					return shutdownCtx.Err()
+				}
 			}
-			cancel()
-		}
-
-		if petWindow != nil {
-			if err := petWindow.Close(); err != nil {
-				log.Printf("⚠️ 关闭宠物窗口失败: %v", err)
+			runMainThreadShutdownStage := func(name string, action func(context.Context) error) error {
+				if err := shutdownCtx.Err(); err != nil {
+					services.WriteRuntimeDiagnostic("shutdown-stage-skipped", fmt.Sprintf("stage=%q error=%q", name, err.Error()))
+					return err
+				}
+				startedAt := time.Now()
+				services.WriteRuntimeDiagnostic("shutdown-stage-start", fmt.Sprintf("stage=%q", name))
+				// OnShutdown 本身由 Wails 在主线程同步调用；窗口 API 内部还会
+				// InvokeSync 回主线程。这里必须直接执行，否则主线程等待 goroutine、
+				// goroutine 等待主线程，退出就会稳定卡满总预算。
+				err := action(shutdownCtx)
+				if err != nil {
+					log.Printf("⚠️ 关闭阶段 %s 失败: %v", name, err)
+					services.WriteRuntimeDiagnostic("shutdown-stage-error", fmt.Sprintf("stage=%q error=%q", name, err.Error()))
+					return err
+				}
+				if deadlineErr := shutdownCtx.Err(); deadlineErr != nil {
+					log.Printf("⚠️ 关闭阶段 %s 超时，继续收口: %v", name, deadlineErr)
+					services.WriteRuntimeDiagnostic("shutdown-stage-timeout", fmt.Sprintf("stage=%q elapsed_ms=%d", name, time.Since(startedAt).Milliseconds()))
+					return deadlineErr
+				}
+				services.WriteRuntimeDiagnostic("shutdown-stage-complete", fmt.Sprintf("stage=%q elapsed_ms=%d", name, time.Since(startedAt).Milliseconds()))
+				return nil
 			}
-		}
 
-		// 1. 停止 Codex 状态监控，避免退出期间继续推送前端事件。
-		projectManagerService.StopCodexStatusMonitor()
+			if petBrowserBridge != nil {
+				_ = runShutdownStage("pet-browser-bridge", func(ctx context.Context) error {
+					return petBrowserBridge.Stop(ctx)
+				})
+			}
+			if petWindow != nil {
+				_ = runMainThreadShutdownStage("pet-window", func(context.Context) error {
+					return petWindow.Close()
+				})
+			}
 
-		// 2. 停止黑名单定时器
-		close(blacklistStopChan)
-		close(petStopChan)
+			// provider 可能持有平台长轮询、WebSocket 和 heartbeat；Manager 内部
+			// 已按实例并行停止，这里只负责给它一个统一的退出阶段和预算。
+			channelStopErr := runShutdownStage("channel-providers", func(ctx context.Context) error {
+				return channelManager.StopAll(ctx)
+			})
+			if channelStopErr == nil || shutdownCtx.Err() == nil {
+				_ = runShutdownStage("channel-store", func(context.Context) error {
+					return channelStore.Close()
+				})
+			}
 
-		// 3. 停止代理服务器
-		_ = providerRelay.Stop()
+			_ = runShutdownStage("codex-status-monitor", func(context.Context) error {
+				projectManagerService.StopCodexStatusMonitor()
+				return nil
+			})
+			_ = runShutdownStage("pet-codex-runtime", func(context.Context) error {
+				return petCodexRuntime.Close()
+			})
+			_ = runShutdownStage("background-timers", func(context.Context) error {
+				close(blacklistStopChan)
+				close(petStopChan)
+				return nil
+			})
+			_ = runShutdownStage("provider-relay", func(context.Context) error {
+				return providerRelay.Stop()
+			})
 
-		// 4. 优雅关闭数据库写入队列（10秒超时，双队列架构）
-		if err := services.ShutdownGlobalDBQueue(10 * time.Second); err != nil {
-			log.Printf("⚠️ 队列关闭超时: %v", err)
-		} else {
-			// 单次队列统计
-			stats1 := services.GetGlobalDBQueueStats()
-			log.Printf("✅ 单次队列已关闭，统计：成功=%d 失败=%d 平均延迟=%.2fms",
-				stats1.SuccessWrites, stats1.FailedWrites, stats1.AvgLatencyMs)
+			queueTimeout := 10 * time.Second
+			if deadline, ok := shutdownCtx.Deadline(); ok {
+				remaining := time.Until(deadline)
+				if remaining < queueTimeout*2 {
+					queueTimeout = remaining / 2
+				}
+				if queueTimeout < 0 {
+					queueTimeout = 0
+				}
+			}
+			queueErr := runShutdownStage("db-queues", func(context.Context) error {
+				return services.ShutdownGlobalDBQueue(queueTimeout)
+			})
+			if queueErr == nil {
+				stats1 := services.GetGlobalDBQueueStats()
+				log.Printf("✅ 单次队列已关闭，统计：成功=%d 失败=%d 平均延迟=%.2fms", stats1.SuccessWrites, stats1.FailedWrites, stats1.AvgLatencyMs)
+				stats2 := services.GetGlobalDBQueueLogsStats()
+				log.Printf("✅ 批量队列已关闭，统计：成功=%d 失败=%d 平均延迟=%.2fms（批均分） 批次=%d", stats2.SuccessWrites, stats2.FailedWrites, stats2.AvgLatencyMs, stats2.BatchCommits)
+			}
 
-			// 批量队列统计
-			stats2 := services.GetGlobalDBQueueLogsStats()
-			log.Printf("✅ 批量队列已关闭，统计：成功=%d 失败=%d 平均延迟=%.2fms（批均分） 批次=%d",
-				stats2.SuccessWrites, stats2.FailedWrites, stats2.AvgLatencyMs, stats2.BatchCommits)
-		}
-
-		log.Println("✅ 所有后台服务已停止")
+			if shutdownCtx.Err() != nil {
+				log.Printf("⚠️ 应用关闭达到总预算: %v", shutdownCtx.Err())
+				services.WriteRuntimeDiagnostic("shutdown-timeout", fmt.Sprintf("error=%q", shutdownCtx.Err().Error()))
+			} else {
+				log.Println("✅ 所有后台服务已停止")
+				services.WriteRuntimeDiagnostic("shutdown-complete")
+			}
+		})
 	})
 
 	// Create a new window with the necessary options.

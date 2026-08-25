@@ -48,7 +48,31 @@ type PetBrowserBridgeDependencies struct {
 	Project     *ProjectManagerService
 	AppSettings *AppSettingsService
 	Scheduler   *PetSchedulerAPI
-	Events      *PetBrowserEventHub
+	// Channels 只允许频道页面需要的窄接口进入浏览器 bridge；不能把 Wails
+	// service 反射成通用 RPC，否则本地网页会获得超出页面职责的系统能力。
+	Channels PetBrowserChannelService
+	Events   *PetBrowserEventHub
+}
+
+// PetBrowserChannelService 是频道页面的 HTTP bridge 边界。
+// 使用 interface{} 返回值是为了让 services 包不反向依赖 services/channels，
+// 具体类型适配由 main 包完成，避免形成 import cycle。
+type PetBrowserChannelService interface {
+	ListDescriptors() (interface{}, error)
+	ListInstances() (interface{}, error)
+	ListProjects() (interface{}, error)
+	SaveInstance([]byte) error
+	RemoveInstance(string) error
+	SetEnabled(string, bool) error
+	Start(string) error
+	Stop(string) error
+	GetStatus(string) (interface{}, error)
+	ListSessions(string) (interface{}, error)
+	ListMessages(string, int) (interface{}, error)
+	SendMessage(string, string, string) (string, error)
+	StartWeixinLogin(string) (interface{}, error)
+	WaitWeixinLogin(string, string) (interface{}, error)
+	CancelWeixinLogin(string, string) error
 }
 
 type PetBrowserEvent struct {
@@ -645,6 +669,104 @@ func (b *PetBrowserBridge) dispatch(ctx context.Context, method string, args []j
 	case "codeswitch/services.AppSettingsService.GetAppSettings":
 		return b.requireAppSettings().GetAppSettings()
 
+	case "codeswitch/services/channels.ChannelService.ListDescriptors":
+		return b.requireChannels().ListDescriptors()
+	case "codeswitch/services/channels.ChannelService.ListInstances":
+		return b.requireChannels().ListInstances()
+	case "codeswitch/services/channels.ChannelService.ListProjects":
+		return b.requireChannels().ListProjects()
+	case "codeswitch/services/channels.ChannelService.SaveInstance":
+		if len(args) == 0 {
+			return nil, errors.New("bridge 参数 0 缺失")
+		}
+		return nil, b.requireChannels().SaveInstance(args[0])
+	case "codeswitch/services/channels.ChannelService.RemoveInstance":
+		var id string
+		if err := decodePetBrowserArg(args, 0, &id); err != nil {
+			return nil, err
+		}
+		return nil, b.requireChannels().RemoveInstance(id)
+	case "codeswitch/services/channels.ChannelService.SetEnabled":
+		var id string
+		var enabled bool
+		if err := decodePetBrowserArg(args, 0, &id); err != nil {
+			return nil, err
+		}
+		if err := decodePetBrowserArg(args, 1, &enabled); err != nil {
+			return nil, err
+		}
+		return nil, b.requireChannels().SetEnabled(id, enabled)
+	case "codeswitch/services/channels.ChannelService.Start":
+		var id string
+		if err := decodePetBrowserArg(args, 0, &id); err != nil {
+			return nil, err
+		}
+		return nil, b.requireChannels().Start(id)
+	case "codeswitch/services/channels.ChannelService.Stop":
+		var id string
+		if err := decodePetBrowserArg(args, 0, &id); err != nil {
+			return nil, err
+		}
+		return nil, b.requireChannels().Stop(id)
+	case "codeswitch/services/channels.ChannelService.GetStatus":
+		var id string
+		if err := decodePetBrowserArg(args, 0, &id); err != nil {
+			return nil, err
+		}
+		return b.requireChannels().GetStatus(id)
+	case "codeswitch/services/channels.ChannelService.ListSessions":
+		var instanceID string
+		if err := decodePetBrowserArg(args, 0, &instanceID); err != nil {
+			return nil, err
+		}
+		return b.requireChannels().ListSessions(instanceID)
+	case "codeswitch/services/channels.ChannelService.ListMessages":
+		var sessionID string
+		var limit int
+		if err := decodePetBrowserArg(args, 0, &sessionID); err != nil {
+			return nil, err
+		}
+		if err := decodePetBrowserArg(args, 1, &limit); err != nil {
+			return nil, err
+		}
+		return b.requireChannels().ListMessages(sessionID, limit)
+	case "codeswitch/services/channels.ChannelService.SendMessage":
+		var instanceID, chatID, content string
+		if err := decodePetBrowserArg(args, 0, &instanceID); err != nil {
+			return nil, err
+		}
+		if err := decodePetBrowserArg(args, 1, &chatID); err != nil {
+			return nil, err
+		}
+		if err := decodePetBrowserArg(args, 2, &content); err != nil {
+			return nil, err
+		}
+		return b.requireChannels().SendMessage(instanceID, chatID, content)
+	case "codeswitch/services/channels.ChannelService.StartWeixinLogin":
+		var instanceID string
+		if err := decodePetBrowserArg(args, 0, &instanceID); err != nil {
+			return nil, err
+		}
+		return b.requireChannels().StartWeixinLogin(instanceID)
+	case "codeswitch/services/channels.ChannelService.WaitWeixinLogin":
+		var instanceID, sessionKey string
+		if err := decodePetBrowserArg(args, 0, &instanceID); err != nil {
+			return nil, err
+		}
+		if err := decodePetBrowserArg(args, 1, &sessionKey); err != nil {
+			return nil, err
+		}
+		return b.requireChannels().WaitWeixinLogin(instanceID, sessionKey)
+	case "codeswitch/services/channels.ChannelService.CancelWeixinLogin":
+		var instanceID, sessionKey string
+		if err := decodePetBrowserArg(args, 0, &instanceID); err != nil {
+			return nil, err
+		}
+		if err := decodePetBrowserArg(args, 1, &sessionKey); err != nil {
+			return nil, err
+		}
+		return nil, b.requireChannels().CancelWeixinLogin(instanceID, sessionKey)
+
 	case "codeswitch/services.PetAIAPIService.GenerateDreamText":
 		var input PetDreamTextRequest
 		if err := decodePetBrowserArg(args, 0, &input); err != nil {
@@ -819,6 +941,48 @@ func bridgeUnavailable(name string) error {
 	return fmt.Errorf("宠物浏览器 bridge 依赖 %s 未配置", name)
 }
 
+type unavailablePetBrowserChannels struct{}
+
+func (unavailablePetBrowserChannels) ListDescriptors() (interface{}, error) {
+	return nil, bridgeUnavailable("channels")
+}
+func (unavailablePetBrowserChannels) ListInstances() (interface{}, error) {
+	return nil, bridgeUnavailable("channels")
+}
+func (unavailablePetBrowserChannels) ListProjects() (interface{}, error) {
+	return nil, bridgeUnavailable("channels")
+}
+func (unavailablePetBrowserChannels) SaveInstance([]byte) error { return bridgeUnavailable("channels") }
+func (unavailablePetBrowserChannels) RemoveInstance(string) error {
+	return bridgeUnavailable("channels")
+}
+func (unavailablePetBrowserChannels) SetEnabled(string, bool) error {
+	return bridgeUnavailable("channels")
+}
+func (unavailablePetBrowserChannels) Start(string) error { return bridgeUnavailable("channels") }
+func (unavailablePetBrowserChannels) Stop(string) error  { return bridgeUnavailable("channels") }
+func (unavailablePetBrowserChannels) GetStatus(string) (interface{}, error) {
+	return nil, bridgeUnavailable("channels")
+}
+func (unavailablePetBrowserChannels) ListSessions(string) (interface{}, error) {
+	return nil, bridgeUnavailable("channels")
+}
+func (unavailablePetBrowserChannels) ListMessages(string, int) (interface{}, error) {
+	return nil, bridgeUnavailable("channels")
+}
+func (unavailablePetBrowserChannels) SendMessage(string, string, string) (string, error) {
+	return "", bridgeUnavailable("channels")
+}
+func (unavailablePetBrowserChannels) StartWeixinLogin(string) (interface{}, error) {
+	return nil, bridgeUnavailable("channels")
+}
+func (unavailablePetBrowserChannels) WaitWeixinLogin(string, string) (interface{}, error) {
+	return nil, bridgeUnavailable("channels")
+}
+func (unavailablePetBrowserChannels) CancelWeixinLogin(string, string) error {
+	return bridgeUnavailable("channels")
+}
+
 func (b *PetBrowserBridge) requirePet() *PetService {
 	if b == nil || b.deps.Pet == nil {
 		return &PetService{}
@@ -901,6 +1065,13 @@ func (b *PetBrowserBridge) requireAppSettings() *AppSettingsService {
 		return &AppSettingsService{}
 	}
 	return b.deps.AppSettings
+}
+
+func (b *PetBrowserBridge) requireChannels() PetBrowserChannelService {
+	if b == nil || b.deps.Channels == nil {
+		return unavailablePetBrowserChannels{}
+	}
+	return b.deps.Channels
 }
 
 func (b *PetBrowserBridge) requireScheduler() *PetSchedulerAPI {

@@ -229,16 +229,24 @@ export function localPetTimeZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
 }
 
-/** 规则必须随 persona 发送，否则模型没有生成隐藏协议的契约依据。 */
+/**
+ * 规则必须随 persona 发送，但内容必须保持稳定；当前时间和时区属于单轮上下文，
+ * 混入这里会让后端把每一条消息都误判为 persona 变化并重建 Codex thread。
+ */
 export function buildPetPlanInstructions(): string {
-  const timeZone = localPetTimeZone()
   return `<pet-plan-rules>
 计划能力只在主人明确要求现在做、稍后做、到点提醒、每天或每周重复时使用；普通聊天不要输出计划。
-允许的宠物动作只有：${PET_PLAN_ACTIONS.join(', ')}。不能生成脚本、Shell、文件操作或其他工具调用。
-需要安排时，在最终回复末尾追加且只追加一个隐藏标签：<pet-plan>{"version":1,"title":"可选计划名","steps":[{"kind":"action","action":"feed","schedule":{"kind":"now"}},{"kind":"reminder","text":"开会","schedule":{"kind":"at","at":"2026-01-01T09:00:00","tz":"${timeZone}"}}]}</pet-plan>
-step.kind=action 时必须使用允许的 action；step.kind=reminder 时必须提供简短 text。schedule.kind 支持 now、delay（delaySeconds）、at（ISO 时间或毫秒时间戳）、every（everyMs）和 cron（标准 5/6 段表达式 + tz）。相对时间优先使用 delay；绝对时间使用当前本地时区 ${timeZone}。
-当前本地时间：${new Date().toISOString()}；当前时区：${timeZone}。如果日期、时间或动作含糊，先用普通短句追问，不要输出计划标签。
+计划标签中的宠物动作只有：${PET_PLAN_ACTIONS.join(', ')}；这条规则只约束 <pet-plan> 协议，不限制 Codex 默认工具、MCP 或浏览器能力。主人要求执行工具操作时，按当前 Codex 配置正常调用，不要把工具结果伪装成普通聊天。
+需要安排时，在最终回复末尾追加且只追加一个隐藏标签：<pet-plan>{"version":1,"title":"可选计划名","steps":[{"kind":"action","action":"feed","schedule":{"kind":"now"}},{"kind":"reminder","text":"开会","schedule":{"kind":"at","at":"2026-01-01T09:00:00","tz":"Asia/Shanghai"}}]}</pet-plan>
+step.kind=action 时必须使用允许的 action；step.kind=reminder 时必须提供简短 text。schedule.kind 支持 now、delay（delaySeconds）、at（ISO 时间或毫秒时间戳）、every（everyMs）和 cron（标准 5/6 段表达式 + tz）。相对时间优先使用 delay；绝对时间使用当前运行时上下文中的本地时区。
+如果日期、时间或动作含糊，先用普通短句追问，不要输出计划标签。协议版本固定为 1；协议字段变化时必须同步提升版本。
 </pet-plan-rules>`
+}
+
+/** 当前时间只影响本轮理解，不能参与 persona 指纹计算。 */
+export function buildPetRuntimeContext(): string {
+  const timeZone = localPetTimeZone()
+  return `当前本地时间：${new Date().toISOString()}；当前时区：${timeZone}。处理绝对时间时，优先使用该时区。`
 }
 
 export function formatPlanDate(value: number): string {

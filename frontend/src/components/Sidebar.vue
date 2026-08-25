@@ -75,6 +75,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   { path: '/', icon: 'home', labelKey: 'sidebar.home' },
   { path: '/projects', icon: 'grid', labelKey: 'sidebar.projects', isNew: true },
+  { path: '/channels', icon: 'message-circle', labelKey: 'sidebar.channels', isNew: true },
   { path: '/prompts', icon: 'file-text', labelKey: 'sidebar.prompts', isNew: true },
   { path: '/skill', icon: 'tool', labelKey: 'sidebar.skill' },
   { path: '/logs', icon: 'bar-chart', labelKey: 'sidebar.logs' },
@@ -169,6 +170,11 @@ const navigate = (path: string) => {
           <line x1="12" y1="20" x2="12" y2="10"></line>
           <line x1="18" y1="20" x2="18" y2="4"></line>
           <line x1="6" y1="20" x2="6" y2="16"></line>
+        </svg>
+
+        <!-- Message Circle -->
+        <svg v-else-if="item.icon === 'message-circle'" class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path>
         </svg>
 
         <!-- Terminal -->

@@ -27,6 +27,7 @@ type PetAIErrorCode string
 
 const (
 	PET_AI_INVALID_REQUEST        PetAIErrorCode = "PET_AI_INVALID_REQUEST"
+	PET_AI_WORKSPACE_UNAVAILABLE  PetAIErrorCode = "PET_AI_WORKSPACE_UNAVAILABLE"
 	PET_AI_DEPENDENCY_UNAVAILABLE PetAIErrorCode = "PET_AI_DEPENDENCY_UNAVAILABLE"
 	PET_AI_REQUEST_IN_FLIGHT      PetAIErrorCode = "PET_AI_REQUEST_IN_FLIGHT"
 	PET_AI_EVENT_ERROR            PetAIErrorCode = "PET_AI_EVENT_ERROR"
@@ -135,6 +136,9 @@ type PetAIEventType string
 const (
 	PetAIEventStarted PetAIEventType = "started"
 	PetAIEventDelta   PetAIEventType = "delta"
+	// PetAIEventProgress 只表示 Codex turn 仍在推进，不携带用户可见正文；
+	// 浏览器/MCP 工具链可能长时间没有 assistant delta，前端据此续期空闲保护。
+	PetAIEventProgress PetAIEventType = "progress"
 	// PetAIEventUsage 复用 PetStreamUsage 的稳定 wire value，主控可据此直接
 	// 把 payload 转成 PetUsageEvent，再调用 PetService.AddExperienceFromUsage。
 	PetAIEventUsage     PetAIEventType = PetAIEventType(PetStreamUsage)
@@ -253,7 +257,11 @@ type PetAIDependencies struct {
 	Emitter               PetAIEventEmitter
 	ActivityEmitter       PetActivityEmitter
 	AudioEmitter          PetAudioEventEmitter
-	Options               PetAIOptions
+	// ToolDefinitions/ToolExecutorFactory 只对需要扩展工具面的宿主生效；为空时
+	// 使用桌宠现有的只读工具。scope 是宿主传入的隔离实例标识，不是用户可控路径。
+	ToolDefinitions     func(scope string) []PetAgentToolDefinition
+	ToolExecutorFactory func(context.Context, string, string) (PetAgentToolRunner, error)
+	Options             PetAIOptions
 }
 
 // PetAIService 是不触碰宠物状态、窗口、atlas 和前端的独立 AI 请求边界。
@@ -265,6 +273,8 @@ type PetAIService struct {
 	emitter               PetAIEventEmitter
 	activityEmitter       PetActivityEmitter
 	audioEmitter          PetAudioEventEmitter
+	toolDefinitions       func(scope string) []PetAgentToolDefinition
+	toolExecutorFactory   func(context.Context, string, string) (PetAgentToolRunner, error)
 	options               PetAIOptions
 
 	mu     sync.Mutex
@@ -296,6 +306,16 @@ func NewPetAIServiceWithOptions(
 }
 
 func NewPetAIServiceWithDependencies(deps PetAIDependencies) *PetAIService {
+	toolDefinitions := deps.ToolDefinitions
+	if toolDefinitions == nil {
+		toolDefinitions = func(string) []PetAgentToolDefinition { return PetAgentToolDefinitions() }
+	}
+	toolExecutorFactory := deps.ToolExecutorFactory
+	if toolExecutorFactory == nil {
+		toolExecutorFactory = func(_ context.Context, _ string, workspace string) (PetAgentToolRunner, error) {
+			return NewPetAgentToolExecutor(workspace)
+		}
+	}
 	return &PetAIService{
 		providerReader:        deps.ProviderReader,
 		speechSelectionReader: deps.SpeechSelectionReader,
@@ -304,6 +324,8 @@ func NewPetAIServiceWithDependencies(deps PetAIDependencies) *PetAIService {
 		emitter:               deps.Emitter,
 		activityEmitter:       deps.ActivityEmitter,
 		audioEmitter:          deps.AudioEmitter,
+		toolDefinitions:       toolDefinitions,
+		toolExecutorFactory:   toolExecutorFactory,
 		options:               normalizePetAIOptions(deps.Options),
 		active:                make(map[string]*petAIRequestState),
 	}
@@ -324,15 +346,20 @@ type PetAIMessage struct {
 }
 
 type PetChatRequest struct {
-	PetID         string               `json:"petId"`
-	RequestID     string               `json:"requestId"`
-	Provider      PetProviderReference `json:"provider"`
-	Persona       string               `json:"persona"`
-	UserText      string               `json:"userText"`
-	Images        []PetAIImage         `json:"images,omitempty"`
-	History       []PetAIMessage       `json:"history,omitempty"`
-	ProjectFolder string               `json:"projectFolder,omitempty"`
-	Reasoning     string               `json:"reasoning,omitempty"`
+	PetID     string               `json:"petId"`
+	RequestID string               `json:"requestId"`
+	Provider  PetProviderReference `json:"provider"`
+	Persona   string               `json:"persona"`
+	// RuntimeContext 是每轮变化的时间/时区等短上下文；Codex runtime 将它放在
+	// 当前 turn，而不是 developerInstructions，避免每条消息都改变 thread persona。
+	RuntimeContext string         `json:"runtimeContext,omitempty"`
+	UserText       string         `json:"userText"`
+	Images         []PetAIImage   `json:"images,omitempty"`
+	History        []PetAIMessage `json:"history,omitempty"`
+	ProjectFolder  string         `json:"projectFolder,omitempty"`
+	Reasoning      string         `json:"reasoning,omitempty"`
+	// ToolScope 仅供宿主 runtime 做能力隔离，不能作为模型提示或文件路径使用。
+	ToolScope string `json:"-"`
 }
 
 // PetDreamTextRequest 与聊天共享完全相同的输入边界，确保梦境不会绕过长度、provider
@@ -382,6 +409,7 @@ type petAIChatInput struct {
 	History       []PetAIMessage
 	ProjectFolder string
 	Reasoning     string
+	ToolScope     string
 }
 
 type petAIProviderRuntime struct {
@@ -701,10 +729,14 @@ func (s *PetAIService) runChat(
 func (s *PetAIService) normalizeChatRequest(request PetChatRequest, capability PetCapability) (petAIChatInput, error) {
 	petID := strings.TrimSpace(request.PetID)
 	requestID := strings.TrimSpace(request.RequestID)
+	toolScope := strings.TrimSpace(request.ToolScope)
 	if petID == "" || runeLen(petID) > PetAIMaxPetIDLength || hasLineBreak(petID) {
 		return petAIChatInput{}, newPetAIError(PET_AI_INVALID_REQUEST, 0, nil)
 	}
 	if requestID == "" || runeLen(requestID) > PetAIMaxRequestIDLength || hasLineBreak(requestID) {
+		return petAIChatInput{}, newPetAIError(PET_AI_INVALID_REQUEST, 0, nil)
+	}
+	if runeLen(toolScope) > PetAIMaxRequestIDLength || hasLineBreak(toolScope) {
 		return petAIChatInput{}, newPetAIError(PET_AI_INVALID_REQUEST, 0, nil)
 	}
 
@@ -748,6 +780,7 @@ func (s *PetAIService) normalizeChatRequest(request PetChatRequest, capability P
 		History:       history,
 		ProjectFolder: projectFolder,
 		Reasoning:     reasoning,
+		ToolScope:     toolScope,
 	}, nil
 }
 
@@ -772,11 +805,11 @@ func (s *PetAIService) resolveChatWorkspace(ctx context.Context, petID string) (
 	if err != nil {
 		// resolver 可能来自数据库或文件系统；原始错误不能穿过 Wails，
 		// 但失败必须阻止请求偷偷退回到前端提供的路径。
-		return "", newPetAIError(PET_AI_INVALID_REQUEST, 0, err)
+		return "", newPetAIError(PET_AI_WORKSPACE_UNAVAILABLE, 0, err)
 	}
 	workspace, err = normalizePetAIProjectFolder(workspace)
 	if err != nil {
-		return "", newPetAIError(PET_AI_INVALID_REQUEST, 0, err)
+		return "", newPetAIError(PET_AI_WORKSPACE_UNAVAILABLE, 0, err)
 	}
 	if workspace == "" {
 		return "", nil
@@ -786,7 +819,7 @@ func (s *PetAIService) resolveChatWorkspace(ctx context.Context, petID string) (
 	// 用来覆盖请求启动后目录被删除或替换的竞态。
 	executor, err := NewPetAgentToolExecutor(workspace)
 	if err != nil {
-		return "", newPetAIError(PET_AI_INVALID_REQUEST, 0, err)
+		return "", newPetAIError(PET_AI_WORKSPACE_UNAVAILABLE, 0, err)
 	}
 	return executor.WorkspaceRoot(), nil
 }
@@ -1204,7 +1237,10 @@ func (s *PetAIService) executeTextWithTools(
 	onDelta func(string) error,
 	onUsage func(modelpricing.UsageSnapshot),
 ) (string, error) {
-	executor, err := NewPetAgentToolExecutor(input.ProjectFolder)
+	if s == nil || s.toolExecutorFactory == nil {
+		return "", newPetAIError(PET_AI_DEPENDENCY_UNAVAILABLE, 0, nil)
+	}
+	executor, err := s.toolExecutorFactory(ctx, input.ToolScope, input.ProjectFolder)
 	if err != nil {
 		// NewPetAgentToolExecutor 已负责目录存在性、根目录 symlink 和限制校验；
 		// 这里只投影为稳定请求错误，不能把本机绝对路径或 OS 错误文案返回给前端。
@@ -1246,7 +1282,11 @@ func (s *PetAIService) executePetAIToolTurn(
 	nativeMessages json.RawMessage,
 	onUsage func(modelpricing.UsageSnapshot),
 ) (PetAgentAssistantTurn, error) {
-	body, endpoint, err := buildPetAIToolRequest(provider, input, nativeMessages)
+	definitions := PetAgentToolDefinitions()
+	if s != nil && s.toolDefinitions != nil {
+		definitions = s.toolDefinitions(input.ToolScope)
+	}
+	body, endpoint, err := buildPetAIToolRequest(provider, input, nativeMessages, definitions)
 	if err != nil {
 		if PetProviderErrorCodeOf(err) != "" {
 			return PetAgentAssistantTurn{}, err
@@ -1587,15 +1627,17 @@ func petChatAudioMediaType(format string) (string, bool) {
 }
 
 type petAIToolRequestOptions struct {
-	IncludeTools   bool
-	Stream         bool
-	NativeMessages json.RawMessage
+	IncludeTools    bool
+	Stream          bool
+	NativeMessages  json.RawMessage
+	ToolDefinitions []PetAgentToolDefinition
 }
 
 func buildPetAIToolRequest(
 	provider petAIProviderRuntime,
 	input petAIChatInput,
 	nativeMessages json.RawMessage,
+	definitions []PetAgentToolDefinition,
 ) ([]byte, string, error) {
 	options := petAIToolRequestOptions{
 		IncludeTools:   true,
@@ -1604,6 +1646,7 @@ func buildPetAIToolRequest(
 	}
 	switch provider.protocol {
 	case "openai":
+		options.ToolDefinitions = definitions
 		body, err := buildOpenAIChatBodyWithOptions(provider, input, options)
 		if err != nil {
 			return nil, "", err
@@ -1614,6 +1657,7 @@ func buildPetAIToolRequest(
 		}
 		return body, endpoint, nil
 	case "responses":
+		options.ToolDefinitions = definitions
 		body, err := buildPetAIResponsesBodyWithOptions(provider, input, options)
 		if err != nil {
 			return nil, "", err
@@ -1624,6 +1668,7 @@ func buildPetAIToolRequest(
 		}
 		return body, endpoint, nil
 	case "anthropic":
+		options.ToolDefinitions = definitions
 		body, err := buildAnthropicMessagesBodyWithOptions(provider, input, options)
 		if err != nil {
 			return nil, "", err
@@ -1634,6 +1679,7 @@ func buildPetAIToolRequest(
 		}
 		return body, endpoint, nil
 	case "gemini":
+		options.ToolDefinitions = definitions
 		body, err := buildGeminiGenerateContentBodyWithOptions(provider, input, options)
 		if err != nil {
 			return nil, "", err
@@ -1682,7 +1728,7 @@ func buildOpenAIChatBodyWithOptions(
 		body["stream_options"] = map[string]any{"include_usage": true}
 	}
 	if options.IncludeTools {
-		body["tools"] = petAIOpenAITools()
+		body["tools"] = petAIOpenAITools(options.ToolDefinitions)
 	}
 	if input.Reasoning != "" && input.Reasoning != "none" {
 		body["reasoning_effort"] = input.Reasoning
@@ -1719,7 +1765,7 @@ func buildPetAIResponsesBodyWithOptions(
 		"stream": options.Stream,
 	}
 	if options.IncludeTools {
-		body["tools"] = petAIResponsesTools()
+		body["tools"] = petAIResponsesTools(options.ToolDefinitions)
 	}
 	if provider.maxOutputTokens > 0 {
 		body["max_output_tokens"] = provider.maxOutputTokens
@@ -1781,7 +1827,7 @@ func buildAnthropicMessagesBodyWithOptions(
 		"stream":     options.Stream,
 	}
 	if options.IncludeTools {
-		body["tools"] = petAIAnthropicTools()
+		body["tools"] = petAIAnthropicTools(options.ToolDefinitions)
 	}
 	if input.Persona != "" {
 		body["system"] = input.Persona
@@ -1827,7 +1873,7 @@ func buildGeminiGenerateContentBodyWithOptions(
 	}
 	body := map[string]any{"contents": contents}
 	if options.IncludeTools {
-		body["tools"] = petAIGeminiTools()
+		body["tools"] = petAIGeminiTools(options.ToolDefinitions)
 	}
 	if input.Persona != "" {
 		body["systemInstruction"] = map[string]any{
@@ -1853,8 +1899,10 @@ func appendPetAINativeMessages(messages []map[string]any, native json.RawMessage
 	return append(messages, continuation...), nil
 }
 
-func petAIOpenAITools() []map[string]any {
-	definitions := PetAgentToolDefinitions()
+func petAIOpenAITools(definitions []PetAgentToolDefinition) []map[string]any {
+	if definitions == nil {
+		definitions = PetAgentToolDefinitions()
+	}
 	tools := make([]map[string]any, 0, len(definitions))
 	for _, definition := range definitions {
 		tools = append(tools, map[string]any{
@@ -1869,8 +1917,10 @@ func petAIOpenAITools() []map[string]any {
 	return tools
 }
 
-func petAIResponsesTools() []map[string]any {
-	definitions := PetAgentToolDefinitions()
+func petAIResponsesTools(definitions []PetAgentToolDefinition) []map[string]any {
+	if definitions == nil {
+		definitions = PetAgentToolDefinitions()
+	}
 	tools := make([]map[string]any, 0, len(definitions))
 	for _, definition := range definitions {
 		tools = append(tools, map[string]any{
@@ -1883,8 +1933,10 @@ func petAIResponsesTools() []map[string]any {
 	return tools
 }
 
-func petAIAnthropicTools() []map[string]any {
-	definitions := PetAgentToolDefinitions()
+func petAIAnthropicTools(definitions []PetAgentToolDefinition) []map[string]any {
+	if definitions == nil {
+		definitions = PetAgentToolDefinitions()
+	}
 	tools := make([]map[string]any, 0, len(definitions))
 	for _, definition := range definitions {
 		tools = append(tools, map[string]any{
@@ -1896,8 +1948,10 @@ func petAIAnthropicTools() []map[string]any {
 	return tools
 }
 
-func petAIGeminiTools() []map[string]any {
-	definitions := PetAgentToolDefinitions()
+func petAIGeminiTools(definitions []PetAgentToolDefinition) []map[string]any {
+	if definitions == nil {
+		definitions = PetAgentToolDefinitions()
+	}
 	declarations := make([]map[string]any, 0, len(definitions))
 	for _, definition := range definitions {
 		declarations = append(declarations, map[string]any{

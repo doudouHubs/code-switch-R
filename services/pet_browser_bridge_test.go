@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -115,5 +116,182 @@ func TestPetBrowserBridgeAllowsViteFallbackPorts(t *testing.T) {
 	bridge.ServeHTTP(blockedRecorder, blocked)
 	if blockedRecorder.Code != http.StatusForbidden {
 		t.Fatalf("blocked Vite port status = %d", blockedRecorder.Code)
+	}
+}
+
+type petBrowserChannelFixture struct {
+	calls          []string
+	savedPayload   []byte
+	lastID         string
+	lastInstanceID string
+	lastSessionID  string
+	lastChatID     string
+	lastContent    string
+	lastLimit      int
+	lastEnabled    bool
+	lastSessionKey string
+}
+
+func (f *petBrowserChannelFixture) ListDescriptors() (interface{}, error) {
+	f.calls = append(f.calls, "ListDescriptors")
+	return map[string]string{"kind": "descriptor"}, nil
+}
+
+func (f *petBrowserChannelFixture) ListInstances() (interface{}, error) {
+	f.calls = append(f.calls, "ListInstances")
+	return map[string]string{"kind": "instance"}, nil
+}
+
+func (f *petBrowserChannelFixture) ListProjects() (interface{}, error) {
+	f.calls = append(f.calls, "ListProjects")
+	return map[string]string{"kind": "project"}, nil
+}
+
+func (f *petBrowserChannelFixture) SaveInstance(payload []byte) error {
+	f.calls = append(f.calls, "SaveInstance")
+	f.savedPayload = append([]byte(nil), payload...)
+	return nil
+}
+
+func (f *petBrowserChannelFixture) RemoveInstance(id string) error {
+	f.calls = append(f.calls, "RemoveInstance")
+	f.lastID = id
+	return nil
+}
+
+func (f *petBrowserChannelFixture) SetEnabled(id string, enabled bool) error {
+	f.calls = append(f.calls, "SetEnabled")
+	f.lastID = id
+	f.lastEnabled = enabled
+	return nil
+}
+
+func (f *petBrowserChannelFixture) Start(id string) error {
+	f.calls = append(f.calls, "Start")
+	f.lastID = id
+	return nil
+}
+
+func (f *petBrowserChannelFixture) Stop(id string) error {
+	f.calls = append(f.calls, "Stop")
+	f.lastID = id
+	return nil
+}
+
+func (f *petBrowserChannelFixture) GetStatus(id string) (interface{}, error) {
+	f.calls = append(f.calls, "GetStatus")
+	f.lastID = id
+	return map[string]string{"state": "running"}, nil
+}
+
+func (f *petBrowserChannelFixture) ListSessions(instanceID string) (interface{}, error) {
+	f.calls = append(f.calls, "ListSessions")
+	f.lastInstanceID = instanceID
+	return []string{"session-1"}, nil
+}
+
+func (f *petBrowserChannelFixture) ListMessages(sessionID string, limit int) (interface{}, error) {
+	f.calls = append(f.calls, "ListMessages")
+	f.lastSessionID = sessionID
+	f.lastLimit = limit
+	return []string{"message-1"}, nil
+}
+
+func (f *petBrowserChannelFixture) SendMessage(instanceID, chatID, content string) (string, error) {
+	f.calls = append(f.calls, "SendMessage")
+	f.lastInstanceID = instanceID
+	f.lastChatID = chatID
+	f.lastContent = content
+	return "message-1", nil
+}
+
+func (f *petBrowserChannelFixture) StartWeixinLogin(instanceID string) (interface{}, error) {
+	f.calls = append(f.calls, "StartWeixinLogin")
+	f.lastInstanceID = instanceID
+	return map[string]string{"status": "wait"}, nil
+}
+
+func (f *petBrowserChannelFixture) WaitWeixinLogin(instanceID, sessionKey string) (interface{}, error) {
+	f.calls = append(f.calls, "WaitWeixinLogin")
+	f.lastInstanceID = instanceID
+	f.lastSessionKey = sessionKey
+	return map[string]bool{"connected": false}, nil
+}
+
+func (f *petBrowserChannelFixture) CancelWeixinLogin(instanceID, sessionKey string) error {
+	f.calls = append(f.calls, "CancelWeixinLogin")
+	f.lastInstanceID = instanceID
+	f.lastSessionKey = sessionKey
+	return nil
+}
+
+func TestPetBrowserBridgeChannelWhitelistDelegatesAllPageMethods(t *testing.T) {
+	fixture := &petBrowserChannelFixture{}
+	bridge := NewPetBrowserBridge(PetBrowserBridgeDependencies{Channels: fixture})
+	encodeArgs := func(values ...interface{}) []json.RawMessage {
+		t.Helper()
+		args := make([]json.RawMessage, 0, len(values))
+		for _, value := range values {
+			encoded, err := json.Marshal(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			args = append(args, encoded)
+		}
+		return args
+	}
+
+	// 页面只需要这些方法；逐一走 dispatch，确保窄接口新增方法时不会出现“前端能打开但调用被拒绝”的断接。
+	cases := []struct {
+		name   string
+		method string
+		args   []interface{}
+	}{
+		{name: "descriptors", method: "codeswitch/services/channels.ChannelService.ListDescriptors"},
+		{name: "instances", method: "codeswitch/services/channels.ChannelService.ListInstances"},
+		{name: "projects", method: "codeswitch/services/channels.ChannelService.ListProjects"},
+		{name: "save", method: "codeswitch/services/channels.ChannelService.SaveInstance", args: []interface{}{map[string]string{"id": "instance-1", "type": "feishu-bot"}}},
+		{name: "remove", method: "codeswitch/services/channels.ChannelService.RemoveInstance", args: []interface{}{"instance-1"}},
+		{name: "enable", method: "codeswitch/services/channels.ChannelService.SetEnabled", args: []interface{}{"instance-1", true}},
+		{name: "start", method: "codeswitch/services/channels.ChannelService.Start", args: []interface{}{"instance-1"}},
+		{name: "stop", method: "codeswitch/services/channels.ChannelService.Stop", args: []interface{}{"instance-1"}},
+		{name: "status", method: "codeswitch/services/channels.ChannelService.GetStatus", args: []interface{}{"instance-1"}},
+		{name: "sessions", method: "codeswitch/services/channels.ChannelService.ListSessions", args: []interface{}{"instance-1"}},
+		{name: "messages", method: "codeswitch/services/channels.ChannelService.ListMessages", args: []interface{}{"session-1", 25}},
+		{name: "send", method: "codeswitch/services/channels.ChannelService.SendMessage", args: []interface{}{"instance-1", "chat-1", "hello"}},
+		{name: "weixin-start", method: "codeswitch/services/channels.ChannelService.StartWeixinLogin", args: []interface{}{"instance-1"}},
+		{name: "weixin-wait", method: "codeswitch/services/channels.ChannelService.WaitWeixinLogin", args: []interface{}{"instance-1", "session-1"}},
+		{name: "weixin-cancel", method: "codeswitch/services/channels.ChannelService.CancelWeixinLogin", args: []interface{}{"instance-1", "session-1"}},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			value, err := bridge.dispatch(context.Background(), testCase.method, encodeArgs(testCase.args...))
+			if err != nil {
+				t.Fatalf("dispatch %s: %v", testCase.method, err)
+			}
+			if testCase.name == "send" && value != "message-1" {
+				t.Fatalf("send result = %#v", value)
+			}
+		})
+	}
+
+	if len(fixture.calls) != len(cases) {
+		t.Fatalf("delegated calls = %v", fixture.calls)
+	}
+	if string(fixture.savedPayload) != `{"id":"instance-1","type":"feishu-bot"}` {
+		t.Fatalf("saved payload = %s", fixture.savedPayload)
+	}
+	if fixture.lastID != "instance-1" || !fixture.lastEnabled {
+		t.Fatalf("enable/status args = id:%q enabled:%t", fixture.lastID, fixture.lastEnabled)
+	}
+	if fixture.lastInstanceID != "instance-1" || fixture.lastSessionID != "session-1" || fixture.lastLimit != 25 {
+		t.Fatalf("history args = instance:%q session:%q limit:%d", fixture.lastInstanceID, fixture.lastSessionID, fixture.lastLimit)
+	}
+	if fixture.lastChatID != "chat-1" || fixture.lastContent != "hello" {
+		t.Fatalf("send args = chat:%q content:%q", fixture.lastChatID, fixture.lastContent)
+	}
+	if _, err := bridge.dispatch(context.Background(), "codeswitch/services.ChannelService.ListInstances", nil); err == nil {
+		t.Fatal("legacy channel service method name was unexpectedly accepted")
 	}
 }

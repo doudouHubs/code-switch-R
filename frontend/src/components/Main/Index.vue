@@ -394,9 +394,16 @@
                   >
                     {{ stats.successRateLabel }}
                   </span>
-                  <span class="card-metric-separator" aria-hidden="true">·</span>
+                  <span
+                    v-if="stats.successRateLabel"
+                    class="card-metric-separator"
+                    aria-hidden="true"
+                  >·</span>
                   <span >{{ stats.requests }}</span>
-                  <span class="card-metric-separator" aria-hidden="true">·</span>
+                  <span
+                    class="card-metric-separator"
+                    aria-hidden="true"
+                  >·</span>
                   <span>{{ stats.tokens }}</span>
                   <span class="card-metric-separator" aria-hidden="true">·</span>
                   <span>{{ stats.images }}</span>
@@ -1141,6 +1148,12 @@ const providerStatsLoaded = reactive<Record<ProviderTab, boolean>>({
   gemini: false,
   others: false,
 })
+const providerStatsError = reactive<Record<ProviderTab, boolean>>({
+  claude: false,
+  codex: false,
+  gemini: false,
+  others: false,
+})
 let providerStatsTimer: number | undefined
 const showHeatmap = ref(true)
 const appVersion = ref('')
@@ -1776,6 +1789,7 @@ const onProxyToggle = async () => {
 const loadProviderStats = async (tab: ProviderTab) => {
   // 'others' Tab 暂不加载统计数据（自定义 CLI 工具统计需要后续实现）
   if (tab === 'others') {
+    providerStatsError[tab] = false
     providerStatsLoaded[tab] = true
     return
   }
@@ -1794,9 +1808,12 @@ const loadProviderStats = async (tab: ProviderTab) => {
       mapped[normalizeProviderKey(stat.provider)] = stat
     })
     providerStatsMap[tab] = mapped
+    providerStatsError[tab] = false
     providerStatsLoaded[tab] = true
   } catch (error) {
     console.error(`Failed to load provider stats for ${tab}`, error)
+    // RPC 失败不能降级成零值，否则会把数据库或 Wails 通道故障伪装成“今日无请求”。
+    providerStatsError[tab] = true
     if (!providerStatsLoaded[tab]) {
       providerStatsLoaded[tab] = true
     }
@@ -1886,7 +1903,7 @@ const refreshAllData = async () => {
 }
 
 type ProviderStatDisplay =
-  | { state: 'loading' | 'empty'; message: string }
+  | { state: 'loading' | 'empty' | 'error'; message: string }
   | {
       state: 'ready'
       requests: string
@@ -1919,28 +1936,42 @@ const successRateClassName = (value: number) => {
   return 'success-bad'
 }
 
+const formatProviderStatDisplay = (stat?: ProviderDailyStat): ProviderStatDisplay => {
+  const totalTokens = (stat?.input_tokens ?? 0) + (stat?.output_tokens ?? 0)
+  const successRateValue = stat && Number.isFinite(stat.success_rate)
+    ? clamp(stat.success_rate, 0, 1)
+    : null
+  const successRateLabel = successRateValue !== null ? formatSuccessRateLabel(successRateValue) : ''
+  const successRateClass = successRateValue !== null ? successRateClassName(successRateValue) : ''
+
+  return {
+    state: 'ready',
+    requests: `${t('components.main.providers.requests')}: ${formatMetric(stat?.total_requests ?? 0)}`,
+    tokens: `${t('components.main.providers.tokens')}: ${formatTokenNumber(totalTokens)}`,
+    images: `${t('components.main.providers.images')}: ${formatMetric(stat?.image_count ?? 0)}`,
+    cost: `${t('components.main.providers.cost')}: ${currencyFormatter.value.format(Math.max(stat?.cost_total ?? 0, 0))}`,
+    successRateLabel,
+    successRateClass,
+  }
+}
+
 const providerStatDisplay = (providerName: string): ProviderStatDisplay => {
   const tab = activeTab.value
   if (!providerStatsLoaded[tab]) {
     return { state: 'loading', message: t('components.main.providers.loading') }
   }
+  if (providerStatsError[tab]) {
+    return { state: 'error', message: t('components.main.providers.loadFailed') }
+  }
   const stat = providerStatsMap[tab]?.[normalizeProviderKey(providerName)]
   if (!stat) {
-    return { state: 'empty', message: t('components.main.providers.noData') }
+    if (tab === 'others') {
+      return { state: 'empty', message: t('components.main.providers.noData') }
+    }
+    // 空数组表示当天没有该 provider 的请求，不代表统计字段不存在；保留指标位并显示 0。
+    return formatProviderStatDisplay()
   }
-  const totalTokens = stat.input_tokens + stat.output_tokens
-  const successRateValue = Number.isFinite(stat.success_rate) ? clamp(stat.success_rate, 0, 1) : null
-  const successRateLabel = successRateValue !== null ? formatSuccessRateLabel(successRateValue) : ''
-  const successRateClass = successRateValue !== null ? successRateClassName(successRateValue) : ''
-  return {
-    state: 'ready',
-    requests: `${t('components.main.providers.requests')}: ${formatMetric(stat.total_requests)}`,
-    tokens: `${t('components.main.providers.tokens')}: ${formatTokenNumber(totalTokens)}`,
-    images: `${t('components.main.providers.images')}: ${formatMetric(stat.image_count ?? 0)}`,
-    cost: `${t('components.main.providers.cost')}: ${currencyFormatter.value.format(Math.max(stat.cost_total, 0))}`,
-    successRateLabel,
-    successRateClass,
-  }
+  return formatProviderStatDisplay(stat)
 }
 
 const normalizeUrlWithScheme = (value: string) => {

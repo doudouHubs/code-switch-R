@@ -11,6 +11,7 @@ import ProjectManagerSessionDetailPage from '../components/ProjectManager/Sessio
 import RadarPage from '../components/Radar/Index.vue'
 import PetWindowPage from '../components/Pet/PetWindow.vue'
 import PetSettingsPage from '../components/Pet/PetSettings.vue'
+import ChannelsPage from '../components/Channels/Index.vue'
 
 const routes = [
   { path: '/', component: MainPage },
@@ -20,6 +21,7 @@ const routes = [
   { path: '/console', component: ConsolePage },
   { path: '/projects', component: ProjectManagerPage },
   { path: '/projects/sessions/:sessionId', component: ProjectManagerSessionDetailPage },
+  { path: '/channels', component: ChannelsPage },
   { path: '/radar', component: RadarPage },
   { path: '/pet', component: PetWindowPage },
   { path: '/pet/settings', component: PetSettingsPage },

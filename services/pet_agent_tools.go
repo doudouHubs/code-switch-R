@@ -55,6 +55,13 @@ type PetAgentToolResult struct {
 	IsError    bool   `json:"isError,omitempty"`
 }
 
+// PetAgentToolRunner 是工具循环依赖的最小执行契约。
+// 桌宠使用内置只读 executor，频道可以在不改变桌宠默认能力的前提下挂接
+// 受实例权限控制的写文件、Shell 和消息工具。
+type PetAgentToolRunner interface {
+	Execute(context.Context, PetAgentToolCall) (PetAgentToolResult, error)
+}
+
 type PetAgentToolError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
@@ -1021,12 +1028,12 @@ type PetAgentToolLoopResult struct {
 // PetAgentToolLoopCoordinator 将“assistant tool calls -> native executor -> native
 // results -> provider continuation”固定成唯一主流程，避免不同 provider 各写一份循环。
 type PetAgentToolLoopCoordinator struct {
-	executor     *PetAgentToolExecutor
+	executor     PetAgentToolRunner
 	continuation PetAgentContinuationFunc
 	options      PetAgentToolLoopOptions
 }
 
-func NewPetAgentToolLoopCoordinator(executor *PetAgentToolExecutor, continuation PetAgentContinuationFunc, options PetAgentToolLoopOptions) *PetAgentToolLoopCoordinator {
+func NewPetAgentToolLoopCoordinator(executor PetAgentToolRunner, continuation PetAgentContinuationFunc, options PetAgentToolLoopOptions) *PetAgentToolLoopCoordinator {
 	if options.MaxRounds <= 0 {
 		options.MaxRounds = 8
 	}

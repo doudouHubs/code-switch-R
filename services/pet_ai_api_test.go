@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -171,5 +172,52 @@ func TestPetAIAPICancelChatForwardsRequestIDAndIsIdempotent(t *testing.T) {
 	}
 	if event := emitter.waitFor(t, PetAIEventCancelled); event.RequestID != "api-cancel-1" {
 		t.Fatalf("取消事件 requestId = %q", event.RequestID)
+	}
+}
+
+type petChatRuntimeStub struct {
+	startRequest  PetChatRequest
+	cancelRequest string
+}
+
+func (s *petChatRuntimeStub) StartChat(_ context.Context, request PetChatRequest) (PetChatStartResult, error) {
+	s.startRequest = request
+	return PetChatStartResult{RequestID: request.RequestID}, nil
+}
+
+func (s *petChatRuntimeStub) CancelChat(requestID string) error {
+	s.cancelRequest = requestID
+	return nil
+}
+
+func (s *petChatRuntimeStub) Close() error { return nil }
+
+func TestPetAIAPIWithChatRuntimeRoutesOnlyMainChat(t *testing.T) {
+	runtime := &petChatRuntimeStub{}
+	api := NewPetAIAPIServiceWithChatRuntime(nil, runtime)
+	request := PetChatRequest{
+		PetID:          "codex-pet",
+		RequestID:      "codex-request",
+		Persona:        "稳定 persona",
+		RuntimeContext: "当前时间上下文",
+		UserText:       "走独立 runtime",
+	}
+	result, err := api.StartChat(request)
+	if err != nil {
+		t.Fatalf("StartChat() error = %v", err)
+	}
+	if result.RequestID != request.RequestID || runtime.startRequest.RequestID != request.RequestID {
+		t.Fatalf("runtime start result/request = %#v / %#v", result, runtime.startRequest)
+	}
+	if err := api.CancelChat(request.RequestID); err != nil {
+		t.Fatalf("CancelChat() error = %v", err)
+	}
+	if runtime.cancelRequest != request.RequestID {
+		t.Fatalf("runtime cancel request = %q", runtime.cancelRequest)
+	}
+
+	// 梦境等旧能力仍要求核心 service；只有主聊天被切到独立 runtime。
+	if _, err := api.GenerateDreamText(PetDreamTextRequest{}); PetAIErrorCodeOf(err) != string(PET_AI_DEPENDENCY_UNAVAILABLE) {
+		t.Fatalf("GenerateDreamText() error code = %q", PetAIErrorCodeOf(err))
 	}
 }

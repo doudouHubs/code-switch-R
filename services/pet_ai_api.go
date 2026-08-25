@@ -6,7 +6,8 @@ import "context"
 // bridge 只持有核心服务，不拥有 provider、网络请求或持久化职责，避免在 Wails
 // 方法中复制凭据处理、HTTP/SSE 解析和请求状态管理，保证这些规则只有一个 owner。
 type PetAIAPIService struct {
-	service *PetAIService
+	service     *PetAIService
+	chatRuntime PetChatRuntime
 }
 
 // PetSpeechResult 是 Wails 可直接序列化的语音结果；[]byte 会由 JSON 编码为 base64。
@@ -23,9 +24,18 @@ func NewPetAIAPIService(service *PetAIService) *PetAIAPIService {
 	return &PetAIAPIService{service: service}
 }
 
+// NewPetAIAPIServiceWithChatRuntime 把主聊天切到独立 Codex runtime；其余能力
+// 仍从 service 读取，保持已有浏览器 bridge 和 Wails 方法名不变。
+func NewPetAIAPIServiceWithChatRuntime(service *PetAIService, chatRuntime PetChatRuntime) *PetAIAPIService {
+	return &PetAIAPIService{service: service, chatRuntime: chatRuntime}
+}
+
 // StartChat 转发异步聊天请求；Wails 方法没有可注入的请求 context，取消由
 // CancelChat 根据 requestId 触发核心服务保存的取消函数。
 func (api *PetAIAPIService) StartChat(request PetChatRequest) (PetChatStartResult, error) {
+	if runtime := api.getChatRuntime(); runtime != nil {
+		return runtime.StartChat(context.Background(), request)
+	}
 	service, err := api.getService()
 	if err != nil {
 		return PetChatStartResult{}, err
@@ -35,11 +45,26 @@ func (api *PetAIAPIService) StartChat(request PetChatRequest) (PetChatStartResul
 
 // CancelChat 只转发 requestId，不在 bridge 中维护第二份活动请求表。
 func (api *PetAIAPIService) CancelChat(requestID string) error {
+	if runtime := api.getChatRuntime(); runtime != nil {
+		return runtime.CancelChat(requestID)
+	}
 	service, err := api.getService()
 	if err != nil {
 		return err
 	}
 	return service.CancelChat(requestID)
+}
+
+// GetChatHistory 只把历史读取转发给支持该能力的聊天 runtime；旧适配器不实现
+// 这个可选接口时返回结构化依赖错误，不在 API 层伪造一份与 Codex thread 脱节的历史。
+func (api *PetAIAPIService) GetChatHistory(request PetChatHistoryRequest) (PetChatHistoryResult, error) {
+	if runtime := api.getChatRuntime(); runtime != nil {
+		if historyRuntime, ok := runtime.(PetChatHistoryRuntime); ok {
+			return historyRuntime.GetChatHistory(context.Background(), request)
+		}
+		return PetChatHistoryResult{}, newPetAIError(PET_AI_DEPENDENCY_UNAVAILABLE, 0, nil)
+	}
+	return PetChatHistoryResult{}, newPetAIError(PET_AI_DEPENDENCY_UNAVAILABLE, 0, nil)
 }
 
 // GenerateDreamText 转发同步梦境文本请求，网络和 provider 解析仍由核心服务负责。
@@ -103,4 +128,11 @@ func (api *PetAIAPIService) getService() (*PetAIService, error) {
 		return nil, newPetAIError(PET_AI_DEPENDENCY_UNAVAILABLE, 0, nil)
 	}
 	return api.service, nil
+}
+
+func (api *PetAIAPIService) getChatRuntime() PetChatRuntime {
+	if api == nil {
+		return nil
+	}
+	return api.chatRuntime
 }

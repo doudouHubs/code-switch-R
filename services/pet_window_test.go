@@ -311,8 +311,33 @@ func TestPetWindowModesControlMouseAndFocus(t *testing.T) {
 	if driver.releaseFocusCalls != 1 {
 		t.Fatalf("release focus calls = %d", driver.releaseFocusCalls)
 	}
-	if driver.captureFocusCalls != 1 {
-		t.Fatalf("capture focus calls = %d", driver.captureFocusCalls)
+	if driver.captureFocusCalls != 2 {
+		t.Fatalf("capture focus calls = %d, want interactive and keyboard transitions", driver.captureFocusCalls)
+	}
+}
+
+func TestPetWindowPassiveModeStillAppliesClickThroughWhenReleaseFocusFails(t *testing.T) {
+	window, driver := newTestPetWindow(t)
+	if err := window.Open(); err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	if err := window.SetMode(PetWindowKeyboard); err != nil {
+		t.Fatalf("SetMode(keyboard) error = %v", err)
+	}
+
+	driver.releaseFocusErr = errors.New("foreground restore denied")
+	if err := window.SetMode(PetWindowPassive); err != nil {
+		t.Fatalf("SetMode(passive) should keep the click-through state even when focus release fails: %v", err)
+	}
+	if len(driver.ignoreMouseCalls) != 2 || !driver.ignoreMouseCalls[1] {
+		t.Fatalf("passive mode mouse calls = %v, want the final call to enable click-through", driver.ignoreMouseCalls)
+	}
+	state := window.State()
+	if state.Mode != PetWindowPassive || !state.ClickThrough {
+		t.Fatalf("passive mode state = %#v, want passive click-through state", state)
+	}
+	if driver.releaseFocusCalls != 1 {
+		t.Fatalf("release focus calls = %d, want one best-effort release", driver.releaseFocusCalls)
 	}
 }
 

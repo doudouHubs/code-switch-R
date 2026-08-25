@@ -92,3 +92,69 @@
 
 - `go test ./services -run '^TestProvider' -p 1 -count=1 -timeout 120s`：退出码 `1`，仅失败于既有 `TestProvider_ValidateConfiguration/警告-无白名单` 与 `警告-自映射`；当前实现已允许这两类 provider 配置，测试仍保留旧的阻塞式校验预期。本轮未把该无关契约迁移混入宠物改动。
 - 未运行生产构建、bindings 生成和最新 desktop bundle 原生手工验收；原因是当前任务未授权构建，且旧 `F:\下载\CodeSwitch.exe` PID `15224` 仍在运行，bindings 目录存在文件占用风险。
+
+## 2026-08-21 Codex Chat Runtime Verification
+
+- `go test ./services -run 'Test(PetAIAPIWithChatRuntime|PetCodexSession|ParseAndVerify|CodexAppServer|PetCodexRuntime)' -count=1 -timeout 180s`：退出码 `0`，覆盖独立 thread/session、JSONL RPC、流式 delta、usage 合并、resume stale turn、cancel 和 API 接线。
+- `go test ./services -run 'TestPetCodexRuntimeDeduplicatesTurnStartFailureAfterClientExit' -count=10 -timeout 180s`：退出码 `0`；进程在 `turn/start` 返回前退出时，失败事件每次恰好一条且 active/client 均清空。
+- `go test ./services -run '^TestPet' -count=1 -timeout 240s`：退出码 `0`，输出 `ok codeswitch/services`。
+- `frontend\\node_modules\\.bin\\vue-tsc.cmd --noEmit`（工作目录 `frontend`）：退出码 `0`。
+- `gofmt -l services/codex_app_server.go services/codex_app_server_test.go services/pet_codex_runtime.go services/pet_codex_session.go services/pet_ai_api_test.go`：无输出。
+- `git diff --check`：退出码 `0`；仅有既有 LF/CRLF 转换提示。
+- `go test ./services -race -run 'Test(CodexAppServer|PetCodexRuntime)' -count=1`：未执行成功，环境报错 `go: -race requires cgo; enable cgo by setting CGO_ENABLED=1`；进一步确认本机未找到 `gcc`/`clang`，因此该项保留为环境限制。
+- 新增回归 fixture 和测试位于 `services/codex_app_server_test.go`；生产竞态收口位于 `services/pet_codex_runtime.go` 的 `releaseActiveForStartFailure`。
+
+## 2026-08-22 Workspace Binding Repair Verification
+
+- `go test ./services -run 'TestPetProjectWorkspaceResolver|TestPetCodexRuntimeWorkspace|TestPetCodexRuntimeStartsTurnWithProjectIDWorkspace|TestPetAIWorkspaceResolver|TestPetCodexRuntimeUsesCodexDefaultsWithoutModelOverrides' -p 1 -count=1 -timeout 60s`：退出码 `0`。
+- `go test ./services -run '^TestPet' -p 1 -count=1 -timeout 120s`：退出码 `0`，宠物专项回归通过。
+- `npm exec -- vue-tsc --noEmit`（`frontend`）：退出码 `0`。
+- `frontend/src/locales/zh.json` 与 `frontend/src/locales/en.json`：`ConvertFrom-Json` 解析通过。
+- `gofmt -d services/pet_workspace_resolver.go services/pet_workspace_resolver_test.go`：无输出；相关 tracked 文件 `git diff --check` 退出码 `0`。
+- Codex fixture 回归确认 `projectId` 解析出的 `ProjectSummary.Path` 进入 `thread/start`，请求中的伪造 `projectFolder` 未改变保存的 session workspace。
+- 默认配置回归继续确认 `thread/start`、`thread/resume`、`turn/start` 不携带 `model`、`modelProvider`、`model_provider` 或 `effort` 覆盖字段。
+
+## 2026-08-22 Unrelated Baseline Failure
+
+- `go test ./services -p 1 -count=1 -timeout 120s`：退出码 `1`，仅失败于既有 `TestProvider_ValidateConfiguration/警告-无白名单` 与 `警告-自映射`；本次未修改 provider service 或该测试，宠物专项仍独立通过。
+
+## 2026-08-22 Workspace Binding Residual Risk
+
+- 尚未使用最新 desktop bundle 做真实 Wails/Codex 原生聊天验收；当前验证覆盖 resolver、Codex JSONL fixture、前端类型和 locale，不覆盖真实进程读取本机 Codex 配置的端到端运行。
+- 已有 `pet_agent_tools.go` 的 symlink/reparse-point TOCTOU 风险仍保持原记录，本次没有扩大或修复该安全边界。
+
+## 2026-08-24 Codex Chat Timeout Verification
+
+- `go test ./services -run '^TestPetCodexRuntimeCleansUpTurnStartTimeoutAndReinitializes$' -count=3 -v -timeout 180s`：退出码 `0`；3 次均先得到 `PET_AI_TIMEOUT`，随后确认 active/client 清空并用新 client 完成重试。
+- `go test ./services -run 'Test(CodexAppServer|PetCodexRuntime)' -count=3 -timeout 300s`：退出码 `0`，输出 `ok codeswitch/services 37.325s`；覆盖通知先于响应、连续 turn、超时重建、取消先于响应和 client 退出收口。
+- `go test ./services -run '^TestPet' -p 1 -count=1 -timeout 300s`：退出码 `0`，输出 `ok codeswitch/services 29.915s`。
+- `gofmt -d services/pet_codex_runtime.go services/codex_app_server_test.go`：无输出；`git diff --check`：退出码 `0`，仅保留既有 LF/CRLF 转换提示。
+- 诊断确认：`500ms` 测试预算会在 Windows fixture 初始化阶段误报 `PET_AI_DEPENDENCY_UNAVAILABLE`；调整为 `2s` 后，超时分支连续 3 次稳定通过。该调整只作用于测试 fixture，不改变生产 runtime 默认 `30s` RPC 预算。
+
+## 2026-08-24 Uncovered Scope
+
+- 未运行 `go test -race`：当前环境 `CGO_ENABLED=0` 且未找到 `gcc`/`clang`。
+- 未构建或重启最新桌面 bundle；PID `14508` 仍是旧 `CodeSwitch.exe`，不能作为本轮新 runtime 的 Wails/Codex 原生聊天证据。
+
+## 2026-08-24 Codex Default And Focus Follow-up
+
+- `CODE_SWITCH_REAL_CODEX=1 go test ./services -run '^TestPetCodexRuntimeRealLocalConfigSinglePoint$' -count=1 -v -timeout 100s`：退出码 `0`；真实本机 Codex 完成一次 turn，日志为 `modelProvider="code-switch-r"`、`model="gpt-5.6-luna"`、`textBytes=2`，耗时约 `20.43s`。
+- `go test ./services -run '^TestPet' -p 1 -count=1 -timeout 300s`：退出码 `0`，耗时约 `16.13s`。
+- `npm exec -- vue-tsc --noEmit`（工作目录 `frontend`）：退出码 `0`。
+- 两份 locale 使用 `ConvertFrom-Json` 解析通过；`git diff --check` 退出码 `0`，仅有既有 LF/CRLF 转换提示。
+- 静态复核确认 `PetChat` watcher 仅按 `petId` 清空本地消息；`GetChatHistory` 只由设置页 `chat-history` 页签挂载；`thread/start`、`thread/resume`、`turn/start` 不携带模型/provider/effort 覆盖。
+- 修复 `PetWindow.vue` 焦点保护定时器：输入框已聚焦或 IME 组合时直接停止释放定时器，消除每 `16ms` 重排的后台空转；前端类型检查覆盖该修改。
+- 兼容性复核发现并修复 `PetChat` 只接受 `projectId` 的 UI 门禁回归：现在与后端 resolver 一样接受旧 `projectFolder`，`PetChatHistoryPanel` 同步监听该字段；`TestPetProjectWorkspaceResolver` 与 `vue-tsc` 均通过。
+
+## 2026-08-24 Remaining Scope
+
+- 未构建或重启最新桌面 bundle，因此真实 Windows Wails 输入法、退出清理和原生 UI 交互仍未在新资源上完成手工验收。
+- `go test -race` 仍受 `CGO_ENABLED=0` 且缺少 `gcc`/`clang` 限制；不影响已通过的普通并发回归，但保留竞态证据缺口。
+
+## 2026-08-25 Pet Chat Floating Transcript Removal
+
+- `npm exec -- vue-tsc --noEmit`（工作目录 `frontend`）：退出码 `0`。
+- `go test ./services -run '^TestPet' -p 1 -count=1 -timeout 300s`：退出码 `0`，耗时约 `22.575s`。
+- 静态扫描确认 `PetChat.vue` 不再包含 `messagesRef`、`activeAssistantId`、`findMessage`、`scrollMessagesToBottom`、`createMessage`、`.pet-chat__messages`、`.pet-chat__message` 或 `.pet-chat__empty`；设置页 `PetChatHistoryPanel.vue` 仍保留唯一 `GetChatHistory` 调用。
+- 两份 locale 使用 `ConvertFrom-Json` 解析通过；`git diff --check` 退出码 `0`，仅有既有 LF/CRLF 转换提示。
+- 当前未构建或重启最新桌面 bundle，未取得新 Wails 资源上的截图级手工验收证据。
