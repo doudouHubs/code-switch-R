@@ -7,15 +7,24 @@ export type SkillSummary = {
   directory: string
   readme_url: string
   installed: boolean
-  enabled?: boolean
-  inject_enabled?: boolean
+
+  // 新增字段
+  enabled: boolean
+  inject_enabled: boolean
   license_file?: string
-  platform?: 'claude' | 'codex' | ''
-  install_location?: 'user' | 'project' | 'plugin' | ''
+  platform: 'claude' | 'codex' | ''
+  install_location: 'user' | 'project' | 'plugin' | ''
   readonly?: boolean
+
+  // 仓库字段
   repo_owner?: string
   repo_name?: string
   repo_branch?: string
+
+  // Codex plugin 缓存来源字段
+  plugin_source?: string
+  plugin_name?: string
+  plugin_version?: string
 }
 
 export type SkillRepoConfig = {
@@ -30,22 +39,72 @@ export type InstallSkillPayload = {
   repo_owner?: string
   repo_name?: string
   repo_branch?: string
+  platform?: 'claude' | 'codex'
+  location?: 'user' | 'project'
 }
 
+// 获取所有技能列表（原有方法，向后兼容）
 export const fetchSkills = async (): Promise<SkillSummary[]> => {
   const response = await Call.ByName('codeswitch/services.SkillService.ListSkills')
   return (response as SkillSummary[]) ?? []
 }
 
+// 获取指定平台的技能列表（新方法）
+export const fetchSkillsForPlatform = async (platform: 'claude' | 'codex'): Promise<SkillSummary[]> => {
+  const response = await Call.ByName('codeswitch/services.SkillService.ListSkillsForPlatform', platform)
+  return (response as SkillSummary[]) ?? []
+}
+
+// 安装技能（支持 platform 和 location）
 export const installSkill = async (payload: InstallSkillPayload): Promise<void> => {
   await Call.ByName('codeswitch/services.SkillService.InstallSkill', payload)
 }
 
+// 卸载技能（原有方法，向后兼容）
 export const uninstallSkill = async (directory: string): Promise<void> => {
   await Call.ByName('codeswitch/services.SkillService.UninstallSkill', directory)
 }
 
-export const getSkillContent = async (directory: string, platform: string, location: string): Promise<string> => {
+// 卸载技能（支持 platform 和 location）
+export const uninstallSkillEx = async (
+  directory: string,
+  platform: string,
+  location: string
+): Promise<void> => {
+  await Call.ByName('codeswitch/services.SkillService.UninstallSkillEx', directory, platform, location)
+}
+
+// 切换技能启用状态
+export const toggleSkillEnabled = async (
+  directory: string,
+  platform: string,
+  location: string,
+  enabled: boolean
+): Promise<void> => {
+  await Call.ByName('codeswitch/services.SkillService.ToggleSkillEnabled', directory, platform, location, enabled)
+}
+
+export const toggleSkillInjection = async (
+  directory: string,
+  platform: string,
+  location: string,
+  injectEnabled: boolean
+): Promise<void> => {
+  await Call.ByName(
+    'codeswitch/services.SkillService.ToggleSkillInjection',
+    directory,
+    platform,
+    location,
+    injectEnabled
+  )
+}
+
+// 获取技能内容
+export const getSkillContent = async (
+  directory: string,
+  platform: string,
+  location: string
+): Promise<string> => {
   const response = await Call.ByName(
     'codeswitch/services.SkillService.GetSkillContent',
     directory,
@@ -55,6 +114,28 @@ export const getSkillContent = async (directory: string, platform: string, locat
   return response as string
 }
 
+// 保存技能内容
+export const saveSkillContent = async (
+  directory: string,
+  platform: string,
+  location: string,
+  content: string
+): Promise<void> => {
+  await Call.ByName(
+    'codeswitch/services.SkillService.SaveSkillContent',
+    directory,
+    platform,
+    location,
+    content
+  )
+}
+
+// 打开技能文件夹
+export const openSkillFolder = async (platform: string, location: string): Promise<void> => {
+  await Call.ByName('codeswitch/services.SkillService.OpenSkillFolder', platform, location)
+}
+
+// 仓库管理相关方法
 export const fetchSkillRepos = async (): Promise<SkillRepoConfig[]> => {
   const response = await Call.ByName('codeswitch/services.SkillService.ListRepos')
   return (response as SkillRepoConfig[]) ?? []
