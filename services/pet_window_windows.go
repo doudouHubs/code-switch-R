@@ -81,6 +81,8 @@ const (
 	petWindowGWLExStyle       = -20
 	petWindowWSOverlapped     = 0x00cf0000
 	petWindowWSPopup          = 0x80000000
+	petWindowWSExTransparent  = 0x00000020
+	petWindowWSExLayered      = 0x00080000
 	petWindowWSExNoActivate   = 0x08000000
 	petWindowWSExTopmost      = 0x00000008
 	petWindowWMMouseActivate  = 0x0021
@@ -164,6 +166,64 @@ func petWindowEnsureNoActivate(hwnd windows.HWND) error {
 		return fmt.Errorf("SetWindowLongW exstyle did not apply WS_EX_NOACTIVATE")
 	}
 	return nil
+}
+
+// petWindowApplyIgnoreMouseStyle 只改 Wails 使用的点击穿透位，保留 layered、
+// no-activate 等其它窗口约束。它独立成纯函数，避免热路径的位运算规则只能靠
+// 真机窗口才能回归，也防止恢复 interactive 时误删透明窗口所需的 layered 位。
+func petWindowApplyIgnoreMouseStyle(exStyle uint32, ignore bool) uint32 {
+	if ignore {
+		return exStyle | uint32(petWindowWSExLayered|petWindowWSExTransparent)
+	}
+	return exStyle &^ uint32(petWindowWSExTransparent)
+}
+
+func petWindowHasIgnoreMouseStyle(exStyle uint32) bool {
+	return exStyle&uint32(petWindowWSExTransparent) != 0
+}
+
+func petWindowReadExtendedStyle(hwnd windows.HWND) (uint32, error) {
+	if hwnd == 0 {
+		return 0, fmt.Errorf("pet window native handle is unavailable")
+	}
+	exStyle, _, _ := getWindowLongProc.Call(uintptr(hwnd), petWindowExStyleIndex())
+	if exStyle == 0 {
+		return 0, petWindowLastError("GetWindowLongW exstyle")
+	}
+	return uint32(exStyle), nil
+}
+
+// petWindowSetIgnoreMouseEventsNative 绕开 Wails 的 InvokeSync setter。模式切换
+// 是 pointer 事件驱动的高频路径，Wails setter 本身还会把同一次样式写入同步派发
+// 到主线程；直接维护已有 HWND 可以保留原生语义，同时不让菜单打开等待 WebView 队列。
+func petWindowSetIgnoreMouseEventsNative(hwnd windows.HWND, ignore bool) (bool, error) {
+	currentStyle, err := petWindowReadExtendedStyle(hwnd)
+	if err != nil {
+		return false, err
+	}
+	desiredStyle := petWindowApplyIgnoreMouseStyle(currentStyle, ignore)
+	if desiredStyle != currentStyle {
+		setWindowLongProc.Call(
+			uintptr(hwnd),
+			petWindowExStyleIndex(),
+			uintptr(desiredStyle),
+		)
+	}
+
+	// WS_EX_NOACTIVATE 是桌宠 overlay 的安全约束；正常路径只会做一次快速样式
+	// 回读，若第三方 WebView 逻辑改掉它，则在这里立即修复而不是放过一次激活。
+	if err := petWindowEnsureNoActivate(hwnd); err != nil {
+		return false, err
+	}
+	updatedStyle, err := petWindowReadExtendedStyle(hwnd)
+	if err != nil {
+		return false, err
+	}
+	actual := petWindowHasIgnoreMouseStyle(updatedStyle)
+	if actual != ignore {
+		return actual, fmt.Errorf("set ignore mouse events: requested %t, got %t", ignore, actual)
+	}
+	return actual, nil
 }
 
 func petWindowHWND(window application.Window) (windows.HWND, error) {
@@ -724,36 +784,46 @@ func (d *wailsPetWindowDriver) SetIgnoreMouseEvents(ignore bool) error {
 	d.mu.Lock()
 	window := d.window
 	d.mu.Unlock()
-	if window != nil {
-		foregroundBefore := windows.GetForegroundWindow()
-		window.SetIgnoreMouseEvents(ignore)
-		// SetIgnoreMouseEvents 只改透明鼠标样式，但它是 interactive/passive 的
-		// 唯一切换点；每次切换后重新确认 no-activate，防止底层窗口样式被第三方
-		// WebView 逻辑改写后，下一次点击又回到默认激活行为。
-		if err := application.InvokeSyncWithError(func() error {
-			hwnd, err := petWindowHWND(window)
-			if err != nil {
-				return err
-			}
-			return petWindowEnsureNoActivate(hwnd)
-		}); err != nil {
-			return fmt.Errorf("ensure pet window noactivate: %w", err)
-		}
-		// Wails alpha.38 不返回底层错误，只能通过公开状态 getter 验证结果。
-		actual := window.IsIgnoreMouseEvents()
-		foregroundAfter := windows.GetForegroundWindow()
-		WriteRuntimeDiagnostic("pet-native-mouse-mode", fmt.Sprintf(
-			"ignore=%t actual=%t foreground_before=%#x foreground_after=%#x",
-			ignore,
-			actual,
-			uintptr(foregroundBefore),
-			uintptr(foregroundAfter),
-		))
-		if actual != ignore {
-			return fmt.Errorf("set ignore mouse events: requested %t, got %t", ignore, actual)
-		}
-		// pointer tracking 随窗口生命周期存在，不随 IgnoreMouseEvents 开关停止。
+	if window == nil {
+		return nil
 	}
+
+	hwnd, err := petWindowHWND(window)
+	if err != nil {
+		return fmt.Errorf("set ignore mouse events: %w", err)
+	}
+	foregroundBefore := windows.GetForegroundWindow()
+	startedAt := time.Now()
+	WriteRuntimeDiagnostic("pet-native-mouse-mode-start", fmt.Sprintf(
+		"hwnd=%#x ignore=%t foreground_before=%#x",
+		uintptr(hwnd),
+		ignore,
+		uintptr(foregroundBefore),
+	))
+
+	actual, err := petWindowSetIgnoreMouseEventsNative(hwnd, ignore)
+	if err != nil {
+		WriteRuntimeDiagnostic("pet-native-mouse-mode-failed", fmt.Sprintf(
+			"hwnd=%#x ignore=%t duration_ms=%d err=%q",
+			uintptr(hwnd),
+			ignore,
+			time.Since(startedAt).Milliseconds(),
+			err.Error(),
+		))
+		return fmt.Errorf("set ignore mouse events: %w", err)
+	}
+
+	foregroundAfter := windows.GetForegroundWindow()
+	WriteRuntimeDiagnostic("pet-native-mouse-mode", fmt.Sprintf(
+		"hwnd=%#x ignore=%t actual=%t foreground_before=%#x foreground_after=%#x duration_ms=%d",
+		uintptr(hwnd),
+		ignore,
+		actual,
+		uintptr(foregroundBefore),
+		uintptr(foregroundAfter),
+		time.Since(startedAt).Milliseconds(),
+	))
+	// pointer tracking 随窗口生命周期存在，不随 IgnoreMouseEvents 开关停止。
 	return nil
 }
 

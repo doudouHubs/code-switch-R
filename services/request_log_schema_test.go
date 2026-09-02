@@ -44,6 +44,20 @@ func TestEnsureRequestLogTableMigratesImageColumns(t *testing.T) {
 	if columnCount != 4 {
 		t.Fatalf("image log columns = %d, want 4", columnCount)
 	}
+
+	var indexCount int
+	if err := db.QueryRow(`
+		SELECT COUNT(*)
+		FROM sqlite_master
+		WHERE type = 'index'
+		  AND name IN ('idx_request_log_created_at', 'idx_request_log_platform_created_at')
+	`).Scan(&indexCount); err != nil {
+		t.Fatalf("读取 request_log 索引信息失败: %v", err)
+	}
+	if indexCount != 2 {
+		t.Fatalf("request_log query indexes = %d, want 2", indexCount)
+	}
+
 	if _, err := db.Exec(`INSERT INTO request_log (platform, model, provider) VALUES ('codex', 'gpt-5', 'legacy')`); err != nil {
 		t.Fatalf("验证迁移列默认值时插入失败: %v", err)
 	}

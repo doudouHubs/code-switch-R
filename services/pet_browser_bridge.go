@@ -48,6 +48,7 @@ type PetBrowserBridgeDependencies struct {
 	Project     *ProjectManagerService
 	AppSettings *AppSettingsService
 	Scheduler   *PetSchedulerAPI
+	Heartbeat   *PetHeartbeatAPI
 	// Channels 只允许频道页面需要的窄接口进入浏览器 bridge；不能把 Wails
 	// service 反射成通用 RPC，否则本地网页会获得超出页面职责的系统能力。
 	Channels PetBrowserChannelService
@@ -333,6 +334,12 @@ func (b *PetBrowserBridge) dispatch(ctx context.Context, method string, args []j
 			return nil, err
 		}
 		return b.requirePet().GetRuntimeSnapshot(petID)
+	case "codeswitch/services.PetService.GetSettingsSnapshot":
+		var petID string
+		if err := decodePetBrowserArg(args, 0, &petID); err != nil {
+			return nil, err
+		}
+		return b.requirePet().GetSettingsSnapshot(petID)
 	case "codeswitch/services.PetService.GetAtlas":
 		var petID string
 		if err := decodePetBrowserArg(args, 0, &petID); err != nil {
@@ -797,6 +804,38 @@ func (b *PetBrowserBridge) dispatch(ctx context.Context, method string, args []j
 			return nil, err
 		}
 		return nil, b.requireAI().CancelChat(requestID)
+	case "codeswitch/services.PetAIAPIService.GetChatHistory":
+		var input PetChatHistoryRequest
+		if err := decodePetBrowserArg(args, 0, &input); err != nil {
+			return nil, err
+		}
+		// 历史读取必须复用 API 层的 Codex runtime 委托，避免浏览器 bridge
+		// 自己访问 session 或 thread，导致 Wails 与浏览器两条链路行为不一致。
+		return b.requireAI().getChatHistory(ctx, input)
+	case "codeswitch/services.PetAIAPIService.ListSkills":
+		var input AgentCommandRequest
+		if err := decodePetBrowserArg(args, 0, &input); err != nil {
+			return nil, err
+		}
+		return b.requireAI().listSkills(ctx, input)
+	case "codeswitch/services.PetAIAPIService.ListModels":
+		var input AgentCommandRequest
+		if err := decodePetBrowserArg(args, 0, &input); err != nil {
+			return nil, err
+		}
+		return b.requireAI().listModels(ctx, input)
+	case "codeswitch/services.PetAIAPIService.ExecuteCommand":
+		var input AgentCommandRequest
+		if err := decodePetBrowserArg(args, 0, &input); err != nil {
+			return nil, err
+		}
+		return b.requireAI().executeCommand(ctx, input)
+	case "codeswitch/services.PetAIAPIService.ResolveInteraction":
+		var input ResolveInteractionRequest
+		if err := decodePetBrowserArg(args, 0, &input); err != nil {
+			return nil, err
+		}
+		return nil, b.requireAI().resolveInteraction(ctx, input)
 	case "codeswitch/services.PetAIAPIService.StartChat":
 		var input PetChatRequest
 		if err := decodePetBrowserArg(args, 0, &input); err != nil {
@@ -827,6 +866,18 @@ func (b *PetBrowserBridge) dispatch(ctx context.Context, method string, args []j
 			return nil, err
 		}
 		return b.requireScheduler().ValidatePlan(ctx, input)
+	case "codeswitch/services.PetHeartbeatAPI.GetSnapshot":
+		return b.requireHeartbeat().GetSnapshot()
+	case "codeswitch/services.PetHeartbeatAPI.SaveConfig":
+		var input PetHeartbeatConfig
+		if err := decodePetBrowserArg(args, 0, &input); err != nil {
+			return nil, err
+		}
+		return b.requireHeartbeat().SaveConfig(input)
+	case "codeswitch/services.PetHeartbeatAPI.RunNow":
+		return b.requireHeartbeat().RunNow()
+	case "codeswitch/services.PetHeartbeatAPI.Cancel":
+		return b.requireHeartbeat().Cancel()
 	default:
 		return nil, fmt.Errorf("浏览器 bridge 不允许调用 %q", method)
 	}
@@ -1079,6 +1130,13 @@ func (b *PetBrowserBridge) requireScheduler() *PetSchedulerAPI {
 		return &PetSchedulerAPI{}
 	}
 	return b.deps.Scheduler
+}
+
+func (b *PetBrowserBridge) requireHeartbeat() *PetHeartbeatAPI {
+	if b == nil || b.deps.Heartbeat == nil {
+		return NewPetHeartbeatAPI(nil)
+	}
+	return b.deps.Heartbeat
 }
 
 func (b *PetBrowserBridge) requireEvents() *PetBrowserEventHub {

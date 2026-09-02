@@ -60,6 +60,27 @@ export interface SessionConversationDetail {
   items: SessionConversationItem[];
 }
 
+export type SessionDeletionRange =
+  | "all"
+  | "one_week"
+  | "three_weeks"
+  | "one_month";
+
+export interface SessionConversationPruneResult {
+  session_id: string;
+  deleted_turns: number;
+  deleted_items: number;
+  error?: string;
+}
+
+export interface SessionConversationBatchPruneResult {
+  range_key: Exclude<SessionDeletionRange, "all">;
+  cutoff_at: number;
+  results: SessionConversationPruneResult[];
+  total_deleted_turns: number;
+  total_deleted_items: number;
+}
+
 export interface ProjectSessionSearchResult {
   session_id: string;
   matched_content: string;
@@ -285,6 +306,18 @@ export const pruneSessionConversation = async (
     messageIDs,
   );
   return result as SessionConversationDetail;
+};
+
+export const pruneSessionConversationsByRange = async (
+  sessionIDs: string[],
+  rangeKey: Exclude<SessionDeletionRange, "all">,
+): Promise<SessionConversationBatchPruneResult> => {
+  const result = await Call.ByName(
+    `${PROJECT_MANAGER_SERVICE}.PruneSessionConversationsByRange`,
+    sessionIDs,
+    rangeKey,
+  );
+  return result as SessionConversationBatchPruneResult;
 };
 
 export const forkSessionConversation = async (

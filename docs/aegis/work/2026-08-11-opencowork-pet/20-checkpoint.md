@@ -31,6 +31,7 @@
 - [completed] 设置页 Stats/Skins parity 追补：Stats 区块改为 `16px / 8px`，汇总卡片使用左图标和右侧上下两行，皮肤缩略图固定 `48px`，路径和元数据允许换行，移动端去除固定左缩进。
 - [completed] 后端 reasoning 能力字段已重新生成 Wails TypeScript bindings；旧 `CodeSwitch.exe` 进程 PID `19732`、`20640` 全程保留。
 - [completed] 浏览器 bridge 隔离验证收口：`browserBridge.ts` 支持 hash 路由的 `petBridge` loopback 覆盖，最新副本 `18202/18203` 可读取真实 SQLite 并渲染设置页；未触碰旧进程。
+- [completed] Agent 管家 Codex 能力闭环：交互 pending/resolve、Skill/Model 查询、review/compact/steer/interrupt 控制、API 转发和同项目并发共享 thread 测试均已收口。
 
 ## Baseline
 
@@ -217,3 +218,77 @@
 ## Resume State Hint
 
 继续时保留当前未提交工作树；不要把 `PetChat` 的消息列表恢复为长会话展示，完整历史唯一入口是宠物设置页，实时回复唯一展示出口是 `PetWindow` 宠物气泡。
+
+## 2026-08-25 Agent Manager Entry Slice
+
+- [completed] 新增 `/agent` 独立页面和左侧“Agent管家”菜单入口，固定复用 `DEFAULT_PET_ID`，不新增宠物选择器。
+- [completed] 将 transcript、历史刷新、实时乐观消息和 `PetChat` composer 收口到独立页面；宠物设置页移除旧 `chat-history` 页签，历史 API、Codex session 和持久化数据未改动。
+- [completed] 页面在快照读取失败时展示错误和重试；根节点使用普通容器，避免嵌套应用壳层的 `<main>` landmark 和重复区域标签，并在 keep-alive 重新激活时刷新快照。
+- [completed] `vue-tsc`、locale JSON 解析、目标 diff 检查和 Chrome 页面/焦点检查通过；`/agent` 菜单 active，聊天输入填入中文等待后仍保持焦点。
+- [needs-verification] 浏览器 bridge 拒绝 `GetChatHistory`、`StartChat` 等真实 Wails 调用，最新 Windows desktop bundle 的历史读取、Codex 回复、取消和完成后回填仍需原生验收。
+
+## Resume State Hint
+
+继续时保留 Agent 管家作为聊天历史唯一入口；不要恢复宠物设置页的 `chat-history` tab，也不要复制第二套聊天状态机。原生验收只使用最新 desktop bundle，确认真实 Codex 默认配置下的历史加载、发送、流式回复、取消和刷新回填。
+
+## 2026-08-25 Pet Chat History Transcript And Composer
+
+- [completed] 设置页聊天历史改为左右气泡 transcript，用户消息靠右、宠物消息靠左，并保留时间、状态和图片展示。
+- [completed] 历史页复用 `PetChat` composer，支持文本、图片、录音、发送、取消、失败重试，并通过统一生命周期事件同步乐观消息和流式回复。
+- [completed] 历史读取、刷新、自动滚动、“回到最新消息”和响应式窄屏布局已接入；刷新失败保留已有 transcript，不覆盖正在发送的乐观消息。
+- [completed] `vue-tsc`、历史解析定向测试、完整 `^TestPet` 专项和页面级桌面/窄屏检查均通过。
+- [needs-verification] 浏览器 bridge 禁止 `GetChatHistory` 和 `StartChat` 等 Wails 宿主调用，因此浏览器只能证明布局和输入焦点，真实 Windows Wails/Codex 发送链路仍需最新桌面 bundle 验收。
+
+## Resume State Hint
+
+继续时保持历史页唯一展示完整 transcript 的边界；不要把消息列表重新放回浮窗 `PetChat`。若做原生验收，应启动最新 desktop bundle，验证历史读取、发送后的乐观消息、流式回复、取消和刷新回填。
+
+## 2026-08-25 Pet Window Menu Responsiveness Slice
+
+- [completed] 前端窗口模式桥改为单飞同步；同一时间只保留一个原生调用，完成后只收敛到最新目标，避免 pointer 事件堆积旧 Promise。
+- [completed] `PetWindow.SetMode` 仅在点击穿透位发生变化时调用 driver；`interactive` 与 `keyboard` 之间只处理焦点，不重复写相同的原生样式。
+- [completed] Windows 驱动直接维护已有 HWND 的 `WS_EX_TRANSPARENT`/`WS_EX_LAYERED`，保留并校验 `WS_EX_NOACTIVATE`，新增模式切换起止和耗时诊断。
+- [completed] 状态机回归、Windows 样式位回归、前端类型检查和格式检查均通过。
+- [needs-verification] 尚未用最新 desktop bundle 做真实 Windows 菜单连续开关测量；旧 bundle 不能证明本次 native 热路径已生效。
+
+## Resume State Hint
+
+继续时保留当前未提交工作树；原生验收只使用重新生成的 desktop bundle，查看 `codeswitch-runtime-debug.log` 中 `pet-native-mouse-mode-start` 与 `pet-native-mouse-mode` 的 `duration_ms`，不要把旧进程日志当成本次修复证据。
+
+## 2026-08-27 Foreground Diagnostic Retirement
+
+- 已从 GUI 启动链移除 `StartRuntimeForegroundMonitor` 和 `StartRuntimeForegroundEventMonitor`；不再创建 Win32 前台窗口轮询或 `EVENT_SYSTEM_FOREGROUND` 监听。
+- 已删除 `services/runtime_foreground_windows.go` 与 `services/runtime_foreground_other.go`。`runtime_diagnostic.go` 保留给 Codex Hook、宠物运行时和窗口操作的其他诊断事件使用。
+- 既有 `codeswitch-runtime-debug.log` 作为历史证据保留，不做用户数据清理；新版本不再追加 `foreground-monitor-*` 或 `foreground-window-*` 事件。
+- 当前运行中的旧进程不受本次源码删除影响，需由用户手动重建并启动新版本后观察 CPU；本次未终止或重启任何进程。
+
+## 2026-08-27 Pet Heartbeat Slice
+
+- [completed] 新增默认关闭的独立 `/pet/heartbeat` 菜单和页面，可配置 `1-1440` 分钟频率、心跳提示词和启用开关，并通过现有 Wails/loopback bridge 暴露窄 API；首次启动不会创建 timer 或提交 Agent 任务。
+- [completed] 心跳 worker 通过 `PetAIAPIService -> PetCodexRuntime` 复用当前宠物 Agent thread；提示词支持 `{{name}}`、`{{status}}`、`{{project}}`，不复制 provider、workspace 或凭据。
+- [completed] timer 只在 AI `completed/failed/cancelled` 终态后重新创建；人工聊天冲突进入 `waiting_for_idle`，不会消耗周期；应用退出将活动任务标记为 `interrupted` 并取消请求。
+- [completed] `pet_heartbeat` SQLite 分区、状态恢复、启停/立即执行/取消和 stale terminal 防护均有定向回归测试。
+- [needs-verification] 当前环境 `CGO_ENABLED=0` 且无 `gcc`/`clang`，`go test -race` 无法执行；最新 Windows desktop bundle 尚未重启，真实 Wails/Codex 心跳仍需手工验收。
+
+## 2026-09-01 Agent Manager Codex Capability Slice
+
+- [completed] `CodexAppServerClient` 新增异步 server-request observer/pending map；外部可通过原始 JSON-RPC id 回传 result/error。
+- [completed] pending server-request 在 app-server 进程退出、client `Close` 和 server-request context 取消时释放；旧同步 `ServerRequestHandler` 继续作为兼容路径，动态工具不会被 UI pending 阻塞。
+- [completed] app-server JSONL fixture 已覆盖异步 observer 收到审批请求、`acceptForSession` 回传和原始 RPC 继续完成。
+- [completed] `PetCodexRuntime` 交互请求、Skill/Model 查询和 Codex 控制命令已落地，并完成 API、Hub 和 JSONL fixture 回归。
+
+## Resume State Hint
+
+继续时保留当前未提交工作树；不要回退频道、Provider、PetChat 历史和心跳改动。第 2 步只扩展 `PetAIEvent`/`PetChatRequest` 与 `PetCodexRuntime`，先完成交互 pending 和命令协议，再接 API/前端；不要把模型/provider/权限覆盖重新注入 `thread/start` 或 `turn/start`。
+
+## 2026-09-01 Agent Manager Codex Capability Completion
+
+- [completed] `PetCodexRuntime` 已接入 approval、permission、user input、MCP form 的 pending interaction 展示与单次 resolve；重复 resolve、client 退出和关闭路径均有终态收口。
+- [completed] `skills/list`、`model/list`、`thread/compact/start`、`turn/steer`、`turn/interrupt` 和 inline `review/start` 已通过同一项目 runtime 暴露；聊天 model/可选 effort 读取持久化宠物 Agent 配置，provider、权限和 sandbox 等仍不由入口覆盖。
+- [completed] `AgentConversationHub` 继续作为 Agent 管家和频道的唯一会话 owner；普通 turn 按项目 FIFO，控制命令保持即时控制，完成文本通过公共事件出口广播。
+- [completed] JSONL fixture、PetAI API stub 和同项目并发测试已覆盖能力查询、控制命令、四类交互、review 终态、队列和单进程/thread 复用。
+- [needs-verification] 最新 Windows bundle 的真实 Wails/Codex 原生交互仍需用户手工验收；`go test -race` 继续受当前环境 `CGO_ENABLED=0` 且缺少 `gcc`/`clang` 限制。
+
+## Resume State Hint
+
+保留当前未提交工作树；原生验收使用最新 desktop bundle，确认 Agent 管家和聊天频道在真实 Codex 默认配置下共用历史、Skill、控制命令及审批交互。不要恢复浮窗 transcript，也不要为频道创建第二个 Codex runtime。

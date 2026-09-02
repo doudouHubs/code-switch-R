@@ -158,3 +158,124 @@
 - 静态扫描确认 `PetChat.vue` 不再包含 `messagesRef`、`activeAssistantId`、`findMessage`、`scrollMessagesToBottom`、`createMessage`、`.pet-chat__messages`、`.pet-chat__message` 或 `.pet-chat__empty`；设置页 `PetChatHistoryPanel.vue` 仍保留唯一 `GetChatHistory` 调用。
 - 两份 locale 使用 `ConvertFrom-Json` 解析通过；`git diff --check` 退出码 `0`，仅有既有 LF/CRLF 转换提示。
 - 当前未构建或重启最新桌面 bundle，未取得新 Wails 资源上的截图级手工验收证据。
+
+## 2026-08-25 Agent Manager Entry Verification
+
+### Verified
+
+- `npm exec -- vue-tsc --noEmit`（工作目录 `frontend`）：退出码 `0`。
+- `frontend/src/locales/zh.json` 与 `frontend/src/locales/en.json`：PowerShell `ConvertFrom-Json` 解析通过。
+- `git diff --check`：退出码 `0`；仅有 Git 关于工作区 LF/CRLF 转换的提示。
+- Chrome `http://127.0.0.1:5174/#/agent` DOM 检查确认左侧“Agent管家”、`Agent管家` transcript、`聊天消息` log、`宠物聊天` composer 和 `聊天输入` textbox 均存在；菜单按钮 class 为 `nav-item active`。
+- Chrome 页面截图确认 Agent 管家独立页面的左右气泡区域、刷新按钮、底部输入控件和响应式壳层已渲染。
+- Chrome `http://127.0.0.1:5174/#/pet/settings` DOM 检查确认设置页只保留总览、属性、形象工坊、我的宠物、记忆、Agent、睡眠和历史梦境，没有 `chat-history` 页签。
+- Chrome 在 `/agent` 输入框填入中文后等待 `1200ms`，值保持不变且 `document.activeElement` 仍为输入框；未发送测试消息。
+
+### Uncovered / Residual Risk
+
+- 浏览器 bridge 明确拒绝 `codeswitch/services.PetAIAPIService.GetChatHistory` 与 `StartChat`，所以本轮只能证明页面结构、错误重试态和输入焦点，不能证明真实历史数据和 Codex 回复。
+- 最新 Windows desktop bundle 尚未重启；真实 Wails 历史读取、长会话发送、流式回填、取消和完成后的历史刷新仍需原生手工验收。
+
+### Next Gate
+
+- 使用最新 desktop bundle 打开左侧“Agent管家”，验证已有 Codex thread 的历史读取和发送闭环；不要把浏览器 bridge 的拒绝误判为 Codex runtime 故障。
+
+## 2026-08-25 Pet Chat History Transcript And Composer
+
+### Verified
+
+- Chrome `http://127.0.0.1:5174/#/pet/settings` 桌面视口截图确认聊天历史页渲染为独立 transcript 区域，底部挂载图片、语音、文本输入和发送控件。
+- Chrome `390x844` 窄屏视口截图确认历史页使用移动端纵向状态布局；聊天输入填入中文后等待 `350ms`，textarea 仍保持焦点，随后已清理测试文本，未发送测试消息。
+- 页面 DOM snapshot 确认 `聊天历史` 页签、`聊天消息` log、`宠物聊天` region、`聊天输入` textbox、`选择图片`、`添加图片` 和 `语音输入` 均存在。
+- Vite 会话只产生 PetChatHistoryPanel 的 HMR 更新，没有编译错误输出。
+- `npm exec -- vue-tsc --noEmit`（工作目录 `frontend`）：退出码 `0`。
+- `go test ./services -run 'Test(ParsePetCodexHistory|PetCodexHistory)' -p 1 -count=1 -timeout 120s`：退出码 `0`。
+- `go test ./services -run '^TestPet' -p 1 -count=1 -timeout 300s`：退出码 `0`，输出 `ok codeswitch/services 23.316s`。
+- `git diff --check`：退出码 `0`；仅有既有 LF/CRLF 转换提示。
+- `frontend/src/locales/zh.json` 与 `frontend/src/locales/en.json`：PowerShell `ConvertFrom-Json` 解析通过。
+
+### Uncovered / Residual Risk
+
+- 浏览器 bridge 明确拒绝 `codeswitch/services.PetAIAPIService.GetChatHistory`，因此浏览器页面显示可重试空态，不能作为真实历史数据读取成功证据。
+- 浏览器环境也不允许完整 Wails `StartChat`，本轮未发送测试消息，未把本地验证误报成真实 Codex 流式成功。
+- 最新 Windows desktop bundle 尚未重启；真实 Wails 历史读取、乐观消息、流式回复、取消和 thread 刷新回填仍需原生手工验收。
+
+### Next Gate
+
+- 使用最新 desktop bundle 验证真实 Codex thread 的历史读取与发送闭环；浏览器截图只作为页面结构和响应式证据。
+
+## 2026-08-25 Pet Window Menu Responsiveness Verification
+
+### Verified
+
+- `go test ./services -run '^TestPetWindow' -count=1 -timeout 120s`：退出码 `0`，覆盖窗口状态机、模式切换和焦点回滚。
+- `go test ./services -run '^TestPetWindowApplyIgnoreMouseStyle' -count=1 -timeout 120s`：退出码 `0`，覆盖 `WS_EX_TRANSPARENT` 切换、`WS_EX_LAYERED`/`WS_EX_NOACTIVATE` 保留和幂等位运算。
+- `go test ./services -run '^(TestPetWindow|TestPetWindowAPI)' -count=3 -timeout 180s`：退出码 `0`，连续 3 次通过。
+- `npm exec -- vue-tsc --noEmit`（工作目录 `frontend`）：退出码 `0`。
+- `gofmt -d services/pet_window.go services/pet_window_windows.go services/pet_window_test.go services/pet_window_windows_test.go`：无输出；`git diff --check` 退出码 `0`，仅有既有 LF/CRLF 转换提示。
+- 静态复核确认 Windows `SetIgnoreMouseEvents` 不再调用 Wails `SetIgnoreMouseEvents`、`IsIgnoreMouseEvents` 或模式切换专用 `InvokeSync`；显示、平台监视和焦点恢复路径仍保留原有线程边界。
+
+### Root Cause Evidence
+
+- Wails alpha.38 的 `SetIgnoreMouseEvents` 自身通过 `InvokeSync` 写样式，旧驱动随后又执行一次 `InvokeSyncWithError` 和一次 `IsIgnoreMouseEvents` 的 `InvokeSyncWithResult`；pointer 事件串行排队时会把三段同步主线程等待叠加到菜单交互上。
+- 旧 `windowModeQueue` 会保留每次请求的 Promise 链；菜单和全屏 pointer 观测产生的过期目标会依次进入原生桥，即使最终只需要 passive，也要先等待中间状态完成。
+- 新日志边界为 `pet-native-mouse-mode-start`、`pet-native-mouse-mode-failed` 和 `pet-native-mouse-mode`，完成日志包含 `duration_ms`、目标/实际穿透状态和前台 HWND。
+
+### Uncovered / Residual Risk
+
+- 尚未重启最新 desktop bundle 做真实 Windows 菜单连续开关和前台窗口手工测量；当前证据证明代码路径、状态机和样式规则，但不替代原生 UI 体验证据。
+- `go test -race` 仍受当前环境 `CGO_ENABLED=0` 且缺少 `gcc`/`clang` 限制；本次未把该环境问题误判为功能失败。
+
+### Next Gate
+
+- 使用最新 desktop bundle 连续打开/关闭右下角菜单，确认菜单响应不再等待约秒级延迟，并回读新日志的 `duration_ms`；若仍慢，再按 start/complete 间隔区分 native 调用慢还是 Wails/renderer 调度慢。
+
+## 2026-08-27 Foreground Diagnostic Retirement
+
+- 根据性能排查结果，已移除 GUI 默认启动的前台窗口诊断轮询和 Win32 前台事件监听；这两条路径原本只用于定位历史焦点闪烁问题，不属于宠物或 Agent 业务功能。
+- 代码退役范围为 `main.go` 的两个启动入口及 `services/runtime_foreground_windows.go`、`services/runtime_foreground_other.go`；其他依赖 `WriteRuntimeDiagnostic` 的 Codex、宠物和窗口诊断保持不变。
+- 已有运行日志不删除、不重写；新版本验收标准是日志不再产生 `foreground-monitor-*`、`foreground-window-*`，并由用户手动重建后观察 CodeSwitch CPU。
+
+## 2026-08-27 Pet Heartbeat Verification
+
+### Verified
+
+- `go test ./services -run 'PetHeartbeat' -count=1 -timeout 180s`：通过。
+- `go test ./services -run 'PetHeartbeat' -count=10 -timeout 240s`：通过，连续 10 次覆盖 timer、终态推进、人工聊天冲突、单次执行、取消、恢复和 workspace 门禁。
+- `TestPetHeartbeatDefaultsToDisabled`：通过，首次启动默认关闭，不创建 timer，也不提交 Agent 任务。
+- `go test ./services -run 'PetHeartbeat|PetBrowserBridge' -count=1 -timeout 180s`：通过，覆盖心跳 API 的 bridge 白名单相邻回归。
+- `npm exec -- vue-tsc --noEmit`（工作目录 `frontend`）：通过；已移除未使用的心跳类型导入和状态函数。
+- `frontend/src/locales/zh.json`、`frontend/src/locales/en.json`：`ConvertFrom-Json` 解析通过。
+- `gofmt -d services/pet_heartbeat.go services/pet_heartbeat_api.go services/pet_ai_completion_broker.go services/pet_heartbeat_test.go services/pet_browser_bridge.go services/pet_dao.go`：无输出。
+- `git diff --check`：退出码 `0`；仅有既有 LF/CRLF 转换提示，没有 whitespace error。
+- 静态接线复核确认 `main.go` 注册并启动 `PetHeartbeatAPI`，终态事件先进入 `PetAICompletionBroker`，配置/运行态写入 `pet_heartbeat`，关闭阶段调用 `PetHeartbeatService.Close`。
+
+### Uncovered / Residual Risk
+
+- `go test -race ./services -run 'PetHeartbeat' -count=1` 未执行成功：环境报错 `go: -race requires cgo; enable cgo by setting CGO_ENABLED=1`，且当前未找到 `gcc`/`clang`。
+- 尚未构建或重启最新 Windows desktop bundle；真实 Codex provider、原生 Wails 事件时序、长任务完成后下一轮心跳和应用退出取消仍需手工验收。
+- 浏览器 bridge 只能证明页面 RPC/事件接线，不能替代桌面宿主中的真实 Agent 管家调用。
+
+### Next Gate
+
+- 使用最新 desktop bundle 打开“宠物心跳”，先绑定有效项目，保存提示词和频率后观察一次 `RunNow` 或完整周期；确认任务终态后才出现下一次倒计时，并验证人工聊天占用时显示等待空闲。
+
+## 2026-09-01 Agent Manager Codex Capability Verification
+
+### Verified
+
+- `go test ./services -run '^TestAgentConversationHubSharesConcurrentProjectRequestsAndThread$' -count=1 -v`：通过；首轮建立同一 `client/thread/turn` 后取消，第二轮收到 `delta + completed`，Codex 子进程数保持 `1`。
+- `go test ./services -run 'Test(CodexAppServer|PetCodex|AgentConversation|PetAI|PetBrowserBridge)' -count=1 -timeout 180s`：通过，退出码 `0`，覆盖 Codex app-server、宠物 runtime、Agent Hub、PetAI API 和浏览器 bridge。
+- `go test ./services -run '^(TestPetAIAPI|TestAgentConversationHub|TestPetCodexRuntime|TestCodexAppServer)' -count=1 -timeout 180s`：通过，退出码 `0`；新增 API 命令转发回归和四类 pending interaction resolve 均通过。
+- `services/codex_app_server_test.go` 的 `pet-shared-concurrent` fixture 已补齐第二轮 `item/agentMessage/delta` 与 `turn/completed`；测试等待首轮 active turn 建立后再验证队列取消，避免把启动期取消误当成共享 thread 失败。
+- `AgentConversationHub` 的 review 任务进入项目 FIFO；`compact/steer/interrupt` 保持对当前 thread/turn 的直接控制，普通聊天和频道完成事件仍从同一 Hub 出口发出。
+
+### Root Cause And Repair
+
+- 原并发测试只等待公共 `started` 事件就取消第一轮，实际 runtime 仍在 `initialize`，取消后按生命周期契约关闭首个 app-server；同时 fixture 第二轮没有发完成通知，因此测试同时混入了错误前置条件和不完整模拟。
+- 修复边界限定在测试 fixture 和测试同步点，没有为生产 runtime 增加重试、fallback 或第二个 session owner；生产复用路径由首轮已建立的 `client/thread` 直接证明。
+
+### Uncovered / Residual Risk
+
+- 最新 Windows desktop bundle 尚未重启，真实 Wails/Codex 默认配置下的 Agent 管家历史、Skill、审批交互和频道转发仍需原生手工验收。
+- `go test -race` 仍无法执行：当前环境 `CGO_ENABLED=0`，且未找到 `gcc`/`clang`；普通并发 fixture 已通过，但未取得 race detector 证据。

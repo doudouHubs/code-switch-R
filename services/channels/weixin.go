@@ -18,12 +18,12 @@ import (
 type weixinProvider struct {
 	*relayProvider
 	baseURL, cdnBaseURL, routeTag, token, accountID, uin string
-	client                                             *http.Client
-	cancel                                             context.CancelFunc
-	wg                                                 sync.WaitGroup
-	syncBuf                                            string
-	contextTokens                                      map[string]string
-	messageTokens                                      map[string]string
+	client                                               *http.Client
+	cancel                                               context.CancelFunc
+	wg                                                   sync.WaitGroup
+	syncBuf                                              string
+	contextTokens                                        map[string]string
+	messageTokens                                        map[string]string
 }
 
 func newWeixinProvider(instance ChannelInstance, notify EventSink) (ChannelProvider, error) {
@@ -114,6 +114,10 @@ func (p *weixinProvider) handleWeixinMessage(ctx context.Context, value map[stri
 	content := ""
 	kind := "text"
 	var media *ChannelMedia
+	external := firstString(value, "message_id", "client_id")
+	if external == "" {
+		external = fmt.Sprintf("%s-%d", user, nowMillis())
+	}
 	for _, rawItem := range items {
 		item, _ := rawItem.(map[string]any)
 		typ := int(firstNumber(item, "type"))
@@ -134,12 +138,19 @@ func (p *weixinProvider) handleWeixinMessage(ctx context.Context, value map[stri
 			kind = "image"
 			content = "[User sent an image]"
 			if nested, ok := item["image_item"].(map[string]any); ok {
-				fileID := firstString(nested, "file_id")
-				if fileID != "" {
-					if data, mediaType, err := p.downloadImage(ctx, firstString(value, "message_id", "client_id"), nested); err == nil {
-						media = &ChannelMedia{Kind: "image", MediaType: mediaType, Data: data, FileName: firstString(nested, "file_name")}
-					}
+				data, mediaType, err := p.downloadInboundImage(ctx, external, nested)
+				if err != nil {
+					// 图片下载失败不能静默吞掉，否则上游只能看到占位文本，无法区分
+					// “模型不支持图片”和“频道没有把图片下载下来”这两类问题。
+					ref := weixinImageReference(nested)
+					content = fmt.Sprintf("[User sent an image but download failed: %s]", ref)
+					p.emit("error", fmt.Sprintf("Weixin inbound image download failed (%s): %v", ref, err))
+				} else {
+					media = &ChannelMedia{Kind: "image", MediaType: mediaType, Data: data, FileName: firstString(nested, "file_name")}
 				}
+			} else {
+				content = "[User sent an image but download failed: missing image_item]"
+				p.emit("error", "Weixin inbound image download failed: missing image_item")
 			}
 		case 4:
 			kind = "file"
@@ -148,10 +159,6 @@ func (p *weixinProvider) handleWeixinMessage(ctx context.Context, value map[stri
 	}
 	if content == "" {
 		return
-	}
-	external := firstString(value, "message_id", "client_id")
-	if external == "" {
-		external = fmt.Sprintf("%s-%d", user, nowMillis())
 	}
 	contextToken := firstString(value, "context_token")
 	if contextToken != "" {
@@ -174,26 +181,6 @@ func (p *weixinProvider) handleWeixinMessage(ctx context.Context, value map[stri
 	}
 	p.emit("incoming_message", message)
 }
-func (p *weixinProvider) downloadImage(ctx context.Context, messageID string, item map[string]any) ([]byte, string, error) {
-	body := map[string]any{"message_id": messageID, "file_id": firstString(item, "file_id"), "aes_key": firstString(item, "aes_key", "aeskey"), "md5sum": firstString(item, "md5sum"), "file_name": firstString(item, "file_name")}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/ilink/bot/downloadmessageimage", mustReader(body))
-	if err != nil {
-		return nil, "", err
-	}
-	for key, value := range p.headers() {
-		request.Header.Set(key, value)
-	}
-	response, err := p.client.Do(request)
-	if err != nil {
-		return nil, "", err
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, "", fmt.Errorf("Weixin image download failed: %s", response.Status)
-	}
-	data, err := ioReadLimit(response.Body, channelMaxHTTPBody)
-	return data, response.Header.Get("Content-Type"), err
-}
 func (p *weixinProvider) Stop(ctx context.Context) error {
 	if p.cancel != nil {
 		p.cancel()
@@ -208,6 +195,36 @@ func (p *weixinProvider) contextToken(chatID string) string {
 	defer p.mu.RUnlock()
 	return p.contextTokens[chatID]
 }
+
+func (p *weixinProvider) RestoreMessageContext(message ChannelMessage) {
+	if p == nil || strings.TrimSpace(message.ChatID) == "" || strings.TrimSpace(message.Raw) == "" {
+		return
+	}
+	var value map[string]any
+	if err := json.Unmarshal([]byte(message.Raw), &value); err != nil {
+		return
+	}
+	contextToken := firstString(value, "context_token", "contextToken")
+	if contextToken == "" {
+		return
+	}
+	chatID := strings.TrimSpace(message.ChatID)
+	externalID := strings.TrimSpace(message.ExternalID)
+	p.mu.Lock()
+	if p.contextTokens == nil {
+		p.contextTokens = make(map[string]string)
+	}
+	if p.messageTokens == nil {
+		p.messageTokens = make(map[string]string)
+	}
+	p.contextTokens[chatID] = contextToken
+	if externalID != "" {
+		p.messageTokens[externalID] = contextToken
+		p.messageChats[externalID] = chatID
+	}
+	p.mu.Unlock()
+}
+
 func (p *weixinProvider) SendMessage(ctx context.Context, chatID, content string) (string, error) {
 	if p.wsURL != "" {
 		return p.relaySend(ctx, "send_message", chatID, content, ChannelMedia{})
@@ -261,5 +278,12 @@ func mustReader(value any) *bytes.Reader {
 	return bytes.NewReader(data)
 }
 func ioReadLimit(reader io.Reader, limit int64) ([]byte, error) {
-	return io.ReadAll(io.LimitReader(reader, limit+1))
+	data, err := io.ReadAll(io.LimitReader(reader, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("Weixin media response exceeds %d bytes", limit)
+	}
+	return data, nil
 }

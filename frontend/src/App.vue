@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { RouterView, useRoute, useRouter } from 'vue-router'
-import { computed, onBeforeUnmount, onMounted } from 'vue'
+import { RouterView, useRouter } from 'vue-router'
+import { onBeforeUnmount, onMounted } from 'vue'
 import Sidebar from './components/Sidebar.vue'
 import UpdateNotification from './components/common/UpdateNotification.vue'
 import { Call, Events } from './wails-runtime-compat'
@@ -23,9 +23,7 @@ onMounted(() => {
   })
 })
 
-const route = useRoute()
 const router = useRouter()
-const isTray = computed(() => route.path === '/tray')
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -53,18 +51,15 @@ onBeforeUnmount(() => stopPetSettingsRequest())
 </script>
 
 <template>
-  <div v-if="isTray" class="tray-layout">
-    <RouterView v-slot="{ Component }">
-      <component :is="Component" />
-    </RouterView>
-  </div>
-  <div v-else class="app-layout">
+  <div class="app-layout">
     <Sidebar />
     <main class="main-content">
-      <RouterView v-slot="{ Component }">
-        <keep-alive>
+      <RouterView v-slot="{ Component, route: viewRoute }">
+        <keep-alive v-if="viewRoute.meta.keepAlive === true">
           <component :is="Component" />
         </keep-alive>
+        <!-- 非长会话页面离开即卸载，避免隐藏页面继续执行定时器和事件回调。 -->
+        <component v-else :is="Component" />
       </RouterView>
     </main>
     <!-- 全局更新通知 -->
@@ -73,21 +68,20 @@ onBeforeUnmount(() => stopPetSettingsRequest())
 </template>
 
 <style scoped>
-.tray-layout {
-  width: 100vw;
-  height: 100vh;
-  overflow: hidden;
-}
-
 .app-layout {
   display: flex;
-  height: 100vh;
   width: 100vw;
+  height: 100%;
+  min-height: 100vh;
   overflow: hidden;
 }
 
 .main-content {
-  flex: 1;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
   overflow-y: auto;
   background: var(--mac-bg);
 }

@@ -111,8 +111,9 @@ func (s *Store) ImportOpenCoworkOnce(path string) (ImportReport, error) {
 }
 
 // EnsureBuiltinInstances 将旧版“每个项目一套平台实例”收敛为每个平台一个全局实例。
-// 频道页面负责把这八个 active 实例绑定到项目；旧实例不删除，只归档并保留其历史数据。
-// 迁移在事务内完成，随后用部分唯一索引把“每个平台只能有一个 active 内置实例”固化到数据库。
+// 频道页面负责把这八个 active 实例绑定到项目；已退休的归档实例和旧重复实例直接删除，
+// 不再把它们转换成第二种可见的频道生命周期。迁移在事务内完成，随后用唯一索引把
+// “每个平台只能有一个内置实例”固化到数据库。
 func (s *Store) EnsureBuiltinInstances() (int, error) {
 	if s == nil || s.db == nil {
 		return 0, errors.New("channel store is unavailable")
@@ -134,6 +135,12 @@ func (s *Store) EnsureBuiltinInstances() (int, error) {
 			_ = tx.Rollback()
 		}
 	}()
+
+	// 归档数据是不可恢复的历史副本；实例删除会依靠现有外键级联清除其
+	// session、message 和 media，必须放在 canonical 收敛和幂等提前返回之前。
+	if _, err := tx.Exec(`DELETE FROM channel_instances WHERE archived=1`); err != nil {
+		return 0, fmt.Errorf("purge archived channel instances: %w", err)
+	}
 
 	templates, err := loadTemplateRecords(tx)
 	if err != nil {
@@ -184,14 +191,10 @@ func (s *Store) EnsureBuiltinInstances() (int, error) {
 			if instance.ID == canonicalID {
 				continue
 			}
-			// 归档只改变实例生命周期状态，项目归属、会话和消息仍挂在原实例上，
-			// 这样历史记录不会被错误地搬到另一个项目或新 canonical 实例。
-			instance.Enabled = false
-			instance.Status = "stopped"
-			instance.Archived = true
-			instance.UpdatedAt = nowMillis()
-			if err := upsertInstanceWithExec(tx, instance); err != nil {
-				return created, fmt.Errorf("archive duplicate %s channel %s: %w", channelType, instance.ID, err)
+			// 旧重复实例的历史属于已退休的项目级频道；不搬迁到 canonical
+			// 实例，直接删除可以避免跨项目串历史，也不会再次生成归档入口。
+			if _, err := tx.Exec(`DELETE FROM channel_instances WHERE id=?`, instance.ID); err != nil {
+				return created, fmt.Errorf("delete duplicate %s channel %s: %w", channelType, instance.ID, err)
 			}
 		}
 	}
@@ -234,7 +237,7 @@ func loadTemplateRecords(queryer sqlQueryer) (map[string]templateRecord, error) 
 }
 
 func loadBuiltinInstances(queryer sqlQueryer) (map[string][]ChannelInstance, error) {
-	rows, err := queryer.Query(`SELECT id,type,name,enabled,builtin,archived,config_json,created_at,project_id,provider_platform,provider_id,model,tools_json,features_json,permissions_json,status,last_error,updated_at FROM channel_instances WHERE builtin=1 ORDER BY type ASC, updated_at DESC, id ASC`)
+	rows, err := queryer.Query(`SELECT id,type,name,enabled,builtin,config_json,created_at,project_id,provider_platform,provider_id,model,tools_json,features_json,permissions_json,status,last_error,updated_at FROM channel_instances WHERE builtin=1 AND archived=0 ORDER BY type ASC, updated_at DESC, id ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -258,13 +261,11 @@ func builtinConsolidationNeeded(instances map[string][]ChannelInstance) bool {
 		canonicalID := canonicalBuiltinInstanceID(channelType)
 		canonicalActive := false
 		for _, instance := range instances[channelType] {
-			if instance.ID == canonicalID && !instance.Archived {
+			if instance.ID == canonicalID {
 				canonicalActive = true
 				continue
 			}
-			if !instance.Archived {
-				return true
-			}
+			return true
 		}
 		if !canonicalActive {
 			return true
@@ -282,10 +283,9 @@ func chooseBuiltinInstance(candidates []ChannelInstance, canonicalID string) (Ch
 		bestScore := instanceCompletenessScore(best)
 		candidateScore := instanceCompletenessScore(candidate)
 		if candidateScore > bestScore ||
-			(candidateScore == bestScore && !candidate.Archived && best.Archived) ||
-			(candidateScore == bestScore && candidate.Archived == best.Archived && candidate.ID == canonicalID && best.ID != canonicalID) ||
-			(candidateScore == bestScore && candidate.Archived == best.Archived && candidate.ID != canonicalID && best.ID != canonicalID && candidate.UpdatedAt > best.UpdatedAt) ||
-			(candidateScore == bestScore && candidate.Archived == best.Archived && candidate.ID != canonicalID && best.ID != canonicalID && candidate.UpdatedAt == best.UpdatedAt && candidate.ID < best.ID) {
+			(candidateScore == bestScore && candidate.ID == canonicalID && best.ID != canonicalID) ||
+			(candidateScore == bestScore && candidate.ID != canonicalID && best.ID != canonicalID && candidate.UpdatedAt > best.UpdatedAt) ||
+			(candidateScore == bestScore && candidate.ID != canonicalID && best.ID != canonicalID && candidate.UpdatedAt == best.UpdatedAt && candidate.ID < best.ID) {
 			best = candidate
 		}
 	}
@@ -357,7 +357,6 @@ func canonicalBuiltinInstance(winner ChannelInstance, canonicalID, channelType s
 	winner.ID = canonicalID
 	winner.Type = channelType
 	winner.Builtin = true
-	winner.Archived = false
 	winner.Enabled = false
 	winner.ProjectID = nil
 	winner.Status = "stopped"
@@ -367,11 +366,15 @@ func canonicalBuiltinInstance(winner ChannelInstance, canonicalID, channelType s
 
 func ensureBuiltinActiveIndex(exec sqlExecer) error {
 	// 旧索引按 project_id 限制重复，和频道页面的全局 canonical 语义冲突；
-	// 先撤掉旧 owner，再创建只覆盖 active 内置实例的全局唯一约束。
+	// 先撤掉旧 owner 和带 archived 谓词的旧索引，再创建不依赖已退休状态列的
+	// 全局唯一约束，确保后续不会再出现同平台的第二个内置入口。
 	if _, err := exec.Exec(`DROP INDEX IF EXISTS idx_channel_builtin_project_type`); err != nil {
 		return fmt.Errorf("drop legacy builtin channel index: %w", err)
 	}
-	if _, err := exec.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_builtin_active_type ON channel_instances(type) WHERE builtin = 1 AND archived = 0`); err != nil {
+	if _, err := exec.Exec(`DROP INDEX IF EXISTS idx_channel_builtin_active_type`); err != nil {
+		return fmt.Errorf("drop legacy builtin active index: %w", err)
+	}
+	if _, err := exec.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_builtin_active_type ON channel_instances(type) WHERE builtin = 1`); err != nil {
 		return fmt.Errorf("create builtin channel active index: %w", err)
 	}
 	return nil

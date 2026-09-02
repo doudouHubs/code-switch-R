@@ -61,9 +61,6 @@ func (m *Manager) Start(ctx context.Context, id string) error {
 	if !found {
 		return fmt.Errorf("channel instance %q not found", id)
 	}
-	if instance.Archived {
-		return errors.New("archived channel is read-only")
-	}
 	if instance.ProjectID == nil || strings.TrimSpace(*instance.ProjectID) == "" {
 		return errors.New("channel must be bound to a project before it can start")
 	}
@@ -114,9 +111,6 @@ func (m *Manager) Stop(ctx context.Context, id string) error {
 	if !found {
 		return nil
 	}
-	if instance.Archived {
-		return errors.New("archived channel is read-only")
-	}
 	m.mu.Lock()
 	provider := m.providers[id]
 	delete(m.providers, id)
@@ -160,7 +154,7 @@ func (m *Manager) StartAuto(ctx context.Context) ([]string, []string, error) {
 	}
 	started, failed := make([]string, 0), make([]string, 0)
 	for _, instance := range instances {
-		if instance.Archived || !instance.Enabled || !instance.Features.AutoStart || instance.ProjectID == nil || strings.TrimSpace(*instance.ProjectID) == "" {
+		if !instance.Enabled || !instance.Features.AutoStart || instance.ProjectID == nil || strings.TrimSpace(*instance.ProjectID) == "" {
 			continue
 		}
 		if err := m.Start(ctx, instance.ID); err != nil {
@@ -229,15 +223,12 @@ func (m *Manager) provider(id string) (ChannelProvider, error) {
 	if m == nil || m.store == nil {
 		return nil, errors.New("channel manager is unavailable")
 	}
-	instance, found, err := m.store.GetInstance(id)
+	_, found, err := m.store.GetInstance(id)
 	if err != nil {
 		return nil, err
 	}
 	if !found {
 		return nil, fmt.Errorf("channel instance %q not found", id)
-	}
-	if instance.Archived {
-		return nil, errors.New("archived channel is read-only")
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -254,6 +245,39 @@ func (m *Manager) SendMessage(ctx context.Context, id, chatID, content string) (
 	}
 	return provider.SendMessage(ctx, chatID, content)
 }
+
+// restoreMessageContextFromHistory 只在 Hook 旁路发送前按需读取历史，避免每次
+// 频道启动都扫描完整消息表。微信的主动推送没有新的入站消息可刷新 token，
+// 因此必须从最近历史恢复，否则应用重启后同一个聊天虽然仍存在，发送仍会被
+// provider 以“缺少回复上下文”拒绝。
+func (m *Manager) restoreMessageContextFromHistory(id, chatID string) error {
+	provider, err := m.provider(id)
+	if err != nil {
+		return err
+	}
+	restorer, ok := provider.(ChannelProviderContextRestorer)
+	if !ok {
+		return nil
+	}
+	session, found, err := m.store.GetSession(id, strings.TrimSpace(chatID))
+	if err != nil {
+		return err
+	}
+	if !found {
+		return nil
+	}
+	// ListMessages 返回按时间升序的结果；按旧到新恢复，保证同一聊天最新
+	// 入站消息携带的 context_token 覆盖旧 token。
+	messages, err := m.store.ListMessages(session.ID, 200)
+	if err != nil {
+		return err
+	}
+	for _, message := range messages {
+		restorer.RestoreMessageContext(message)
+	}
+	return nil
+}
+
 func (m *Manager) ReplyMessage(ctx context.Context, id, messageID, content string) (string, error) {
 	provider, err := m.provider(id)
 	if err != nil {

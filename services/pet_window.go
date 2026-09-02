@@ -354,10 +354,13 @@ func (w *PetWindow) SetMode(mode PetWindowMode) error {
 			// interactive，也要在切入 keyboard 前重新捕获，避免上一次交互没有留下句柄。
 			w.driver.CaptureFocusRestore()
 		}
-		// 点击穿透是全屏透明层的安全边界，必须先落地；焦点恢复失败不能阻断
-		// passive，否则外部窗口会被整块桌宠 overlay 挡住。
-		if err := w.driver.SetIgnoreMouseEvents(targetClickThrough); err != nil {
-			return fmt.Errorf("set pet window mouse mode: %w", err)
+		// 点击穿透是全屏透明层的安全边界，必须先落地；但 interactive 和
+		// keyboard 都是可命中状态，二者切换时不应重复写同一个原生样式。
+		// 焦点恢复失败不能阻断 passive，否则外部窗口会被整块桌宠 overlay 挡住。
+		if previousClickThrough != targetClickThrough {
+			if err := w.driver.SetIgnoreMouseEvents(targetClickThrough); err != nil {
+				return fmt.Errorf("set pet window mouse mode: %w", err)
+			}
 		}
 		if previousMode == PetWindowKeyboard && mode != PetWindowKeyboard {
 			if err := w.driver.ReleaseFocus(); err != nil {
@@ -369,7 +372,9 @@ func (w *PetWindow) SetMode(mode PetWindowMode) error {
 		if mode == PetWindowKeyboard {
 			if err := w.driver.Focus(); err != nil {
 				// 聚焦失败时恢复旧的鼠标状态，避免状态机和原生窗口分裂。
-				_ = w.driver.SetIgnoreMouseEvents(previousClickThrough)
+				if previousClickThrough != targetClickThrough {
+					_ = w.driver.SetIgnoreMouseEvents(previousClickThrough)
+				}
 				return fmt.Errorf("focus pet window for keyboard mode: %w", err)
 			}
 		}

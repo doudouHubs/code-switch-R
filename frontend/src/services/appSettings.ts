@@ -3,6 +3,7 @@ import { Call } from '../wails-runtime-compat'
 export type AppSettings = {
   show_heatmap: boolean
   show_home_title: boolean
+  // 预算字段已不再提供托盘编辑入口，仅用于兼容旧 app.json 的完整读写。
   budget_total: number
   budget_used_adjustment: number
   budget_cycle_enabled: boolean

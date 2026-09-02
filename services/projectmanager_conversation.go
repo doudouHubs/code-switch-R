@@ -614,6 +614,39 @@ func buildProjectManagerConversationPrunePlan(sessionID string, items []SessionC
 	}, nil
 }
 
+func buildProjectManagerConversationPrunePlanBefore(
+	sessionID string,
+	items []SessionConversationItem,
+	cutoffAt int64,
+) (projectManagerConversationPrunePlan, bool, error) {
+	if cutoffAt <= 0 {
+		return projectManagerConversationPrunePlan{}, false, errors.New("时间阈值无效")
+	}
+
+	turns, _ := buildProjectManagerConversationTurns(items)
+	messageIDs := make([]string, 0, len(turns))
+	for _, turn := range turns {
+		// 时间清理按用户发起时间判断整轮，时间解析失败的记录宁可保留，避免误删无法确认年龄的内容。
+		if turn.User.Timestamp <= 0 || turn.User.Timestamp >= cutoffAt {
+			continue
+		}
+		messageIDs = append(messageIDs, turn.User.ID)
+	}
+
+	if len(messageIDs) == 0 {
+		return projectManagerConversationPrunePlan{
+			SessionID:      sessionID,
+			TargetIDs:      make(map[string]struct{}),
+			TargetUserIDs:  make(map[string]struct{}),
+			TargetAgentIDs: make(map[string]struct{}),
+			Turns:          turns,
+		}, false, nil
+	}
+
+	prunePlan, err := buildProjectManagerConversationPrunePlan(sessionID, items, messageIDs)
+	return prunePlan, err == nil, err
+}
+
 func pruneProjectManagerSessionConversationFile(path string, sessionID string, targetIDs map[string]struct{}) error {
 	data, err := os.ReadFile(path)
 	if err != nil {

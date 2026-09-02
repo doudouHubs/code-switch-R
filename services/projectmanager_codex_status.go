@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -16,28 +17,55 @@ import (
 )
 
 const (
-	projectManagerCodexStateFile        = "state.json"
-	projectManagerCodexEventPoll        = 350 * time.Millisecond
+	projectManagerCodexStateFile = "state.json"
+	// Hook 事件在一次轮询窗口内统一消费；500ms 足以保持状态灯及时，同时避免
+	// 高频 PostToolUse 把完整快照连续推入 Wails 和 WebView。
+	projectManagerCodexEventPoll        = 500 * time.Millisecond
 	projectManagerCodexProcessPoll      = 2 * time.Second
 	projectManagerCodexUnknownPIDMaxAge = 30 * time.Second
 )
 
 type projectManagerCodexStatusService struct {
-	mu           sync.RWMutex
-	transitionMu sync.Mutex
-	sessions     map[string]*CodexSessionRuntimeStatus
-	monitor      CodexStatusMonitorInfo
-	app          *application.App
-	stop         chan struct{}
-	running      bool
-	stopped      bool
+	mu               sync.RWMutex
+	transitionMu     sync.Mutex
+	sessions         map[string]*CodexSessionRuntimeStatus
+	monitor          CodexStatusMonitorInfo
+	app              *application.App
+	stop             chan struct{}
+	running          bool
+	stopped          bool
+	hookSources      map[string]codexHookSourceRecord
+	notificationSink CodexHookNotificationSink
 }
 
 func newProjectManagerCodexStatusService() *projectManagerCodexStatusService {
 	return &projectManagerCodexStatusService{
-		sessions: make(map[string]*CodexSessionRuntimeStatus),
+		sessions:    make(map[string]*CodexSessionRuntimeStatus),
+		hookSources: make(map[string]codexHookSourceRecord),
 	}
 }
+
+// RegisterCodexHookSource 由共享 Codex runtime 调用，登记当前请求的入口身份。
+// 该登记只存在于本次 GUI 生命周期，避免旧进程的持久化来源污染新会话。
+func (s *ProjectManagerService) RegisterCodexHookSource(source CodexHookSource) {
+	if s == nil || s.codexStatus == nil {
+		return
+	}
+	s.codexStatus.registerCodexHookSource(source)
+}
+
+// SetCodexHookNotificationSink 绑定 Hook 通知的旁路出口。通知服务不拥有频道
+// 实现，只调用这个函数；因此 Agent 管家 Hook 可以在状态服务内被安全丢弃。
+func (s *ProjectManagerService) SetCodexHookNotificationSink(sink CodexHookNotificationSink) {
+	if s == nil || s.codexStatus == nil {
+		return
+	}
+	s.codexStatus.mu.Lock()
+	s.codexStatus.notificationSink = sink
+	s.codexStatus.mu.Unlock()
+}
+
+var _ CodexHookSourceRegistrar = (*ProjectManagerService)(nil)
 
 func (s *ProjectManagerService) SetApp(app *application.App) {
 	if s == nil || s.codexStatus == nil {
@@ -298,11 +326,71 @@ func (s *projectManagerCodexStatusService) consumeEvents() {
 		if s.applyEvent(event) {
 			changed = true
 		}
+		s.dispatchCodexHookNotification(event)
 		_ = os.Remove(path)
 	}
 	if changed {
 		s.persistAndEmit()
 	}
+}
+
+func (s *projectManagerCodexStatusService) dispatchCodexHookNotification(event projectManagerCodexHookEvent) {
+	notification, filterReason := s.buildCodexHookNotificationWithReason(event)
+	if notification == nil {
+		if filterReason != "unsupported_event" {
+			WriteRuntimeDiagnosticAsync(
+				"codex-hook-notification-filtered",
+				fmt.Sprintf("event_id=%q", event.EventID),
+				fmt.Sprintf("hook_event=%q", event.HookEventName),
+				fmt.Sprintf("session_id=%q", event.SessionID),
+				fmt.Sprintf("project_id=%q", event.ProjectID),
+				fmt.Sprintf("managed=%t", event.Managed),
+				fmt.Sprintf("reason=%q", filterReason),
+			)
+		}
+		return
+	}
+	s.mu.RLock()
+	sink := s.notificationSink
+	s.mu.RUnlock()
+	if sink == nil {
+		WriteRuntimeDiagnosticAsync(
+			"codex-hook-notification-dropped",
+			fmt.Sprintf("event_id=%q", notification.EventID),
+			fmt.Sprintf("notification_event=%q", notification.Event),
+			"reason=notification_sink_unavailable",
+		)
+		return
+	}
+	WriteRuntimeDiagnosticAsync(
+		"codex-hook-notification-dispatch",
+		fmt.Sprintf("event_id=%q", notification.EventID),
+		fmt.Sprintf("notification_event=%q", notification.Event),
+		fmt.Sprintf("source=%q", notification.Source),
+		fmt.Sprintf("managed=%t", notification.Managed),
+		fmt.Sprintf("project_id=%q", notification.ProjectID),
+	)
+	// Hook 消费线程只负责扫描和状态收口；频道网络可能卡住，不能反向拖慢
+	// 后续事件，否则一个平台的发送延迟会让所有项目的状态灯一起失真。
+	go func(notification CodexHookNotification) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := sink(ctx, notification); err != nil {
+			log.Printf("[ProjectManager] 转发 Codex Hook 通知失败 event=%s err=%v", notification.EventID, err)
+			WriteRuntimeDiagnosticAsync(
+				"codex-hook-notification-dispatch-failed",
+				fmt.Sprintf("event_id=%q", notification.EventID),
+				fmt.Sprintf("notification_event=%q", notification.Event),
+				fmt.Sprintf("error=%q", err.Error()),
+			)
+			return
+		}
+		WriteRuntimeDiagnosticAsync(
+			"codex-hook-notification-dispatch-completed",
+			fmt.Sprintf("event_id=%q", notification.EventID),
+			fmt.Sprintf("notification_event=%q", notification.Event),
+		)
+	}(*notification)
 }
 
 func (s *projectManagerCodexStatusService) applyEvent(event projectManagerCodexHookEvent) bool {
@@ -313,6 +401,13 @@ func (s *projectManagerCodexStatusService) applyEvent(event projectManagerCodexH
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	status := s.sessions[sessionID]
+	isNewSession := status == nil
+	var previous CodexSessionRuntimeStatus
+	if status != nil {
+		// 只比较用户可见状态；LastEvent、PID 等运行时元数据仍即时更新，
+		// 但不能因为每个 PostToolUse 都变化就触发 250KB 快照广播。
+		previous = *status
+	}
 	if status == nil {
 		status = &CodexSessionRuntimeStatus{
 			SessionID:      sessionID,
@@ -369,21 +464,48 @@ func (s *projectManagerCodexStatusService) applyEvent(event projectManagerCodexH
 			status.State = CodexRuntimeActive
 		}
 	case "posttooluse":
-		if status.TurnStatus == "in_progress" {
+		if projectManagerCodexHookEventIndicatesError(event) {
+			status.State = CodexRuntimeSystemError
+			status.TurnStatus = "failed"
+			status.LastError = projectManagerCodexHookErrorText(event)
+		} else if status.TurnStatus == "in_progress" {
 			status.State = CodexRuntimeActive
 		}
 	case "stop":
 		// Plan 模式的确认框在回合完成后由 TUI 本地显示；核心不会再发用户输入事件。
 		// 保留 completed 可准确表达回合已结束，同时用 waiting_user_input 提示用户仍需决定下一步。
-		if event.PlanImplementationPending {
+		if projectManagerCodexHookEventIndicatesError(event) {
+			status.State = CodexRuntimeSystemError
+			status.TurnStatus = "failed"
+			status.LastError = projectManagerCodexHookErrorText(event)
+		} else if event.PlanImplementationPending {
 			status.State = CodexRuntimeWaitingUserInput
 		} else {
 			status.State = CodexRuntimeIdle
+			status.LastError = ""
 		}
-		status.TurnStatus = "completed"
-		status.LastError = ""
+		if !projectManagerCodexHookEventIndicatesError(event) {
+			status.TurnStatus = "completed"
+		}
 		status.ActiveAgents = 0
 		status.activeAgentIDs = make(map[string]struct{})
+	case "sessionend":
+		// SessionEnd 表示 Codex 进程的会话生命周期已经收口；即使之前处于
+		// waiting/active，也不能继续把它展示成一个仍可响应的会话。
+		status.State = CodexRuntimeNotLoaded
+		if projectManagerCodexHookEventIndicatesError(event) {
+			status.TurnStatus = "failed"
+			status.LastError = projectManagerCodexHookErrorText(event)
+		} else {
+			status.TurnStatus = "completed"
+			status.LastError = ""
+		}
+		status.ActiveAgents = 0
+		status.activeAgentIDs = make(map[string]struct{})
+	case "systemerror", "error":
+		status.State = CodexRuntimeSystemError
+		status.TurnStatus = "failed"
+		status.LastError = projectManagerCodexHookErrorText(event)
 	case "subagentstart":
 		agentID := strings.TrimSpace(event.AgentID)
 		if agentID == "" {
@@ -403,7 +525,17 @@ func (s *projectManagerCodexStatusService) applyEvent(event projectManagerCodexH
 			status.ActiveAgents = len(status.activeAgentIDs)
 		}
 	}
-	return true
+	return isNewSession || codexSessionRuntimeVisibleChanged(previous, *status)
+}
+
+func codexSessionRuntimeVisibleChanged(before, after CodexSessionRuntimeStatus) bool {
+	return before.ProjectPath != after.ProjectPath ||
+		before.State != after.State ||
+		before.TurnStatus != after.TurnStatus ||
+		before.ActiveAgents != after.ActiveAgents ||
+		before.AgentSupported != after.AgentSupported ||
+		before.Monitored != after.Monitored ||
+		before.LastError != after.LastError
 }
 
 func (s *projectManagerCodexStatusService) reconcileProcessesAndTranscripts() bool {

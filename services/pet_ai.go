@@ -30,6 +30,7 @@ const (
 	PET_AI_WORKSPACE_UNAVAILABLE  PetAIErrorCode = "PET_AI_WORKSPACE_UNAVAILABLE"
 	PET_AI_DEPENDENCY_UNAVAILABLE PetAIErrorCode = "PET_AI_DEPENDENCY_UNAVAILABLE"
 	PET_AI_REQUEST_IN_FLIGHT      PetAIErrorCode = "PET_AI_REQUEST_IN_FLIGHT"
+	PET_AI_QUEUE_FULL             PetAIErrorCode = "PET_AI_QUEUE_FULL"
 	PET_AI_EVENT_ERROR            PetAIErrorCode = "PET_AI_EVENT_ERROR"
 	PET_AI_REQUEST_CANCELLED      PetAIErrorCode = "PET_AI_REQUEST_CANCELLED"
 	PET_AI_TIMEOUT                PetAIErrorCode = "PET_AI_TIMEOUT"
@@ -135,10 +136,16 @@ type PetAIEventType string
 
 const (
 	PetAIEventStarted PetAIEventType = "started"
-	PetAIEventDelta   PetAIEventType = "delta"
+	// PetAIEventQueued 表示请求已进入项目 FIFO，但尚未占用 Codex turn。
+	// 前端可以据此展示排队状态，且不会把等待启动误判为回复超时。
+	PetAIEventQueued PetAIEventType = "queued"
+	PetAIEventDelta  PetAIEventType = "delta"
 	// PetAIEventProgress 只表示 Codex turn 仍在推进，不携带用户可见正文；
 	// 浏览器/MCP 工具链可能长时间没有 assistant delta，前端据此续期空闲保护。
 	PetAIEventProgress PetAIEventType = "progress"
+	// PetAIEventInteraction 表示 Codex 暂停等待宿主决定审批、权限或用户输入。
+	// 它不是终态，只有 ResolveInteraction 回写协议响应后当前 turn 才会继续。
+	PetAIEventInteraction PetAIEventType = "interaction"
 	// PetAIEventUsage 复用 PetStreamUsage 的稳定 wire value，主控可据此直接
 	// 把 payload 转成 PetUsageEvent，再调用 PetService.AddExperienceFromUsage。
 	PetAIEventUsage     PetAIEventType = PetAIEventType(PetStreamUsage)
@@ -156,14 +163,19 @@ type PetAIEventError struct {
 
 // PetAIEvent 是 emitter 接收的统一 payload；它不包含 provider 配置或 API Key。
 type PetAIEvent struct {
-	Type      PetAIEventType         `json:"type"`
-	PetID     string                 `json:"petId"`
-	RequestID string                 `json:"requestId"`
-	Sequence  int64                  `json:"sequence"`
-	Delta     string                 `json:"delta,omitempty"`
-	Text      string                 `json:"text,omitempty"`
-	Usage     *PetStreamUsagePayload `json:"usage,omitempty"`
-	Error     *PetAIEventError       `json:"error,omitempty"`
+	Type              PetAIEventType         `json:"type"`
+	PetID             string                 `json:"petId"`
+	RequestID         string                 `json:"requestId"`
+	Sequence          int64                  `json:"sequence"`
+	ProjectID         string                 `json:"projectId,omitempty"`
+	Source            string                 `json:"source,omitempty"`
+	ChannelInstanceID string                 `json:"channelInstanceId,omitempty"`
+	ChannelChatID     string                 `json:"channelChatId,omitempty"`
+	Delta             string                 `json:"delta,omitempty"`
+	Text              string                 `json:"text,omitempty"`
+	Usage             *PetStreamUsagePayload `json:"usage,omitempty"`
+	Error             *PetAIEventError       `json:"error,omitempty"`
+	Interaction       *PetAIInteraction     `json:"interaction,omitempty"`
 }
 
 // PetAIEventEmitter 是事件输出的最小接口。事件发送失败会终止当前流，
@@ -228,6 +240,23 @@ func (f PetWorkspaceResolverFunc) Resolve(ctx context.Context, petID string) (st
 		return "", nil
 	}
 	return f(ctx, petID)
+}
+
+// ProjectWorkspaceResolver 只负责按 projectId 解析当前项目目录。项目级 Codex
+// 会话必须从这里取得 cwd，不能把频道或前端提交的路径重新当成 workspace 事实源。
+type ProjectWorkspaceResolver interface {
+	ResolveProject(context.Context, string) (string, error)
+}
+
+// ProjectWorkspaceResolverFunc 让 main.go 可以把 ProjectManager 的读取逻辑以窄
+// 接口注入 runtime，同时不把项目管理器的扫描和缓存职责带进 services 核心。
+type ProjectWorkspaceResolverFunc func(context.Context, string) (string, error)
+
+func (f ProjectWorkspaceResolverFunc) ResolveProject(ctx context.Context, projectID string) (string, error) {
+	if f == nil {
+		return "", nil
+	}
+	return f(ctx, projectID)
 }
 
 // PetAIHTTPTransport 只注入 RoundTrip，既能使用 http.DefaultTransport，也方便测试精确观察
@@ -338,6 +367,17 @@ type PetAIImage struct {
 	MediaType string `json:"mediaType"`
 }
 
+// PetAILocalImage 是仅供宿主内部传递的本地图片引用。路径不会进入 Wails
+// JSON 或模型提示，只有 Codex runtime 在受控根目录内重新校验后才会发给 app-server。
+type PetAILocalImage struct {
+	Path      string `json:"-"`
+	MediaType string `json:"-"`
+}
+
+// PetAIImagePath 保留“图片路径”这一更直观的兼容命名；两者是同一个内部契约，
+// 避免频道、Agent 管家和 Codex runtime 各自定义一份不可互换的路径类型。
+type PetAIImagePath = PetAILocalImage
+
 // PetAIMessage 是宠物聊天历史的最小形状；图片只允许作为当前已支持的视觉附件。
 type PetAIMessage struct {
 	Role    string       `json:"role"`
@@ -347,19 +387,32 @@ type PetAIMessage struct {
 
 type PetChatRequest struct {
 	PetID     string               `json:"petId"`
+	ProjectID string               `json:"projectId,omitempty"`
+	ProjectName string             `json:"projectName,omitempty"`
 	RequestID string               `json:"requestId"`
+	SessionName string             `json:"sessionName,omitempty"`
 	Provider  PetProviderReference `json:"provider"`
 	Persona   string               `json:"persona"`
 	// RuntimeContext 是每轮变化的时间/时区等短上下文；Codex runtime 将它放在
 	// 当前 turn，而不是 developerInstructions，避免每条消息都改变 thread persona。
-	RuntimeContext string         `json:"runtimeContext,omitempty"`
-	UserText       string         `json:"userText"`
-	Images         []PetAIImage   `json:"images,omitempty"`
-	History        []PetAIMessage `json:"history,omitempty"`
-	ProjectFolder  string         `json:"projectFolder,omitempty"`
-	Reasoning      string         `json:"reasoning,omitempty"`
+	RuntimeContext string       `json:"runtimeContext,omitempty"`
+	UserText       string       `json:"userText"`
+	Images         []PetAIImage `json:"images,omitempty"`
+	Skills         []AgentSkillReference `json:"skills,omitempty"`
+	// LocalImages 只允许后端内部注入；前端提交的 JSON 即使包含同名字段也会被忽略。
+	LocalImages   []PetAILocalImage `json:"-"`
+	History       []PetAIMessage    `json:"history,omitempty"`
+	ProjectFolder string            `json:"projectFolder,omitempty"`
+	Reasoning     string            `json:"reasoning,omitempty"`
 	// ToolScope 仅供宿主 runtime 做能力隔离，不能作为模型提示或文件路径使用。
 	ToolScope string `json:"-"`
+	// ToolExecutionScope 是当前入口的最小执行上下文；同一项目的 thread
+	// 共享 ToolScope，但频道工具仍需按具体实例/session/chat 做二次权限校验。
+	ToolExecutionScope string `json:"-"`
+	// Source 和频道标识只用于统一事件路由，不进入 Codex prompt 或持久化输入。
+	Source            string `json:"-"`
+	ChannelInstanceID string `json:"-"`
+	ChannelChatID     string `json:"-"`
 }
 
 // PetDreamTextRequest 与聊天共享完全相同的输入边界，确保梦境不会绕过长度、provider
@@ -376,6 +429,9 @@ type PetDreamTextRequest struct {
 
 type PetChatStartResult struct {
 	RequestID string `json:"requestId"`
+	// Queued 表示请求已进入项目 FIFO，但底层 Codex turn 尚未开始；保留在
+	// 启动回执里是为了让 Wails 在 queued 事件尚未穿过事件队列时也能稳定显示状态。
+	Queued bool `json:"queued,omitempty"`
 }
 
 // PetSpeechRequest 同时服务同步和流式语音；流式入口要求 RequestID 非空，

@@ -1,6 +1,7 @@
 package services
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,13 +25,20 @@ type projectManagerCodexHookEvent struct {
 	EventID                   string `json:"event_id"`
 	HookEventName             string `json:"hook_event_name"`
 	SessionID                 string `json:"session_id"`
+	ProjectID                 string `json:"project_id,omitempty"`
+	ThreadID                  string `json:"thread_id,omitempty"`
 	TurnID                    string `json:"turn_id,omitempty"`
 	AgentID                   string `json:"agent_id,omitempty"`
 	AgentType                 string `json:"agent_type,omitempty"`
 	ToolName                  string `json:"tool_name,omitempty"`
 	Cwd                       string `json:"cwd"`
 	TranscriptPath            string `json:"transcript_path,omitempty"`
+	Reason                    string `json:"reason,omitempty"`
+	Error                     string `json:"error,omitempty"`
+	ToolInput                 string `json:"tool_input,omitempty"`
+	ToolResponse              string `json:"tool_response,omitempty"`
 	PlanImplementationPending bool   `json:"plan_implementation_pending,omitempty"`
+	Managed                   bool   `json:"managed,omitempty"`
 	CodexPID                  uint32 `json:"codex_pid,omitempty"`
 	CodexStartedAt            string `json:"codex_started_at,omitempty"`
 	ReceivedAt                int64  `json:"received_at"`
@@ -38,16 +46,22 @@ type projectManagerCodexHookEvent struct {
 }
 
 type projectManagerCodexHookPayload struct {
-	HookEventName        string `json:"hook_event_name"`
-	SessionID            string `json:"session_id"`
-	TurnID               string `json:"turn_id"`
-	AgentID              string `json:"agent_id"`
-	AgentType            string `json:"agent_type"`
-	ToolName             string `json:"tool_name"`
-	Cwd                  string `json:"cwd"`
-	TranscriptPath       any    `json:"transcript_path"`
-	PermissionMode       string `json:"permission_mode"`
-	LastAssistantMessage any    `json:"last_assistant_message"`
+	HookEventName        string
+	SessionID            string
+	ProjectID            string
+	ThreadID             string
+	TurnID               string
+	AgentID              string
+	AgentType            string
+	ToolName             string
+	Cwd                  string
+	TranscriptPath       string
+	PermissionMode       string
+	Reason               string
+	Error                string
+	ToolInput            string
+	ToolResponse         string
+	LastAssistantMessage string
 }
 
 func IsProjectManagerCodexHookInvocation(args []string) bool {
@@ -74,8 +88,8 @@ func RunProjectManagerCodexHookReceiver(reader io.Reader) error {
 		return errors.New("Codex hook 事件为空或超过大小限制")
 	}
 
-	var payload projectManagerCodexHookPayload
-	if err := json.Unmarshal(raw, &payload); err != nil {
+	payload, err := decodeProjectManagerCodexHookPayload(raw)
+	if err != nil {
 		return fmt.Errorf("解析 Codex hook 事件失败: %w", err)
 	}
 	payload.HookEventName = strings.TrimSpace(payload.HookEventName)
@@ -90,13 +104,20 @@ func RunProjectManagerCodexHookReceiver(reader io.Reader) error {
 		EventID:                   uuid.NewString(),
 		HookEventName:             payload.HookEventName,
 		SessionID:                 payload.SessionID,
+		ProjectID:                 payload.ProjectID,
+		ThreadID:                  payload.ThreadID,
 		TurnID:                    strings.TrimSpace(payload.TurnID),
 		AgentID:                   strings.TrimSpace(payload.AgentID),
 		AgentType:                 strings.TrimSpace(payload.AgentType),
 		ToolName:                  strings.TrimSpace(payload.ToolName),
 		Cwd:                       normalizeProjectManagerProjectPath(payload.Cwd),
 		TranscriptPath:            projectManagerCodexNullablePath(payload.TranscriptPath),
+		Reason:                    payload.Reason,
+		Error:                     payload.Error,
+		ToolInput:                 payload.ToolInput,
+		ToolResponse:              payload.ToolResponse,
 		PlanImplementationPending: projectManagerCodexPlanImplementationPending(payload),
+		Managed:                   projectManagerCodexHookProcessManaged(),
 		CodexPID:                  pid,
 		CodexStartedAt:            startedAt,
 		ReceivedAt:                now.UnixMilli(),
@@ -117,6 +138,79 @@ func RunProjectManagerCodexHookReceiver(reader io.Reader) error {
 	return nil
 }
 
+func decodeProjectManagerCodexHookPayload(raw []byte) (projectManagerCodexHookPayload, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return projectManagerCodexHookPayload{}, err
+	}
+	return projectManagerCodexHookPayload{
+		HookEventName:        projectManagerCodexHookString(fields, "hook_event_name", "hookEventName"),
+		SessionID:            projectManagerCodexHookString(fields, "session_id", "sessionId"),
+		ProjectID:            projectManagerCodexHookString(fields, "project_id", "projectId"),
+		ThreadID:             projectManagerCodexHookString(fields, "thread_id", "threadId"),
+		TurnID:               projectManagerCodexHookString(fields, "turn_id", "turnId"),
+		AgentID:              projectManagerCodexHookString(fields, "agent_id", "agentId"),
+		AgentType:            projectManagerCodexHookString(fields, "agent_type", "agentType"),
+		ToolName:             projectManagerCodexHookString(fields, "tool_name", "toolName", "tool"),
+		Cwd:                  projectManagerCodexHookString(fields, "cwd", "working_directory", "workingDirectory"),
+		TranscriptPath:       projectManagerCodexHookString(fields, "transcript_path", "transcriptPath"),
+		PermissionMode:       projectManagerCodexHookString(fields, "permission_mode", "permissionMode"),
+		Reason:               projectManagerCodexHookString(fields, "reason", "stop_reason", "stopReason"),
+		Error:                projectManagerCodexHookValueText(fields, "error", "error_message", "errorMessage"),
+		ToolInput:            projectManagerCodexHookValueText(fields, "tool_input", "toolInput"),
+		ToolResponse:         projectManagerCodexHookValueText(fields, "tool_response", "toolResponse"),
+		LastAssistantMessage: projectManagerCodexHookValueText(fields, "last_assistant_message", "lastAssistantMessage"),
+	}, nil
+}
+
+func projectManagerCodexHookString(fields map[string]json.RawMessage, keys ...string) string {
+	for _, key := range keys {
+		raw, ok := fields[key]
+		if !ok {
+			continue
+		}
+		var value string
+		if json.Unmarshal(raw, &value) == nil {
+			if value = strings.TrimSpace(value); value != "" {
+				return value
+			}
+		}
+	}
+	return ""
+}
+
+func projectManagerCodexHookValueText(fields map[string]json.RawMessage, keys ...string) string {
+	for _, key := range keys {
+		raw, ok := fields[key]
+		if !ok || strings.TrimSpace(string(raw)) == "" || strings.EqualFold(strings.TrimSpace(string(raw)), "null") {
+			continue
+		}
+		var value string
+		if json.Unmarshal(raw, &value) == nil {
+			return truncateProjectManagerCodexHookText(value)
+		}
+		var compacted bytes.Buffer
+		if json.Compact(&compacted, raw) == nil {
+			return truncateProjectManagerCodexHookText(compacted.String())
+		}
+	}
+	return ""
+}
+
+func truncateProjectManagerCodexHookText(value string) string {
+	value = strings.TrimSpace(value)
+	const maxRunes = 4096
+	if len([]rune(value)) <= maxRunes {
+		return value
+	}
+	return string([]rune(value)[:maxRunes]) + "..."
+}
+
+func projectManagerCodexHookProcessManaged() bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("CODESWITCH_CODEX_APP_SERVER_MANAGED")))
+	return value == "1" || value == "true" || value == "yes"
+}
+
 func projectManagerCodexPlanImplementationPending(payload projectManagerCodexHookPayload) bool {
 	if !strings.EqualFold(strings.TrimSpace(payload.HookEventName), "stop") ||
 		!strings.EqualFold(strings.TrimSpace(payload.PermissionMode), "plan") {
@@ -124,23 +218,11 @@ func projectManagerCodexPlanImplementationPending(payload projectManagerCodexHoo
 	}
 	// 计划确认弹窗由 Codex TUI 在 Stop 后本地生成，不会再发送 request_user_input。
 	// 这里只把 assistant 正文归约为状态位，避免计划内容写入 CodeSwitch 的事件文件。
-	message, ok := payload.LastAssistantMessage.(string)
-	return ok && strings.Contains(message, "<proposed_plan>")
+	return strings.Contains(payload.LastAssistantMessage, "<proposed_plan>")
 }
 
-func projectManagerCodexNullablePath(value any) string {
-	switch typed := value.(type) {
-	case string:
-		return strings.TrimSpace(typed)
-	case map[string]any:
-		// 新旧 Codex 对 NullableString 的编码不同，只接受明确的字符串值，避免把对象格式化成脏路径。
-		for _, key := range []string{"value", "some"} {
-			if text, ok := typed[key].(string); ok {
-				return strings.TrimSpace(text)
-			}
-		}
-	}
-	return ""
+func projectManagerCodexNullablePath(value string) string {
+	return strings.TrimSpace(value)
 }
 
 func projectManagerCodexStatusRootPath() (string, error) {

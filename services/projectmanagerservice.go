@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -81,12 +82,28 @@ type SessionConversationDetail struct {
 	Items   []SessionConversationItem `json:"items"`
 }
 
+type SessionConversationPruneResult struct {
+	SessionID    string `json:"session_id"`
+	DeletedTurns int    `json:"deleted_turns"`
+	DeletedItems int    `json:"deleted_items"`
+	Error        string `json:"error,omitempty"`
+}
+
+type SessionConversationBatchPruneResult struct {
+	RangeKey          string                           `json:"range_key"`
+	CutoffAt          int64                            `json:"cutoff_at"`
+	Results           []SessionConversationPruneResult `json:"results"`
+	TotalDeletedTurns int                              `json:"total_deleted_turns"`
+	TotalDeletedItems int                              `json:"total_deleted_items"`
+}
+
 type ProjectManagerService struct {
 	store                   *projectManagerStoreService
 	snapshotCache           *projectManagerSnapshotCacheService
 	detailCache             *projectManagerConversationCacheService
 	conversationSearchCache *projectManagerConversationSearchCacheService
 	codexStatus             *projectManagerCodexStatusService
+	petAgentModelReader     PetAgentModelReader
 	snapshotBuildMu         sync.Mutex
 	conversationSearchMu    sync.Mutex
 	warmRefreshMu           sync.Mutex
@@ -94,14 +111,48 @@ type ProjectManagerService struct {
 	lastWarmRefreshAt       time.Time
 }
 
+const (
+	projectManagerSessionDeleteRangeAll        = "all"
+	projectManagerSessionDeleteRangeOneWeek    = "one_week"
+	projectManagerSessionDeleteRangeThreeWeeks = "three_weeks"
+	projectManagerSessionDeleteRangeOneMonth   = "one_month"
+)
+
 func NewProjectManagerService() *ProjectManagerService {
+	return newProjectManagerService(nil)
+}
+
+// NewProjectManagerServiceWithPetAgentModelReader 注入宠物模型读取器。
+// 无参构造仍然保留给独立调用方和旧测试；应用入口必须注入 PetDAO，才能让
+// AI-Commit 的模型选择和宠物 Agent 设置保持同一个事实源。
+func NewProjectManagerServiceWithPetAgentModelReader(reader PetAgentModelReader) *ProjectManagerService {
+	return newProjectManagerService(reader)
+}
+
+func newProjectManagerService(reader PetAgentModelReader) *ProjectManagerService {
 	return &ProjectManagerService{
 		store:                   newProjectManagerStoreService(),
 		snapshotCache:           newProjectManagerSnapshotCacheService(),
 		detailCache:             newProjectManagerConversationCacheService(),
 		conversationSearchCache: newProjectManagerConversationSearchCacheService(),
 		codexStatus:             newProjectManagerCodexStatusService(),
+		petAgentModelReader:     reader,
 	}
+}
+
+// loadProjectManagerAICommitModel 在每次 AI-Commit 点击时读取 default 宠物的最新模型。
+// reader 未注入时沿用旧的 commit-fast 默认模型，兼容不依赖宠物数据库的调用方；
+// 正常应用入口会始终注入 PetDAO。
+func (s *ProjectManagerService) loadProjectManagerAICommitModel() (PetAgentModelReference, error) {
+	if s == nil || s.petAgentModelReader == nil {
+		return PetAgentModelReference{}, nil
+	}
+
+	reference, err := s.petAgentModelReader.LoadAgentModelReference(context.Background(), DefaultPetID)
+	if err != nil {
+		return PetAgentModelReference{}, fmt.Errorf("读取 default 宠物 Agent 模型失败: %w", err)
+	}
+	return reference, nil
 }
 
 func (s *ProjectManagerService) GetSnapshot() (ProjectManagerSnapshot, error) {
@@ -457,17 +508,8 @@ func (s *ProjectManagerService) PruneSessionConversation(sessionID string, messa
 		return SessionConversationDetail{}, err
 	}
 
-	if sessionFile.IsRollout {
-		if err := pruneProjectManagerRolloutFile(sessionFile.Path, sessionID, prunePlan); err != nil {
-			return SessionConversationDetail{}, err
-		}
-	} else {
-		if err := pruneProjectManagerSessionConversationFile(sessionFile.Path, sessionID, prunePlan.TargetIDs); err != nil {
-			return SessionConversationDetail{}, err
-		}
-		if err := s.pruneProjectManagerRolloutFiles(sessionID, prunePlan); err != nil {
-			return SessionConversationDetail{}, err
-		}
+	if err := s.applyProjectManagerConversationPrune(sessionID, sessionFile, prunePlan); err != nil {
+		return SessionConversationDetail{}, err
 	}
 
 	s.invalidateProjectManagerConversationCache(sessionID)
@@ -482,6 +524,132 @@ func (s *ProjectManagerService) PruneSessionConversation(sessionID string, messa
 		s.invalidateProjectManagerSnapshotCache()
 	}
 	return detail, err
+}
+
+func (s *ProjectManagerService) applyProjectManagerConversationPrune(
+	sessionID string,
+	sessionFile projectManagerConversationFile,
+	prunePlan projectManagerConversationPrunePlan,
+) error {
+	if sessionFile.IsRollout {
+		return pruneProjectManagerRolloutFile(sessionFile.Path, sessionID, prunePlan)
+	}
+	if err := pruneProjectManagerSessionConversationFile(sessionFile.Path, sessionID, prunePlan.TargetIDs); err != nil {
+		return err
+	}
+	return s.pruneProjectManagerRolloutFiles(sessionID, prunePlan)
+}
+
+func projectManagerSessionDeleteRangeDuration(rangeKey string) (time.Duration, error) {
+	switch strings.TrimSpace(rangeKey) {
+	case projectManagerSessionDeleteRangeOneWeek:
+		return 7 * 24 * time.Hour, nil
+	case projectManagerSessionDeleteRangeThreeWeeks:
+		return 21 * 24 * time.Hour, nil
+	case projectManagerSessionDeleteRangeOneMonth:
+		return 30 * 24 * time.Hour, nil
+	case projectManagerSessionDeleteRangeAll:
+		return 0, errors.New("全部范围必须使用 DeleteSession")
+	default:
+		return 0, fmt.Errorf("不支持的会话删除时间范围: %s", strings.TrimSpace(rangeKey))
+	}
+}
+
+func (s *ProjectManagerService) pruneSessionConversationBefore(
+	sessionID string,
+	cutoffAt int64,
+) (int, int, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return 0, 0, errors.New("会话 ID 不能为空")
+	}
+	if cutoffAt <= 0 {
+		return 0, 0, errors.New("时间阈值无效")
+	}
+
+	snapshot, snapshotCache, err := s.loadProjectManagerSnapshotWithCache()
+	if err != nil {
+		return 0, 0, err
+	}
+	if _, err := projectManagerFindSession(snapshot.Sessions, sessionID); err != nil {
+		return 0, 0, err
+	}
+
+	sessionFile, err := s.findProjectManagerSessionFileByIDFast(sessionID, snapshotCache)
+	if err != nil {
+		return 0, 0, err
+	}
+	currentItems, err := s.readProjectManagerConversationItems(sessionFile)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	prunePlan, matched, err := buildProjectManagerConversationPrunePlanBefore(sessionID, currentItems, cutoffAt)
+	if err != nil {
+		return 0, 0, err
+	}
+	if !matched || len(prunePlan.TargetIDs) == 0 {
+		// 没有命中旧轮次时不写文件，避免仅仅因为批量清理而改变文件时间或历史格式。
+		return 0, 0, nil
+	}
+
+	if err := s.applyProjectManagerConversationPrune(sessionID, sessionFile, prunePlan); err != nil {
+		return 0, 0, err
+	}
+
+	s.invalidateProjectManagerConversationCache(sessionID)
+	s.invalidateProjectManagerSnapshotCache()
+	return len(prunePlan.TargetUserIDs), len(prunePlan.TargetIDs), nil
+}
+
+func (s *ProjectManagerService) PruneSessionConversationsByRange(
+	sessionIDs []string,
+	rangeKey string,
+) (SessionConversationBatchPruneResult, error) {
+	rangeKey = strings.TrimSpace(rangeKey)
+	duration, err := projectManagerSessionDeleteRangeDuration(rangeKey)
+	if err != nil {
+		return SessionConversationBatchPruneResult{}, err
+	}
+
+	normalizedIDs := make([]string, 0, len(sessionIDs))
+	seenIDs := make(map[string]struct{}, len(sessionIDs))
+	for _, sessionID := range sessionIDs {
+		sessionID = strings.TrimSpace(sessionID)
+		if sessionID == "" {
+			continue
+		}
+		if _, seen := seenIDs[sessionID]; seen {
+			continue
+		}
+		seenIDs[sessionID] = struct{}{}
+		normalizedIDs = append(normalizedIDs, sessionID)
+	}
+	if len(normalizedIDs) == 0 {
+		return SessionConversationBatchPruneResult{}, errors.New("至少选择一个会话")
+	}
+
+	cutoffAt := time.Now().Add(-duration).UnixMilli()
+	result := SessionConversationBatchPruneResult{
+		RangeKey: rangeKey,
+		CutoffAt: cutoffAt,
+		Results:  make([]SessionConversationPruneResult, 0, len(normalizedIDs)),
+	}
+	for _, sessionID := range normalizedIDs {
+		item := SessionConversationPruneResult{SessionID: sessionID}
+		deletedTurns, deletedItems, pruneErr := s.pruneSessionConversationBefore(sessionID, cutoffAt)
+		if pruneErr != nil {
+			// 单个会话失败只记录在结果中，批量任务继续处理其余会话。
+			item.Error = pruneErr.Error()
+		} else {
+			item.DeletedTurns = deletedTurns
+			item.DeletedItems = deletedItems
+			result.TotalDeletedTurns += deletedTurns
+			result.TotalDeletedItems += deletedItems
+		}
+		result.Results = append(result.Results, item)
+	}
+	return result, nil
 }
 
 func (s *ProjectManagerService) ForkSessionConversation(sessionID string, messageIDs []string) (SessionSummary, error) {

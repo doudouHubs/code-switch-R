@@ -200,7 +200,7 @@ func mergeProjectManagerCodexHooks(path, command string, agentHooksSupported boo
 
 	// PreToolUse 从 0.122 起已经可用，只有多 Agent 生命周期事件需要 0.133+。
 	// 把它错误地和 Agent 能力绑在一起，会导致旧版永远无法显示“等待用户输入”。
-	events := []string{"SessionStart", "UserPromptSubmit", "Stop", "PermissionRequest", "PreToolUse", "PostToolUse"}
+	events := []string{"SessionStart", "UserPromptSubmit", "Stop", "PermissionRequest", "PreToolUse", "PostToolUse", "SessionEnd"}
 	if agentHooksSupported {
 		events = append(events, "SubagentStart", "SubagentStop")
 	}

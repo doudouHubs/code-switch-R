@@ -4,7 +4,6 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { Events } from '../../wails-runtime-compat'
 import {
-  Archive,
   ArrowLeft,
   ChevronDown,
   CircleAlert,
@@ -59,7 +58,6 @@ const loading = ref(true)
 const refreshing = ref(false)
 const savingId = ref('')
 const errorMessage = ref('')
-const showArchived = ref(false)
 const secretVisibility = ref<Record<string, boolean>>({})
 const readablePathDraft = ref('')
 const weixinLoginPending = ref(false)
@@ -79,7 +77,7 @@ const selectedDescriptor = computed(() => descriptorByType.value.get(draft.value
 const selectedProject = computed(() => projects.value.find((project) => project.id === draft.value?.projectId))
 const activeStatus = computed(() => draft.value?.status || 'stopped')
 
-// 后端已经以 canonical/archived 作为事实源；这里再按 id 去重，避免旧 bridge 或热刷新快照
+// 后端已经以 canonical 实例作为事实源；这里按 id 去重，避免旧 bridge 或热刷新快照
 // 在同一帧返回重复记录时把重复项直接渲染到左侧列表。
 const uniqueInstances = computed(() => {
   const byID = new Map<string, ChannelInstance>()
@@ -94,7 +92,6 @@ const uniqueInstances = computed(() => {
 const activeInstances = computed(() => {
   const seenBuiltinTypes = new Set<string>()
   return uniqueInstances.value.filter((instance) => {
-    if (instance.archived) return false
     if (!instance.builtin) return true
     // canonical 迁移完成后每种内置平台只应有一条 active 记录；旧进程返回重复快照时，
     // 左栏仍保持“一个平台一个入口”，避免用户误以为存在多个可独立配置的同类频道。
@@ -103,7 +100,6 @@ const activeInstances = computed(() => {
     return true
   })
 })
-const archivedInstances = computed(() => uniqueInstances.value.filter((instance) => instance.archived))
 
 const filteredActiveInstances = computed(() => {
   const query = searchQuery.value.trim().toLowerCase()
@@ -148,7 +144,7 @@ function descriptorFor(instance: ChannelInstance) {
 }
 
 function isCustom(instance: ChannelInstance) {
-  return !instance.builtin && !instance.archived
+  return !instance.builtin
 }
 
 function displayName(instance: ChannelInstance) {
@@ -200,12 +196,16 @@ function payloadFromDraft(instance: ChannelInstance): ChannelInstance {
   payload.providerPlatform = ''
   payload.providerId = null
   payload.model = null
-  payload.config = Object.fromEntries(Object.entries(payload.config).map(([key, value]) => [key, String(value ?? '')]))
+  payload.config = Object.fromEntries(
+    Object.entries(payload.config)
+      .filter(([key]) => key !== 'systemPrompt')
+      .map(([key, value]) => [key, String(value ?? '')]),
+  )
   return payload
 }
 
 async function persistDraft(instance: ChannelInstance | null, showSuccess = false): Promise<boolean> {
-  if (!instance || instance.archived) return true
+  if (!instance) return true
   const payload = payloadFromDraft(instance)
   savingId.value = payload.id
   try {
@@ -228,7 +228,7 @@ async function persistDraft(instance: ChannelInstance | null, showSuccess = fals
 }
 
 function scheduleSave() {
-  if (!draft.value || draft.value.archived) return
+  if (!draft.value) return
   if (saveTimer) clearTimeout(saveTimer)
   saveTimer = setTimeout(() => {
     saveTimer = null
@@ -255,7 +255,6 @@ async function selectInstance(instance: ChannelInstance) {
   weixinQrSource.value = ''
   weixinLoginStatus.value = ''
   weixinLoginMessage.value = ''
-  if (instance.archived) showArchived.value = true
 }
 
 async function load() {
@@ -273,7 +272,7 @@ async function load() {
 
     // 初始选中必须复用左侧列表的去重结果；否则旧进程返回多条同类型内置实例时，
     // 详情可能打开一个已经被列表隐藏的副本，造成“列表和详情对不上”的错觉。
-    const visibleInstances = [...activeInstances.value, ...archivedInstances.value]
+    const visibleInstances = activeInstances.value
     const selected = visibleInstances.find((instance) => instance.id === selectedId.value)
       || visibleInstances[0]
     if (!selected) {
@@ -301,7 +300,7 @@ async function refresh() {
 }
 
 async function toggleEnabled(nextEnabled: boolean) {
-  if (!draft.value || draft.value.archived) return
+  if (!draft.value) return
   const previous = draft.value.enabled
   if (nextEnabled && !draft.value.projectId) {
     draft.value.enabled = false
@@ -321,13 +320,12 @@ async function toggleEnabled(nextEnabled: boolean) {
 }
 
 async function toggleInstanceEnabled(instance: ChannelInstance, nextEnabled: boolean) {
-  if (instance.archived) return
   if (draft.value?.id !== instance.id) await selectInstance(instance)
   await toggleEnabled(nextEnabled)
 }
 
 function handleProjectChange() {
-  if (!draft.value || draft.value.archived) return
+  if (!draft.value) return
   // 解绑项目时同步关闭频道，满足后端“启用频道必须绑定项目”的约束，
   // 让自动保存不会把一个无法启动的 enabled=true 快照写进数据库。
   if (!draft.value.projectId) draft.value.enabled = false
@@ -335,7 +333,7 @@ function handleProjectChange() {
 }
 
 async function start() {
-  if (!draft.value || draft.value.archived) return
+  if (!draft.value) return
   if (!draft.value.projectId) {
     showToast(t('channels.validation.projectRequired'), 'error')
     return
@@ -361,7 +359,7 @@ async function start() {
 }
 
 async function stop() {
-  if (!draft.value || draft.value.archived) return
+  if (!draft.value) return
   try {
     await stopChannel(draft.value.id)
     draft.value.status = 'stopped'
@@ -374,7 +372,7 @@ async function stop() {
 }
 
 async function remove() {
-  if (!draft.value || draft.value.builtin || draft.value.archived) return
+  if (!draft.value || draft.value.builtin) return
   const name = displayName(draft.value)
   if (!window.confirm(t('channels.removeConfirm', { name }))) return
   await flushPendingSave()
@@ -382,7 +380,7 @@ async function remove() {
   try {
     await removeChannelInstance(removedID)
     instances.value = instances.value.filter((instance) => instance.id !== removedID)
-    const next = activeInstances.value[0] || archivedInstances.value[0]
+    const next = activeInstances.value[0]
     if (next) {
       await selectInstance(next)
     } else {
@@ -450,7 +448,7 @@ async function cancelActiveWeixinLogin() {
 
 async function bindWeixin() {
   const instance = draft.value
-  if (!instance || instance.archived || !isWeixinInstance(instance)) return
+  if (!instance || !isWeixinInstance(instance)) return
 
   const instanceID = instance.id
   await cancelActiveWeixinLogin()
@@ -562,26 +560,26 @@ async function bindWeixin() {
 }
 
 function setFeature(key: keyof ChannelInstance['features'], value: boolean) {
-  if (!draft.value || draft.value.archived) return
+  if (!draft.value) return
   draft.value.features[key] = value
   scheduleSave()
 }
 
 function setPermission(key: keyof ChannelInstance['permissions'], value: boolean) {
-  if (!draft.value || draft.value.archived) return
+  if (!draft.value) return
   if (typeof draft.value.permissions[key] !== 'boolean') return
   draft.value.permissions[key] = value as never
   scheduleSave()
 }
 
 function setTool(tool: string, value: boolean) {
-  if (!draft.value || draft.value.archived) return
+  if (!draft.value) return
   draft.value.tools[tool] = value
   scheduleSave()
 }
 
 function addReadablePath() {
-  if (!draft.value || draft.value.archived) return
+  if (!draft.value) return
   const path = readablePathDraft.value.trim()
   if (!path || draft.value.permissions.readablePathPrefixes.includes(path)) {
     readablePathDraft.value = ''
@@ -593,7 +591,7 @@ function addReadablePath() {
 }
 
 function removeReadablePath(path: string) {
-  if (!draft.value || draft.value.archived) return
+  if (!draft.value) return
   draft.value.permissions.readablePathPrefixes = draft.value.permissions.readablePathPrefixes.filter((item) => item !== path)
   scheduleSave()
 }
@@ -691,7 +689,6 @@ onBeforeUnmount(() => {
                   role="switch"
                   :aria-checked="instance.enabled"
                   :aria-label="instance.enabled ? t('channels.actions.disable', 'Disable') : t('channels.actions.enable', 'Enable')"
-                  :disabled="instance.archived"
                   @click.stop="void toggleInstanceEnabled(instance, !instance.enabled)"
                 ><span /></button>
               </div>
@@ -730,35 +727,7 @@ onBeforeUnmount(() => {
             </div>
           </section>
 
-          <section v-if="archivedInstances.length" class="archived-category">
-            <button class="archived-heading" type="button" @click="showArchived = !showArchived">
-              <Archive :size="14" />
-              <span>{{ t('channels.archivedGroup', { count: archivedInstances.length }) }}</span>
-              <ChevronDown :size="14" :class="{ rotated: showArchived }" />
-            </button>
-            <div v-if="showArchived" class="platform-items archived-items">
-              <div
-                v-for="instance in archivedInstances"
-                :key="instance.id"
-                class="platform-item archived"
-                :class="{ selected: matchesInstance(instance) }"
-                role="button"
-                tabindex="0"
-                @click="void selectInstance(instance)"
-                @keydown.enter="void selectInstance(instance)"
-                @keydown.space.prevent="void selectInstance(instance)"
-              >
-                <ChannelIcon :icon="descriptorFor(instance)?.icon || ''" :size="22" muted />
-                <div class="platform-copy">
-                  <div class="platform-name-row"><span class="platform-name">{{ displayName(instance) }}</span><span class="status-dot" :class="statusClass(instance.status)" /></div>
-                  <p>{{ projectName(instance) }}</p>
-                </div>
-                <span class="readonly-mark">{{ t('channels.archivedReadonly') }}</span>
-              </div>
-            </div>
-          </section>
-
-          <div v-if="!filteredActiveInstances.length && !archivedInstances.length" class="platform-empty">
+          <div v-if="!filteredActiveInstances.length" class="platform-empty">
             <Info :size="22" />
             <p>{{ t('channels.empty') }}</p>
           </div>
@@ -768,7 +737,7 @@ onBeforeUnmount(() => {
       <main v-if="draft" class="channel-config">
         <header class="config-header">
           <div class="config-header-main">
-            <div class="config-icon"><ChannelIcon :icon="selectedDescriptor?.icon || ''" :size="28" :muted="draft.archived" /></div>
+            <div class="config-icon"><ChannelIcon :icon="selectedDescriptor?.icon || ''" :size="28" :muted="!draft.enabled" /></div>
             <div class="config-heading-copy">
               <div class="config-title-row">
                 <h1>{{ displayName(draft) }}</h1>
@@ -780,13 +749,12 @@ onBeforeUnmount(() => {
           </div>
           <div class="auto-save-toggle">
             <span>{{ savingId === draft.id ? t('common.saving', 'Saving...') : t('channels.autoSaveHint', 'Auto-saved after changes') }}</span>
-            <button class="channel-switch large" :class="{ on: draft.enabled }" type="button" role="switch" :aria-checked="draft.enabled" :disabled="draft.archived" @click="void toggleEnabled(!draft.enabled)"><span /></button>
+            <button class="channel-switch large" :class="{ on: draft.enabled }" type="button" role="switch" :aria-checked="draft.enabled" @click="void toggleEnabled(!draft.enabled)"><span /></button>
           </div>
           <div class="config-meta">
             <span class="meta-badge"><span>{{ t('channels.platform', 'Platform') }}</span>{{ selectedDescriptor?.displayName || draft.type }}</span>
             <span class="meta-badge" :class="{ accent: selectedProject }"><FolderOpen :size="12" /><span>{{ selectedProject?.name || t('channels.unbound') }}</span></span>
-            <span class="meta-badge"><span>{{ t('channels.modelShort', 'Model') }}</span>{{ t('channels.modelDefault', 'Client default') }}</span>
-            <span v-if="draft.archived" class="meta-badge readonly"><Archive :size="12" />{{ t('channels.archivedReadonly') }}</span>
+            <span class="meta-badge"><span>{{ t('channels.modelShort', 'Model') }}</span>{{ t('channels.modelDefault', 'Codex CLI default') }}</span>
           </div>
         </header>
 
@@ -796,7 +764,7 @@ onBeforeUnmount(() => {
               <div class="setting-label-line"><label for="channel-name">{{ t('channels.fields.name', 'Channel Name') }}</label><code>name</code></div>
               <p>{{ t('channels.fields.nameHint', 'Used to identify this chat channel within the project.') }}</p>
             </div>
-            <input id="channel-name" v-model="draft.name" class="config-input" :disabled="draft.archived" :placeholder="selectedDescriptor?.displayName || draft.type" @input="scheduleSave" />
+            <input id="channel-name" v-model="draft.name" class="config-input" :placeholder="selectedDescriptor?.displayName || draft.type" @input="scheduleSave" />
           </section>
 
           <div class="config-fields-section">
@@ -806,7 +774,7 @@ onBeforeUnmount(() => {
                 <p>{{ t('channels.binding.heading') }}</p>
               </div>
               <div>
-                <select id="channel-project" v-model="draft.projectId" class="config-input config-select" :disabled="draft.archived" @change="handleProjectChange">
+                <select id="channel-project" v-model="draft.projectId" class="config-input config-select" @change="handleProjectChange">
                   <option :value="null">{{ t('channels.binding.none') }}</option>
                   <option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name || project.path }}</option>
                 </select>
@@ -821,8 +789,8 @@ onBeforeUnmount(() => {
                 <p v-if="field.placeholder">{{ field.placeholder }}</p>
               </div>
               <div class="secret-input-wrap">
-                <input :id="`channel-field-${field.key}`" v-model="draft.config[field.key]" class="config-input" :type="field.secret && !secretVisibility[field.key] ? 'password' : 'text'" :placeholder="field.placeholder || ''" :disabled="draft.archived" @input="scheduleSave" />
-                <button v-if="field.secret" class="secret-toggle" type="button" :title="secretVisibility[field.key] ? t('channels.actions.hideSecret', 'Hide secret') : t('channels.actions.showSecret', 'Show secret')" :disabled="draft.archived" @click="toggleSecret(field.key)">
+                <input :id="`channel-field-${field.key}`" v-model="draft.config[field.key]" class="config-input" :type="field.secret && !secretVisibility[field.key] ? 'password' : 'text'" :placeholder="field.placeholder || ''" @input="scheduleSave" />
+                <button v-if="field.secret" class="secret-toggle" type="button" :title="secretVisibility[field.key] ? t('channels.actions.hideSecret', 'Hide secret') : t('channels.actions.showSecret', 'Show secret')" @click="toggleSecret(field.key)">
                   <EyeOff v-if="secretVisibility[field.key]" :size="15" /><Eye v-else :size="15" />
                 </button>
               </div>
@@ -831,18 +799,26 @@ onBeforeUnmount(() => {
 
           <section class="setting-section setting-row-layout inherited-model-row">
             <div class="setting-label">
-              <div class="setting-label-line"><label>{{ t('channels.agent.model', 'Reply Model') }}</label><code>client.default.model</code></div>
-              <p>{{ t('channels.modelHint', 'Uses the client default model through the local Relay.') }}</p>
+              <div class="setting-label-line"><label>{{ t('channels.agent.model', 'Reply Model') }}</label><code>Codex CLI default</code></div>
+              <p>{{ t('channels.modelHint', 'Uses the Codex CLI default configuration for replies.') }}</p>
             </div>
-            <div class="inherited-value"><span>{{ t('channels.modelDefault', 'Client default') }}</span><span class="inherited-value-dot" /></div>
+            <div class="inherited-value"><span>{{ t('channels.modelDefault', 'Codex CLI default') }}</span><span class="inherited-value-dot" /></div>
+          </section>
+
+          <section class="setting-section setting-row-layout inherited-persona-row">
+            <div class="setting-label">
+              <div class="setting-label-line"><label>{{ t('channels.agent.persona') }}</label><code>agent.persona</code></div>
+              <p>{{ t('channels.agent.personaHint') }}</p>
+            </div>
+            <div class="inherited-value inherited-persona-value"><span>{{ t('channels.agent.personaInherited') }}</span><span class="inherited-value-dot" /></div>
           </section>
 
           <section class="setting-section setting-row-layout">
             <div class="setting-label">
-              <div class="setting-label-line"><label for="channel-prompt">{{ t('channels.agent.prompt') }}</label><code>systemPrompt</code></div>
-              <p>{{ t('channels.agent.promptHint', 'Optional instructions that shape this channel Agent persona.') }}</p>
+              <div class="setting-label-line"><label for="channel-broadcast-chat">{{ t('channels.agent.broadcastTarget') }}</label><code>broadcastChatId</code></div>
+              <p>{{ t('channels.agent.broadcastTargetHint') }}</p>
             </div>
-            <textarea id="channel-prompt" v-model="draft.config.systemPrompt" class="config-input config-textarea" rows="4" :disabled="draft.archived" :placeholder="t('channels.agent.promptPlaceholder')" @input="scheduleSave" />
+            <input id="channel-broadcast-chat" v-model="draft.config.broadcastChatId" class="config-input" :placeholder="t('channels.agent.broadcastTargetPlaceholder')" @input="scheduleSave" />
           </section>
 
           <section class="advanced-section">
@@ -854,27 +830,27 @@ onBeforeUnmount(() => {
             <details open class="accordion-section">
               <summary><div><strong>{{ t('channels.features.title', 'Features') }}</strong><p>{{ t('channels.features.description', 'Auto-reply, streaming reply, and auto-start policies.') }}</p></div><ChevronDown :size="15" /></summary>
               <div class="accordion-content">
-                <div class="advanced-setting"><div><strong>{{ t('channels.features.autoReply') }}</strong><p>{{ t('channels.features.autoReplyHint') }}</p></div><button class="channel-switch" :class="{ on: draft.features.autoReply }" type="button" role="switch" :aria-checked="draft.features.autoReply" :disabled="draft.archived" @click="setFeature('autoReply', !draft.features.autoReply)"><span /></button></div>
-                <div class="advanced-setting"><div><strong>{{ t('channels.features.streaming') }}</strong><p>{{ t('channels.features.streamingHint') }}</p></div><button class="channel-switch" :class="{ on: draft.features.streamingReply }" type="button" role="switch" :aria-checked="draft.features.streamingReply" :disabled="draft.archived" @click="setFeature('streamingReply', !draft.features.streamingReply)"><span /></button></div>
-                <div class="advanced-setting"><div><strong>{{ t('channels.features.autoStart') }}</strong><p>{{ t('channels.features.autoStartHint') }}</p></div><button class="channel-switch" :class="{ on: draft.features.autoStart }" type="button" role="switch" :aria-checked="draft.features.autoStart" :disabled="draft.archived" @click="setFeature('autoStart', !draft.features.autoStart)"><span /></button></div>
+                <div class="advanced-setting"><div><strong>{{ t('channels.features.autoReply') }}</strong><p>{{ t('channels.features.autoReplyHint') }}</p></div><button class="channel-switch" :class="{ on: draft.features.autoReply }" type="button" role="switch" :aria-checked="draft.features.autoReply" @click="setFeature('autoReply', !draft.features.autoReply)"><span /></button></div>
+                <div class="advanced-setting"><div><strong>{{ t('channels.features.streaming') }}</strong><p>{{ t('channels.features.streamingHint') }}</p></div><button class="channel-switch" :class="{ on: draft.features.streamingReply }" type="button" role="switch" :aria-checked="draft.features.streamingReply" @click="setFeature('streamingReply', !draft.features.streamingReply)"><span /></button></div>
+                <div class="advanced-setting"><div><strong>{{ t('channels.features.autoStart') }}</strong><p>{{ t('channels.features.autoStartHint') }}</p></div><button class="channel-switch" :class="{ on: draft.features.autoStart }" type="button" role="switch" :aria-checked="draft.features.autoStart" @click="setFeature('autoStart', !draft.features.autoStart)"><span /></button></div>
               </div>
             </details>
 
             <details v-if="selectedDescriptor?.tools?.length" class="accordion-section">
               <summary><div><strong>{{ t('channels.tools.title') }}</strong><p>{{ t('channels.tools.description', 'Control the tools available to this channel.') }}</p></div><ChevronDown :size="15" /></summary>
               <div class="accordion-content">
-                <div v-for="tool in selectedDescriptor.tools" :key="tool" class="advanced-setting"><div><strong>{{ tool }}</strong></div><button class="channel-switch" :class="{ on: draft.tools[tool] !== false }" type="button" role="switch" :aria-checked="draft.tools[tool] !== false" :disabled="draft.archived" @click="setTool(tool, draft.tools[tool] === false)"><span /></button></div>
+                <div v-for="tool in selectedDescriptor.tools" :key="tool" class="advanced-setting"><div><strong>{{ tool }}</strong></div><button class="channel-switch" :class="{ on: draft.tools[tool] !== false }" type="button" role="switch" :aria-checked="draft.tools[tool] !== false" @click="setTool(tool, draft.tools[tool] === false)"><span /></button></div>
               </div>
             </details>
 
             <details class="accordion-section">
               <summary><div class="summary-with-icon"><Shield :size="15" /><div><strong>{{ t('channels.permissions.title') }}</strong><p>{{ t('channels.permissions.description', 'Restrict channel read/write scope and command capabilities.') }}</p></div></div><ChevronDown :size="15" /></summary>
               <div class="accordion-content">
-                <div class="advanced-setting"><div><strong>{{ t('channels.permissions.readHome') }}</strong><p>{{ t('channels.permissions.readHomeHint', 'Allow reading files under the user home directory.') }}</p></div><button class="channel-switch" :class="{ on: draft.permissions.allowReadHome }" type="button" role="switch" :aria-checked="draft.permissions.allowReadHome" :disabled="draft.archived" @click="setPermission('allowReadHome', !draft.permissions.allowReadHome)"><span /></button></div>
-                <div v-if="!draft.permissions.allowReadHome" class="read-paths-setting"><div><strong>{{ t('channels.permissions.readablePaths', 'Allowed Read Paths') }}</strong><p>{{ t('channels.permissions.readablePathsHint', 'Whitelist directories the channel can read.') }}</p></div><div v-if="draft.permissions.readablePathPrefixes.length" class="path-tags"><span v-for="path in draft.permissions.readablePathPrefixes" :key="path" class="path-tag">{{ path }}<button type="button" :title="t('channels.actions.removePath', 'Remove path')" :disabled="draft.archived" @click="removeReadablePath(path)"><X :size="11" /></button></span></div><div class="path-input-row"><input v-model="readablePathDraft" class="config-input" :disabled="draft.archived" placeholder="C:\\Work\\Project" @keydown.enter.prevent="addReadablePath" /><button type="button" class="outline-action" :disabled="draft.archived" @click="addReadablePath">{{ t('channels.permissions.addPath', 'Add') }}</button></div></div>
-                <div class="advanced-setting"><div><strong>{{ t('channels.permissions.shell') }}</strong><p>{{ t('channels.permissions.shellHint', 'Allow executing terminal commands.') }}</p></div><button class="channel-switch" :class="{ on: draft.permissions.allowShell }" type="button" role="switch" :aria-checked="draft.permissions.allowShell" :disabled="draft.archived" @click="setPermission('allowShell', !draft.permissions.allowShell)"><span /></button></div>
-                <div class="advanced-setting"><div><strong>{{ t('channels.permissions.writeOutside') }}</strong><p>{{ t('channels.permissions.writeOutsideHint', 'Allow writing files outside the bound project.') }}</p></div><button class="channel-switch" :class="{ on: draft.permissions.allowWriteOutside }" type="button" role="switch" :aria-checked="draft.permissions.allowWriteOutside" :disabled="draft.archived" @click="setPermission('allowWriteOutside', !draft.permissions.allowWriteOutside)"><span /></button></div>
-                <div class="advanced-setting"><div><strong>{{ t('channels.permissions.subAgents') }}</strong><p>{{ t('channels.permissions.subAgentsHint', 'Allow channel Agent sub-agent tools.') }}</p></div><button class="channel-switch" :class="{ on: draft.permissions.allowSubAgents }" type="button" role="switch" :aria-checked="draft.permissions.allowSubAgents" :disabled="draft.archived" @click="setPermission('allowSubAgents', !draft.permissions.allowSubAgents)"><span /></button></div>
+                <div class="advanced-setting"><div><strong>{{ t('channels.permissions.readHome') }}</strong><p>{{ t('channels.permissions.readHomeHint', 'Allow reading files under the user home directory.') }}</p></div><button class="channel-switch" :class="{ on: draft.permissions.allowReadHome }" type="button" role="switch" :aria-checked="draft.permissions.allowReadHome" @click="setPermission('allowReadHome', !draft.permissions.allowReadHome)"><span /></button></div>
+                <div v-if="!draft.permissions.allowReadHome" class="read-paths-setting"><div><strong>{{ t('channels.permissions.readablePaths', 'Allowed Read Paths') }}</strong><p>{{ t('channels.permissions.readablePathsHint', 'Whitelist directories the channel can read.') }}</p></div><div v-if="draft.permissions.readablePathPrefixes.length" class="path-tags"><span v-for="path in draft.permissions.readablePathPrefixes" :key="path" class="path-tag">{{ path }}<button type="button" :title="t('channels.actions.removePath', 'Remove path')" @click="removeReadablePath(path)"><X :size="11" /></button></span></div><div class="path-input-row"><input v-model="readablePathDraft" class="config-input" placeholder="C:\\Work\\Project" @keydown.enter.prevent="addReadablePath" /><button type="button" class="outline-action" @click="addReadablePath">{{ t('channels.permissions.addPath', 'Add') }}</button></div></div>
+                <div class="advanced-setting"><div><strong>{{ t('channels.permissions.shell') }}</strong><p>{{ t('channels.permissions.shellHint', 'Allow executing terminal commands.') }}</p></div><button class="channel-switch" :class="{ on: draft.permissions.allowShell }" type="button" role="switch" :aria-checked="draft.permissions.allowShell" @click="setPermission('allowShell', !draft.permissions.allowShell)"><span /></button></div>
+                <div class="advanced-setting"><div><strong>{{ t('channels.permissions.writeOutside') }}</strong><p>{{ t('channels.permissions.writeOutsideHint', 'Allow writing files outside the bound project.') }}</p></div><button class="channel-switch" :class="{ on: draft.permissions.allowWriteOutside }" type="button" role="switch" :aria-checked="draft.permissions.allowWriteOutside" @click="setPermission('allowWriteOutside', !draft.permissions.allowWriteOutside)"><span /></button></div>
+                <div class="advanced-setting"><div><strong>{{ t('channels.permissions.subAgents') }}</strong><p>{{ t('channels.permissions.subAgentsHint', 'Allow channel Agent sub-agent tools.') }}</p></div><button class="channel-switch" :class="{ on: draft.permissions.allowSubAgents }" type="button" role="switch" :aria-checked="draft.permissions.allowSubAgents" @click="setPermission('allowSubAgents', !draft.permissions.allowSubAgents)"><span /></button></div>
               </div>
             </details>
            </section>
@@ -886,8 +862,8 @@ onBeforeUnmount(() => {
                 <p>{{ t('channels.weixin.bindingHint') }}</p>
               </div>
               <div class="weixin-binding-actions">
-                <button v-if="weixinQrUrl" class="outline-action" type="button" :disabled="draft.archived || weixinLoginPending" @click="void bindWeixin()"><RefreshCw :size="14" :class="{ spinning: weixinLoginPending }" />{{ t('channels.weixin.refreshQr') }}</button>
-                <button class="outline-action" type="button" :disabled="draft.archived || weixinLoginPending" @click="void bindWeixin()"><RefreshCw :size="14" :class="{ spinning: weixinLoginPending }" />{{ weixinLoginPending ? t('channels.weixin.bindingInProgress') : draft.config.token ? t('channels.weixin.rebind') : t('channels.weixin.bind') }}</button>
+                <button v-if="weixinQrUrl" class="outline-action" type="button" :disabled="weixinLoginPending" @click="void bindWeixin()"><RefreshCw :size="14" :class="{ spinning: weixinLoginPending }" />{{ t('channels.weixin.refreshQr') }}</button>
+                <button class="outline-action" type="button" :disabled="weixinLoginPending" @click="void bindWeixin()"><RefreshCw :size="14" :class="{ spinning: weixinLoginPending }" />{{ weixinLoginPending ? t('channels.weixin.bindingInProgress') : draft.config.token ? t('channels.weixin.rebind') : t('channels.weixin.bind') }}</button>
               </div>
             </div>
             <div class="weixin-binding-card">
@@ -905,8 +881,8 @@ onBeforeUnmount(() => {
           <div class="footer-error" v-if="draft.lastError"><CircleAlert :size="14" />{{ draft.lastError }}</div>
           <button v-if="isCustom(draft)" class="danger-action" type="button" :disabled="savingId === draft.id" @click="remove"><Trash2 :size="14" />{{ t('channels.actions.remove', 'Remove') }}</button>
           <div class="footer-actions">
-            <button v-if="!draft.archived && activeStatus === 'running'" class="outline-action" type="button" @click="stop"><Square :size="14" />{{ t('channels.actions.stop') }}</button>
-            <button v-else-if="!draft.archived" class="outline-action" type="button" :disabled="!draft.projectId" @click="start"><Play :size="14" />{{ t('channels.actions.start') }}</button>
+            <button v-if="activeStatus === 'running'" class="outline-action" type="button" @click="stop"><Square :size="14" />{{ t('channels.actions.stop') }}</button>
+            <button v-else class="outline-action" type="button" :disabled="!draft.projectId" @click="start"><Play :size="14" />{{ t('channels.actions.start') }}</button>
           </div>
         </footer>
       </main>
@@ -946,7 +922,6 @@ onBeforeUnmount(() => {
 .platform-item:hover { background: color-mix(in srgb, var(--mac-accent) 7%, transparent); }
 .platform-item.selected { border-color: color-mix(in srgb, var(--mac-accent) 26%, var(--mac-border)); background: color-mix(in srgb, var(--mac-accent) 11%, var(--mac-surface)); }
 .platform-item.disabled { color: var(--mac-text-secondary); }
-.platform-item.archived { color: var(--mac-text-secondary); opacity: .82; }
 .platform-copy { min-width: 0; flex: 1; }
 .platform-name-row { display: flex; min-width: 0; align-items: center; gap: 7px; }
 .platform-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 560; }
@@ -965,14 +940,6 @@ onBeforeUnmount(() => {
 .channel-switch.large span { width: 14px; height: 14px; }
 .channel-switch.large.on span { transform: translateX(16px); }
 .channel-switch:disabled { cursor: not-allowed; opacity: .48; }
-.archived-category { margin: 10px 0 0; padding-top: 12px; border-top: 1px solid var(--mac-divider); }
-.archived-heading { display: flex; width: 100%; align-items: center; gap: 7px; padding: 7px 9px; border: 0; border-radius: 7px; background: transparent; color: var(--mac-text-secondary); font: inherit; font-size: 11px; font-weight: 650; text-align: left; cursor: pointer; }
-.archived-heading span { min-width: 0; flex: 1; }
-.archived-heading:hover { background: color-mix(in srgb, var(--mac-accent) 7%, transparent); color: var(--mac-text); }
-.archived-heading svg:last-child { transition: transform .15s ease; }
-.archived-heading svg.rotated { transform: rotate(180deg); }
-.archived-items { margin-top: 4px; }
-.readonly-mark { flex: 0 0 auto; color: var(--mac-text-secondary); font-size: 9px; }
 .platform-empty { display: flex; min-height: 220px; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: var(--mac-text-secondary); text-align: center; }
 .platform-empty p { margin: 0; font-size: 13px; }
 .channel-config { display: flex; min-width: 0; min-height: 0; flex-direction: column; background: var(--mac-surface); }

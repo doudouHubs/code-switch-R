@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Check } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import ProjectManagerCardMenu from './ProjectManagerCardMenu.vue'
 import ProjectManagerCodexStatusLight from './ProjectManagerCodexStatusLight.vue'
@@ -23,6 +24,8 @@ const props = defineProps<{
   formatUpdatedAt: (timestamp: number) => string
   resolveSummary: (session: SessionSummary) => string
   showProjectNameTag: boolean
+  selectionMode: boolean
+  isSessionSelected: (sessionId: string) => boolean
   isSessionOpening: (sessionId: string) => boolean
   isSessionDeleting: (sessionId: string) => boolean
   codexMonitor: CodexStatusMonitorInfo
@@ -34,6 +37,7 @@ const emit = defineEmits<{
   delete: [session: SessionSummary]
   'open-session': [session: SessionSummary]
   'open-detail': [session: SessionSummary]
+  'toggle-selection': [session: SessionSummary]
 }>()
 
 const { t } = useI18n()
@@ -51,6 +55,9 @@ const resolveSessionActions = (session: SessionSummary): ProjectManagerCardMenuA
 ]
 
 const handleSessionAction = (session: SessionSummary, actionKey: string) => {
+  if (props.selectionMode) {
+    return
+  }
   if (actionKey.startsWith('rename:')) {
     emit('rename', session)
     return
@@ -62,17 +69,36 @@ const handleSessionAction = (session: SessionSummary, actionKey: string) => {
 }
 
 const emitOpenSession = (session: SessionSummary) => {
-  if (props.isSessionOpening(session.id) || props.isSessionDeleting(session.id)) {
+  if (
+    props.selectionMode ||
+    props.isSessionOpening(session.id) ||
+    props.isSessionDeleting(session.id)
+  ) {
     return
   }
   emit('open-session', session)
 }
 
 const emitOpenDetail = (session: SessionSummary) => {
-  if (props.isSessionDeleting(session.id)) {
+  if (props.selectionMode || props.isSessionDeleting(session.id)) {
     return
   }
   emit('open-detail', session)
+}
+
+const emitToggleSelection = (session: SessionSummary) => {
+  if (props.isSessionDeleting(session.id)) {
+    return
+  }
+  emit('toggle-selection', session)
+}
+
+const handleSessionCardClick = (session: SessionSummary) => {
+  if (props.selectionMode) {
+    emitToggleSelection(session)
+    return
+  }
+  emitOpenDetail(session)
 }
 </script>
 
@@ -81,9 +107,31 @@ const emitOpenDetail = (session: SessionSummary) => {
     <article
       v-for="session in sessions"
       :key="session.id"
-      :class="['session-card', { 'is-opening': isSessionOpening(session.id), 'is-deleting': isSessionDeleting(session.id) }]"
-      @click="emitOpenDetail(session)"
+      :class="[
+        'session-card',
+        {
+          'is-opening': isSessionOpening(session.id),
+          'is-deleting': isSessionDeleting(session.id),
+          'is-selection-mode': selectionMode,
+          'is-selected': selectionMode && isSessionSelected(session.id),
+        },
+      ]"
+      :role="selectionMode ? 'checkbox' : undefined"
+      :tabindex="selectionMode ? 0 : undefined"
+      :aria-checked="selectionMode ? isSessionSelected(session.id) : undefined"
+      :aria-label="selectionMode ? session.display_name : undefined"
+      @click="handleSessionCardClick(session)"
+      @keydown.enter.self.prevent="emitToggleSelection(session)"
+      @keydown.space.self.prevent="emitToggleSelection(session)"
     >
+      <span
+        v-if="selectionMode"
+        class="session-selection-indicator"
+        :class="{ 'is-checked': isSessionSelected(session.id) }"
+        aria-hidden="true"
+      >
+        <Check v-if="isSessionSelected(session.id)" :size="14" :stroke-width="2.4" />
+      </span>
       <div class="card-topline">
         <div class="card-title-row">
           <ProjectManagerCodexStatusLight
@@ -101,7 +149,7 @@ const emitOpenDetail = (session: SessionSummary) => {
           :label="t('components.projectManager.card.moreActions')"
           :actions="resolveSessionActions(session)"
           :loading="isSessionDeleting(session.id)"
-          :disabled="isSessionDeleting(session.id)"
+          :disabled="selectionMode || isSessionDeleting(session.id)"
           @select="handleSessionAction(session, $event)"
         />
       </div>
@@ -130,7 +178,7 @@ const emitOpenDetail = (session: SessionSummary) => {
         <button
           :class="['card-footer-action', { 'is-loading': isSessionOpening(session.id) }]"
           type="button"
-          :disabled="isSessionOpening(session.id) || isSessionDeleting(session.id)"
+          :disabled="selectionMode || isSessionOpening(session.id) || isSessionDeleting(session.id)"
           @click.stop="emitOpenSession(session)"
         >
           <span

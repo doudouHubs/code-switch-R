@@ -295,3 +295,52 @@ func TestPetBrowserBridgeChannelWhitelistDelegatesAllPageMethods(t *testing.T) {
 		t.Fatal("legacy channel service method name was unexpectedly accepted")
 	}
 }
+
+type petBrowserChatHistoryRuntime struct {
+	historyRequest PetChatHistoryRequest
+	historyCalls   int
+}
+
+func (r *petBrowserChatHistoryRuntime) StartChat(_ context.Context, _ PetChatRequest) (PetChatStartResult, error) {
+	return PetChatStartResult{}, nil
+}
+
+func (r *petBrowserChatHistoryRuntime) CancelChat(string) error { return nil }
+
+func (r *petBrowserChatHistoryRuntime) Close() error { return nil }
+
+func (r *petBrowserChatHistoryRuntime) GetChatHistory(_ context.Context, request PetChatHistoryRequest) (PetChatHistoryResult, error) {
+	r.historyCalls++
+	r.historyRequest = request
+	return PetChatHistoryResult{
+		ThreadID: "bridge-history-thread",
+		Messages: []PetChatHistoryMessage{{Role: "assistant", Content: "bridge history"}},
+	}, nil
+}
+
+func TestPetBrowserBridgeGetChatHistoryDelegatesToAIAPI(t *testing.T) {
+	runtime := &petBrowserChatHistoryRuntime{}
+	bridge := NewPetBrowserBridge(PetBrowserBridgeDependencies{
+		AI: NewPetAIAPIServiceWithChatRuntime(nil, runtime),
+	})
+	request := PetChatHistoryRequest{PetID: "bridge-pet", Persona: "bridge persona"}
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	value, err := bridge.dispatch(context.Background(), "codeswitch/services.PetAIAPIService.GetChatHistory", []json.RawMessage{encoded})
+	if err != nil {
+		t.Fatalf("GetChatHistory dispatch error = %v", err)
+	}
+	result, ok := value.(PetChatHistoryResult)
+	if !ok {
+		t.Fatalf("GetChatHistory result type = %T", value)
+	}
+	if result.ThreadID != "bridge-history-thread" || len(result.Messages) != 1 || result.Messages[0].Content != "bridge history" {
+		t.Fatalf("GetChatHistory result = %#v", result)
+	}
+	if runtime.historyCalls != 1 || runtime.historyRequest != request {
+		t.Fatalf("history runtime calls/request = %d / %#v", runtime.historyCalls, runtime.historyRequest)
+	}
+}

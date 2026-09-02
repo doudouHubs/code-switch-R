@@ -69,6 +69,19 @@ type PetRuntimeSnapshot struct {
 	SkinSelection PetSkinSelection `json:"skinSelection"`
 }
 
+// PetSettingsSnapshot 是设置页首屏的轻量契约。它保留皮肤列表元数据供绑定选择，
+// 但不携带计划、梦境历史、记忆和 atlas 图片；这些内容由各自的页面或资源入口按需读取。
+type PetSettingsSnapshot struct {
+	State         PetState         `json:"state"`
+	Experience    PetExperience    `json:"experience"`
+	Window        PetWindowConfig  `json:"window"`
+	Care          PetCareConfig    `json:"care"`
+	Agent         PetAgentConfig   `json:"agent"`
+	Dream         PetDreamConfig   `json:"dream"`
+	SkinSelection PetSkinSelection `json:"skinSelection"`
+	Skins         []PetSkinRecord  `json:"skins"`
+}
+
 // PetDailyBonusResult 把每日奖励和领取后的稳定快照放在同一个响应里，
 // 前端不需要先领取再额外读取，也不会把“已领取”状态显示成旧值。
 type PetDailyBonusResult struct {
@@ -149,6 +162,21 @@ func (s *PetService) GetRuntimeSnapshot(petID string) (PetRuntimeSnapshot, error
 		return PetRuntimeSnapshot{}, err
 	}
 	return newPetRuntimeSnapshot(snapshot)
+}
+
+// GetSettingsSnapshot 只返回设置页首屏需要的配置和皮肤元数据，避免打开设置时搬运
+// 梦境历史、经验日志、记忆以及 MB 级 atlas。完整 GetSnapshot 继续保留给兼容调用方。
+func (s *PetService) GetSettingsSnapshot(petID string) (PetSettingsSnapshot, error) {
+	service, err := s.apiServiceForPet(petID)
+	if err != nil {
+		return PetSettingsSnapshot{}, err
+	}
+
+	snapshot, err := service.LoadSettingsSnapshot()
+	if err != nil {
+		return PetSettingsSnapshot{}, err
+	}
+	return newPetSettingsSnapshot(snapshot)
 }
 
 // GetAtlas 独立读取当前皮肤的展示资源。atlas 只在首次 hydration 或皮肤变化时
@@ -486,18 +514,7 @@ func newPetSnapshot(snapshot PetMigrationSnapshot) (PetSnapshot, error) {
 		return PetSnapshot{}, err
 	}
 
-	// 内置资源来自 embed.FS，不经过数据库迁移，所以必须在 API 边界合并到列表；
-	// 否则 atlas 能渲染，设置页却看不到可选的 anya/penguin/capybara。
-	mergedSkins := mergeBuiltinPetSkins(snapshot.PetID, snapshot.Skins)
-	// nil slice 会被 JSON 编码成 null；前端契约要求 skins 始终是数组，
-	// 因此没有皮肤记录时显式返回 []，让调用方无需分支处理两种空值。
-	skins := make([]PetSkinRecord, len(mergedSkins))
-	for index, skin := range mergedSkins {
-		// Path/AtlasPath 只是后端持久化引用，不能成为浏览器资源地址或随快照泄漏。
-		skin.Path = ""
-		skin.AtlasPath = ""
-		skins[index] = skin
-	}
+	skins := sanitizePetSkinRecords(snapshot.PetID, snapshot.Skins)
 
 	// 这些记录属于前端需要展示的已落盘数据，但不能直接复用迁移快照里的切片：
 	// 除了避免调用方修改内部数据，还要把所有空切片固定成 []，并清掉梦境归档中的本地图片路径。
@@ -534,6 +551,36 @@ func newPetSnapshot(snapshot PetMigrationSnapshot) (PetSnapshot, error) {
 		Skins:         skins,
 		Atlas:         atlas,
 	}, nil
+}
+
+func newPetSettingsSnapshot(snapshot PetMigrationSnapshot) (PetSettingsSnapshot, error) {
+	runtimeSnapshot, err := newPetRuntimeSnapshot(snapshot)
+	if err != nil {
+		return PetSettingsSnapshot{}, err
+	}
+	return PetSettingsSnapshot{
+		State:         runtimeSnapshot.State,
+		Experience:    runtimeSnapshot.Experience,
+		Window:        runtimeSnapshot.Window,
+		Care:          runtimeSnapshot.Care,
+		Agent:         runtimeSnapshot.Agent,
+		Dream:         runtimeSnapshot.Dream,
+		SkinSelection: runtimeSnapshot.SkinSelection,
+		Skins:         sanitizePetSkinRecords(snapshot.PetID, snapshot.Skins),
+	}, nil
+}
+
+func sanitizePetSkinRecords(petID string, persisted []PetSkinRecord) []PetSkinRecord {
+	// 内置资源来自 embed.FS，不经过数据库迁移，所以必须在 API 边界合并到列表；
+	// 同时清掉本地路径，避免资源引用和文件系统信息穿过 Wails 边界。
+	mergedSkins := mergeBuiltinPetSkins(petID, persisted)
+	skins := make([]PetSkinRecord, len(mergedSkins))
+	for index, skin := range mergedSkins {
+		skin.Path = ""
+		skin.AtlasPath = ""
+		skins[index] = skin
+	}
+	return skins
 }
 
 func newPetRuntimeSnapshot(snapshot PetMigrationSnapshot) (PetRuntimeSnapshot, error) {

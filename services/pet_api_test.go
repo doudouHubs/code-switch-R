@@ -139,6 +139,45 @@ func TestPetServiceGetRuntimeSnapshotExcludesHeavyPayloads(t *testing.T) {
 	}
 }
 
+func TestPetServiceGetSettingsSnapshotExcludesHeavyPayloads(t *testing.T) {
+	imagePath := `C:\\Users\\X1\\AppData\\Local\\pet\\dream.png`
+	repository := &memoryPetRepository{
+		snapshot: PetMigrationSnapshot{
+			State:       &PetState{PetID: DefaultPetID, Name: "Kapi"},
+			Experience:  &PetExperience{PetID: DefaultPetID, TotalExp: 12},
+			Window:      &PetWindowConfig{PetID: DefaultPetID, Enabled: true},
+			Care:        &PetCareConfig{PetID: DefaultPetID},
+			Agent:       &PetAgentConfig{PetID: DefaultPetID, ProjectFolder: &imagePath},
+			DreamConfig: &PetDreamConfig{PetID: DefaultPetID},
+			PlanRecords: []PetPlanRecord{{PetID: DefaultPetID, PlanID: "plan-1"}},
+			Dreams:      []PetDreamHistoryRecord{{PetID: DefaultPetID, ID: "dream-1"}},
+			Memories:    []PetMemoryRecord{{PetID: DefaultPetID, ID: "memory-1"}},
+		},
+	}
+
+	snapshot, err := NewPetService(repository).GetSettingsSnapshot(DefaultPetID)
+	if err != nil {
+		t.Fatalf("GetSettingsSnapshot() error = %v", err)
+	}
+	if snapshot.State.Name != "Kapi" || snapshot.Agent.ProjectFolder != nil {
+		t.Fatalf("settings snapshot core = %#v, want normalized core without project path", snapshot)
+	}
+
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatalf("marshal settings snapshot: %v", err)
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("decode settings snapshot JSON: %v", err)
+	}
+	for _, field := range []string{"plans", "dreams", "memories", "atlas"} {
+		if _, ok := payload[field]; ok {
+			t.Fatalf("settings snapshot contains heavy field %q: %s", field, raw)
+		}
+	}
+}
+
 func TestPetServiceGetAtlasKeepsResourceOutOfRuntimeSnapshot(t *testing.T) {
 	service := NewPetService(&memoryPetRepository{})
 

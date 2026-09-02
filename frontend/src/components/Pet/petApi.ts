@@ -37,6 +37,7 @@ import {
   type PetSkinRecord,
   type PetSkinSelection,
   type PetRuntimeSnapshot,
+  type PetSettingsSnapshot,
   type PetSnapshot,
   type PetState,
   type PetVoiceMode,
@@ -53,6 +54,7 @@ const PET_WINDOW_SERVICE = 'codeswitch/services.PetWindowAPI'
 export const PET_RUNTIME_METHODS = {
   getSnapshot: 'GetSnapshot',
   getRuntimeSnapshot: 'GetRuntimeSnapshot',
+  getSettingsSnapshot: 'GetSettingsSnapshot',
   getAtlas: 'GetAtlas',
   performAction: 'PerformAction',
   endWorkEarly: 'EndWorkEarlyForPet',
@@ -113,6 +115,7 @@ export interface PetWindowPlatformSnapshot {
 export interface PetApi {
   getSnapshot(petId?: string): Promise<PetSnapshot>
   getRuntimeSnapshot(petId?: string): Promise<PetRuntimeSnapshot>
+  getSettingsSnapshot(petId?: string): Promise<PetSettingsSnapshot>
   getAtlas(petId?: string, cacheKey?: string): Promise<PetAtlasAsset | null>
   invalidateAtlas(petId?: string): void
   performAction(petId: string, action: PetInteractionAction): Promise<PetActionResult>
@@ -633,6 +636,33 @@ function normalizeRuntimeSnapshot(value: unknown, petId: string): PetRuntimeSnap
   }
 }
 
+function normalizeSettingsSnapshot(value: unknown, petId: string): PetSettingsSnapshot {
+  const full = normalizeSnapshot(value, petId)
+  return {
+    state: full.state,
+    experience: full.experience,
+    window: full.window,
+    care: full.care,
+    agent: full.agent,
+    dream: full.dream,
+    skinSelection: full.skinSelection,
+    skins: full.skins
+  }
+}
+
+function projectSettingsSnapshot(snapshot: PetSnapshot): PetSettingsSnapshot {
+  return {
+    state: snapshot.state,
+    experience: snapshot.experience,
+    window: snapshot.window,
+    care: snapshot.care,
+    agent: snapshot.agent,
+    dream: snapshot.dream,
+    skinSelection: snapshot.skinSelection,
+    skins: snapshot.skins
+  }
+}
+
 function createDefaultSnapshot(petId: string): PetSnapshot {
   const now = Date.now()
   return {
@@ -914,6 +944,18 @@ export function createPetApi(adapter: PetRuntimeAdapter = wailsRuntimeAdapter): 
     return normalizeSnapshot(raw, petId)
   }
 
+  async function readRemoteSettingsSnapshot(petId: string): Promise<PetSettingsSnapshot> {
+    try {
+      const raw = await adapter.call(PET_RUNTIME_METHODS.getSettingsSnapshot, [petId])
+      mode = 'backend'
+      return normalizeSettingsSnapshot(raw, petId)
+    } catch (error) {
+      // 旧宿主没有轻量入口时只回退一次完整快照；新宿主不会搬运历史和 atlas。
+      if (!isRuntimeUnavailable(error)) throw error
+      return projectSettingsSnapshot(await readRemoteSnapshot(petId))
+    }
+  }
+
   async function readRemoteRuntimeSnapshot(petId: string): Promise<PetRuntimeSnapshot> {
     try {
       const raw = await adapter.call(PET_RUNTIME_METHODS.getRuntimeSnapshot, [petId])
@@ -944,6 +986,17 @@ export function createPetApi(adapter: PetRuntimeAdapter = wailsRuntimeAdapter): 
       if (!shouldUsePreviewFallback(error)) throw error
       mode = 'fallback'
       return settleFallback(getFallbackSnapshot(petId))
+    }
+  }
+
+  async function getSettingsSnapshot(petId = DEFAULT_PET_ID): Promise<PetSettingsSnapshot> {
+    if (mode === 'fallback') return projectSettingsSnapshot(settleFallback(getFallbackSnapshot(petId)))
+    try {
+      return await readRemoteSettingsSnapshot(petId)
+    } catch (error) {
+      if (!shouldUsePreviewFallback(error)) throw error
+      mode = 'fallback'
+      return projectSettingsSnapshot(settleFallback(getFallbackSnapshot(petId)))
     }
   }
 
@@ -1180,6 +1233,7 @@ export function createPetApi(adapter: PetRuntimeAdapter = wailsRuntimeAdapter): 
 
   return {
     getSnapshot,
+    getSettingsSnapshot,
     getRuntimeSnapshot,
     getAtlas,
     invalidateAtlas,

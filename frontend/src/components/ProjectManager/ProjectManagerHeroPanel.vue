@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { ListChecks } from '@lucide/vue'
 import BaseButton from '../common/BaseButton.vue'
 import BaseInput from '../common/BaseInput.vue'
 import type { ProjectManagerViewMode } from './types'
@@ -11,6 +12,9 @@ const props = defineProps<{
   refreshing: boolean
   searching: boolean
   conversationSearch: boolean
+  canSelectSessions: boolean
+  selectionMode: boolean
+  selectionBusy: boolean
 }>()
 
 const emit = defineEmits<{
@@ -18,6 +22,7 @@ const emit = defineEmits<{
   'change-mode': [mode: ProjectManagerViewMode]
   refresh: []
   clear: []
+  'toggle-selection': []
 }>()
 
 const { t } = useI18n()
@@ -72,18 +77,44 @@ const searchPlaceholder = computed(() =>
         <BaseInput
           v-model="keywordModel"
           class="search-input"
+          :disabled="selectionBusy"
           :placeholder="searchPlaceholder"
         />
         <button
           v-if="modelValue"
           class="clear-btn"
           type="button"
+          :disabled="selectionBusy"
           @click="emit('clear')"
         >
           ×
         </button>
       </div>
-      <BaseButton variant="outline" :disabled="refreshing" :loading="refreshing" @click="emit('refresh')">
+      <BaseButton
+        v-if="canSelectSessions"
+        class="selection-toggle-button"
+        :variant="selectionMode ? 'primary' : 'outline'"
+        :disabled="selectionBusy"
+        :aria-pressed="selectionMode"
+        @click="emit('toggle-selection')"
+      >
+        <ListChecks :size="16" aria-hidden="true" />
+        <span>
+          {{
+            t(
+              selectionMode
+                ? 'components.projectManager.selection.exit'
+                : 'components.projectManager.selection.enter',
+            )
+          }}
+        </span>
+      </BaseButton>
+      <BaseButton
+        variant="outline"
+        :disabled="refreshing || selectionBusy"
+        :loading="refreshing"
+        @click="emit('refresh')"
+      >
         {{ t('components.projectManager.toolbar.refresh') }}
       </BaseButton>
     </div>

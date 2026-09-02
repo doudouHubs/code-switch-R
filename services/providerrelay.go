@@ -1265,6 +1265,18 @@ func ensureRequestLogTableWithDB(db *sql.DB) error {
 		}
 	}
 
+	// 统计接口都按 created_at 做范围查询；平台统计还会叠加 platform 等值条件。
+	// 索引放在 schema owner 这里，既能覆盖老库迁移，也避免页面请求临时建索引阻塞 UI。
+	const createRequestLogIndexesSQL = `
+		CREATE INDEX IF NOT EXISTS idx_request_log_created_at
+			ON request_log(created_at);
+		CREATE INDEX IF NOT EXISTS idx_request_log_platform_created_at
+			ON request_log(platform, created_at);
+	`
+	if _, err := db.Exec(createRequestLogIndexesSQL); err != nil {
+		return fmt.Errorf("创建 request_log 查询索引失败: %w", err)
+	}
+
 	return nil
 }
 

@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -38,7 +37,6 @@ var trayIcons embed.FS
 type AppService struct {
 	App        *application.App
 	MainWindow application.Window
-	TrayWindow application.Window
 }
 
 // channelBrowserBridgeAdapter 把 channels.ChannelService 适配到 services 包的
@@ -160,19 +158,6 @@ func (a *AppService) SetApp(app *application.App) {
 	a.App = app
 }
 
-func (a *AppService) SetTrayWindowHeight(height int) {
-	if runtime.GOOS != "darwin" || a.TrayWindow == nil {
-		return
-	}
-	if height < trayWindowMinHeight {
-		height = trayWindowMinHeight
-	}
-	if height > trayWindowMaxHeight {
-		height = trayWindowMaxHeight
-	}
-	a.TrayWindow.SetSize(trayWindowWidth, height)
-}
-
 // ShowMainWindow 供独立桌宠窗唤起主窗口；设置和 Studio 属于主应用页面，
 // 不能在透明桌宠窗里再挂一套路由，否则会重新引入主布局和焦点冲突。
 func (a *AppService) ShowMainWindow() {
@@ -238,11 +223,6 @@ func main() {
 		}
 		return
 	}
-
-	// GUI 进程需要保留前台窗口变化证据；Hook 子进程在上面的轻量分支直接返回，
-	// 不启动监控，避免每次状态事件都额外写入一条无关的窗口诊断轨迹。
-	stopForegroundMonitor := services.StartRuntimeForegroundMonitor()
-	defer stopForegroundMonitor()
 
 	appservice := &AppService{}
 	// 资源服务必须在首个宠物快照读取前注入 embed.FS；否则开发环境可能正常，
@@ -317,6 +297,12 @@ func main() {
 	var petApp *application.App
 	var petBrowserBridge *services.PetBrowserBridge
 	petBrowserEvents := services.NewPetBrowserEventHub()
+	petAICompletionBroker := services.NewPetAICompletionBroker()
+	petAIWailsEvents := services.NewPetAIEventCoalescer(50*time.Millisecond, func(event services.PetAIEvent) {
+		if petApp != nil {
+			petApp.Event.Emit("pet.ai", event)
+		}
+	})
 	petActivityEmitter := services.PetActivityEmitterFunc(func(event services.PetActivityEvent) error {
 		// 活动态同时投递给 Wails 和 loopback bridge；它是 UI 旁路，不得因为
 		// 任一广播通道暂时不可用而阻断真实模型请求或 provider 降级。
@@ -359,7 +345,7 @@ func main() {
 	mcpService := services.NewMCPService()
 	settingsService := services.NewSettingsService()
 	autoStartService := services.NewAutoStartService()
-	projectManagerService := services.NewProjectManagerService()
+	projectManagerService := services.NewProjectManagerServiceWithPetAgentModelReader(petDAO)
 	// 宠物绑定保存的是 projectId；解析必须回到 ProjectManager 的项目列表取当前路径，
 	// 这样项目重命名或旧迁移数据不会让 Codex runtime 启动到过期目录。
 	petProjectWorkspaceResolver := services.NewPetProjectWorkspaceResolver(petDAO, projectManagerService)
@@ -384,12 +370,14 @@ func main() {
 		providerRelayAddr,
 	)
 	providerRelay.SetActivityEmitter(petActivityEmitter)
-	clientDefaultCodexProviderReader := services.NewClientDefaultCodexProviderReader(providerRelay.Addr())
 	petAIProviderReader := services.NewPetAIProviderReader(providerService, geminiService)
 	petAIEventEmitter := services.PetAIEventEmitterFunc(func(event services.PetAIEvent) error {
+		// 心跳只等待 AI 终态，不依赖 Wails coalescer；终态必须在所有 UI
+		// 旁路之前进入 broker，避免快速完成的 Codex turn 丢失唤醒信号。
+		petAICompletionBroker.Publish(event)
 		petBrowserEvents.Publish("pet.ai", event)
 		if event.Type != services.PetAIEventDelta || event.Sequence <= 2 {
-			go services.WriteRuntimeDiagnostic(
+			services.WriteRuntimeDiagnosticAsync(
 				"pet-ai-event",
 				fmt.Sprintf("type=%q", event.Type),
 				fmt.Sprintf("pet_id=%q", event.PetID),
@@ -435,9 +423,7 @@ func main() {
 				}
 			}
 		}
-		if petApp != nil {
-			petApp.Event.Emit("pet.ai", event)
-		}
+		petAIWailsEvents.Submit(event)
 		return nil
 	})
 	petAIService := services.NewPetAIServiceWithDependencies(services.PetAIDependencies{
@@ -457,16 +443,8 @@ func main() {
 			return nil
 		}),
 	})
-	petCodexRuntime := services.NewPetCodexRuntime(services.PetCodexRuntimeDependencies{
-		Sessions:          petDAO,
-		WorkspaceResolver: petProjectWorkspaceResolver,
-		Emitter:           petAIEventEmitter,
-		ActivityEmitter:   petActivityEmitter,
-		Executable:        strings.TrimSpace(os.Getenv("CODESWITCH_CODEX_EXECUTABLE")),
-	})
-
-	// 频道使用独立数据库和独立 Agent runtime：旧 OpenCowork 配置只导入一次，
-	// 项目绑定则每次从当前 ProjectManager 事实源解析，避免两个应用的项目 ID 漂移。
+	// 频道使用独立数据库；旧 OpenCowork 配置只导入一次，项目绑定则每次从当前
+	// ProjectManager 事实源解析，避免两个应用的项目 ID 漂移。
 	channelStore, channelStoreErr := channels.OpenDefaultStore()
 	if channelStoreErr != nil {
 		log.Fatalf("频道数据库初始化失败: %v", channelStoreErr)
@@ -509,15 +487,27 @@ func main() {
 		}
 		return "", fmt.Errorf("bound project %q was not found", projectID)
 	}
-	channelProviderResolve := func(ctx context.Context, instance channels.ChannelInstance) (services.PetProviderReference, error) {
-		return resolveDefaultChannelProvider(ctx, instance, clientDefaultCodexProviderReader)
-	}
+	// 两个入口只共享项目级 thread，不共享各自提交上来的 persona。这里把
+	// 宠物设置作为唯一人格事实源，避免频道旧配置或前端兼容字段改变 thread
+	// fingerprint；读取失败通过请求终态报告，不能悄悄退回另一份人格。
+	agentPersonaResolver := services.AgentConversationPersonaResolverFunc(func(ctx context.Context, _ string, petID string) (string, error) {
+		petID = strings.TrimSpace(petID)
+		if petID == "" {
+			petID = services.DefaultPetID
+		}
+		persona, err := petDAO.LoadAgentPersona(ctx, petID)
+		if err != nil {
+			return "", err
+		}
+		return services.BuildPetAgentPersona(persona.SystemPrompt, persona.PetName), nil
+	})
 	channelEventSink := func(event channels.ChannelEvent) {
 		petBrowserEvents.Publish("channels.event", event)
 		if petApp != nil {
 			petApp.Event.Emit("channels.event", event)
 		}
 	}
+	var agentHub *services.AgentConversationHub
 	var channelRuntime *channels.AgentRuntime
 	channelManager := channels.NewManager(channelStore, func(event channels.ChannelEvent) {
 		if channelRuntime != nil {
@@ -526,17 +516,92 @@ func main() {
 		}
 		channelEventSink(event)
 	})
+	petProjectWorkspaceByID := services.ProjectWorkspaceResolverFunc(func(ctx context.Context, projectID string) (string, error) {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		return channelProjectResolve(ctx, projectID)
+	})
+	petCodexRuntime := services.NewPetCodexRuntime(services.PetCodexRuntimeDependencies{
+		Sessions:                 petDAO,
+		AgentSessions:            petDAO,
+		AgentModelReader:         petDAO,
+		WorkspaceResolver:        petProjectWorkspaceResolver,
+		ProjectWorkspaceResolver: petProjectWorkspaceByID,
+		Emitter: services.PetAIEventEmitterFunc(func(event services.PetAIEvent) error {
+			if agentHub != nil {
+				return agentHub.Emit(event)
+			}
+			return petAIEventEmitter.Emit(event)
+		}),
+		ActivityEmitter: petActivityEmitter,
+		DynamicToolProvider: channels.NewChannelCodexDynamicToolProvider(
+			channelStore,
+			channelManager,
+			channelEventSink,
+		),
+		// 共享 Codex runtime 的 thread/turn 来源必须登记到项目管理器状态服务，
+		// Hook 才能区分 Agent 管家和具体频道，避免按“最近项目”误投递。
+		CodexHookSourceRegistrar: projectManagerService,
+		// 微信入站图片落在频道数据库旁的受控目录；Codex 只允许读取这一路径，
+		// 不能因为请求携带了本地路径就获得任意文件读取能力。
+		LocalImageRoots: []string{channelStore.MediaRoot()},
+		Executable:      strings.TrimSpace(os.Getenv("CODESWITCH_CODEX_EXECUTABLE")),
+	})
+	agentHub = services.NewAgentConversationHub(petCodexRuntime, services.AgentConversationHubOptions{
+		PersonaResolver: agentPersonaResolver,
+		Emitter: services.PetAIEventEmitterFunc(func(event services.PetAIEvent) error {
+			// Hub 是事件的唯一公共出口；先送入完成 broker 和 UI，再让频道入口
+			// 处理原频道的流式投递，二者都不能反向启动第二个 Codex runtime。
+			err := petAIEventEmitter.Emit(event)
+			if channelRuntime != nil {
+				if channelErr := channelRuntime.Emit(event); err == nil {
+					err = channelErr
+				}
+			}
+			return err
+		}),
+		Broadcaster: services.AgentChannelBroadcasterFunc(func(ctx context.Context, projectID, text, requestID string) []services.AgentDeliveryResult {
+			if channelRuntime == nil {
+				return []services.AgentDeliveryResult{{ProjectID: projectID, Error: "channel runtime is unavailable"}}
+			}
+			return channelRuntime.BroadcastProject(ctx, projectID, text, requestID)
+		}),
+	})
 	channelRuntime = channels.NewAgentRuntime(
 		channelStore,
 		channelManager,
 		channelProjectResolve,
-		clientDefaultCodexProviderReader,
-		http.DefaultTransport,
 		channelEventSink,
-		channelProviderResolve,
+		channels.AgentRuntimeOptions{
+			ChatRuntime:       agentHub,
+			SharedChatRuntime: true,
+		},
 	)
+	projectManagerService.SetCodexHookNotificationSink(func(ctx context.Context, notification services.CodexHookNotification) error {
+		if channelRuntime == nil {
+			return fmt.Errorf("channel runtime is unavailable")
+		}
+		return channelRuntime.DeliverCodexHookNotification(ctx, notification)
+	})
 	channelService := channels.NewChannelService(channelStore, channelManager, channelProjects, channelEventSink)
-	petAIAPIService := services.NewPetAIAPIServiceWithChatRuntime(petAIService, petCodexRuntime)
+	petAIAPIService := services.NewPetAIAPIServiceWithChatRuntime(petAIService, agentHub)
+	petHeartbeatService := services.NewPetHeartbeatService(services.PetHeartbeatDependencies{
+		PetID:             services.DefaultPetID,
+		Pet:               petService,
+		Repository:        petDAO,
+		WorkspaceResolver: petProjectWorkspaceResolver,
+		ChatRunner:        petAIAPIService,
+		Completions:       petAICompletionBroker,
+		Emitter: services.PetHeartbeatEmitterFunc(func(event services.PetHeartbeatEvent) error {
+			petBrowserEvents.Publish("pet.heartbeat", event)
+			if petApp != nil {
+				petApp.Event.Emit("pet.heartbeat", event)
+			}
+			return nil
+		}),
+	})
+	petHeartbeatAPI := services.NewPetHeartbeatAPI(petHeartbeatService)
 	petImageService := services.NewPetImageService(petAIProviderReader, http.DefaultTransport)
 	petImageAPIService := services.NewPetImageAPIService(petImageService)
 	petMediaAPIService := services.NewPetMediaAPIService()
@@ -635,6 +700,7 @@ func main() {
 			application.NewService(petMemoryService),
 			application.NewService(petDreamAPIService),
 			application.NewService(petAIAPIService),
+			application.NewService(petHeartbeatAPI),
 			application.NewService(petImageAPIService),
 			application.NewService(petMediaAPIService),
 			application.NewService(petStudioAPIService),
@@ -648,6 +714,11 @@ func main() {
 		},
 	})
 	petApp = app
+	if err := petHeartbeatService.Start(context.Background()); err != nil {
+		log.Printf("⚠️ 宠物心跳服务启动失败: %v", err)
+	} else {
+		log.Println("✅ 宠物心跳服务已启动")
+	}
 	go func() {
 		started, failed, err := channelService.StartAuto()
 		if err != nil {
@@ -658,15 +729,6 @@ func main() {
 			log.Printf("✅ 频道自动启动完成：成功=%d 失败=%d", len(started), len(failed))
 		}
 	}()
-	if runtime.GOOS == "windows" {
-		app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(_ *application.ApplicationEvent) {
-			// SetWinEventHook 的 OUTOFCONTEXT 回调要求注册线程拥有消息循环；
-			// 事件处理器本身跑在后台 goroutine，必须转投 Wails 主线程，
-			// 否则会出现“注册成功但永远收不到前台事件”的假诊断。
-			application.InvokeAsync(services.StartRuntimeForegroundEventMonitor)
-		})
-	}
-
 	// 宠物自动照料由运行时统一编排：先结算离线衰减和 away 奖励，再按规则尝试
 	// 一次动作，并把结果广播给桌宠窗口。心跳间隔与源项目保持 30 秒。
 	go func() {
@@ -761,6 +823,7 @@ func main() {
 		Project:     projectManagerService,
 		AppSettings: appSettings,
 		Scheduler:   petSchedulerAPI,
+		Heartbeat:   petHeartbeatAPI,
 		Channels:    channelBrowserBridgeAdapter{service: channelService},
 		Events:      petBrowserEvents,
 	}, services.PetBrowserBridgeOptions{Addr: petBrowserBridgeAddr})
@@ -846,6 +909,12 @@ func main() {
 				})
 			}
 
+			// Hub 同时拥有 Agent 管家和频道入口的共享 Codex runtime；只在这里
+			// 关闭一次，频道适配器本身不再拥有任何 app-server 进程。
+			_ = runShutdownStage("agent-conversation-hub", func(context.Context) error {
+				return agentHub.Close()
+			})
+
 			// provider 可能持有平台长轮询、WebSocket 和 heartbeat；Manager 内部
 			// 已按实例并行停止，这里只负责给它一个统一的退出阶段和预算。
 			channelStopErr := runShutdownStage("channel-providers", func(ctx context.Context) error {
@@ -861,8 +930,12 @@ func main() {
 				projectManagerService.StopCodexStatusMonitor()
 				return nil
 			})
-			_ = runShutdownStage("pet-codex-runtime", func(context.Context) error {
-				return petCodexRuntime.Close()
+			_ = runShutdownStage("pet-heartbeat", func(ctx context.Context) error {
+				return petHeartbeatService.Close(ctx)
+			})
+			_ = runShutdownStage("pet-ai-event-dispatcher", func(context.Context) error {
+				petAIWailsEvents.Close()
+				return nil
 			})
 			_ = runShutdownStage("background-timers", func(context.Context) error {
 				close(blacklistStopChan)
@@ -960,54 +1033,17 @@ func main() {
 		e.Cancel()
 	})
 
-	var trayWindow application.Window
-
 	app.Event.OnApplicationEvent(events.Mac.ApplicationShouldHandleReopen, func(event *application.ApplicationEvent) {
 		showMainWindow(true)
 	})
 
 	app.Event.OnApplicationEvent(events.Mac.ApplicationDidBecomeActive, func(event *application.ApplicationEvent) {
-		if trayWindow != nil {
-			// Tray exists on macOS; avoid auto-opening the main window on activation.
-			return
-		}
+		// 托盘菜单不再依赖独立 WebView；应用被激活时只聚焦已经可见的主窗口，
+		// 避免用户从托盘操作时意外把被隐藏的主窗口重新弹出。
 		if mainWindow.IsVisible() {
 			mainWindow.Focus()
-			return
 		}
-		showMainWindow(true)
 	})
-
-	if runtime.GOOS == "darwin" {
-		trayWindow = app.Window.NewWithOptions(application.WebviewWindowOptions{
-			Title:            "Code Switch Tray",
-			Name:             "tray",
-			Width:            trayWindowWidth,
-			Height:           trayWindowMinHeight,
-			MinWidth:         trayWindowWidth,
-			MaxWidth:         trayWindowWidth,
-			MinHeight:        trayWindowMinHeight,
-			MaxHeight:        trayWindowMaxHeight,
-			AlwaysOnTop:      true,
-			DisableResize:    true,
-			Frameless:        true,
-			Hidden:           true,
-			BackgroundType:   application.BackgroundTypeTransparent,
-			BackgroundColour: application.NewRGBA(0, 0, 0, 0),
-			Mac: application.MacWindow{
-				Backdrop:      application.MacBackdropTransparent,
-				TitleBar:      application.MacTitleBarHidden,
-				DisableShadow: true,
-				WindowLevel:   application.MacWindowLevelPopUpMenu,
-			},
-			URL: "/#/tray",
-		})
-		trayWindow.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
-			trayWindow.Hide()
-			e.Cancel()
-		})
-		appservice.TrayWindow = trayWindow
-	}
 
 	systray := app.SystemTray.New()
 	// systray.SetLabel("AI Code Studio")
@@ -1019,44 +1055,28 @@ func main() {
 		systray.SetDarkModeIcon(darkIcon)
 	}
 
-	if runtime.GOOS == "darwin" && trayWindow != nil {
-		trayMenu := application.NewMenu()
-		trayMenu.Add("显示主窗口").OnClick(func(ctx *application.Context) {
+	// 菜单只在启动时创建一次。右键回调不得读取日志、配置或重建菜单，
+	// 否则系统原生菜单会被磁盘/数据库 I/O 阻塞，直接表现为“右键很慢”。
+	trayMenu := application.NewMenu()
+	trayMenu.Add("显示主窗口").OnClick(func(ctx *application.Context) {
+		showMainWindow(true)
+	})
+	trayMenu.Add("退出").OnClick(func(ctx *application.Context) {
+		app.Quit()
+	})
+	systray.SetMenu(trayMenu)
+	systray.OnRightClick(func() {
+		systray.OpenMenu()
+	})
+	systray.OnClick(func() {
+		if !mainWindow.IsVisible() {
 			showMainWindow(true)
-		})
-		trayMenu.Add("退出").OnClick(func(ctx *application.Context) {
-			app.Quit()
-		})
-		systray.SetMenu(trayMenu)
-		systray.AttachWindow(trayWindow).WindowOffset(8)
-		systray.OnRightClick(func() {
-			systray.OpenMenu()
-		})
-	} else {
-		refreshTrayMenu := func() {
-			used, total := getTrayUsage(logService, appSettings)
-			trayMenu := buildUsageTrayMenu(used, total, func() {
-				showMainWindow(true)
-			}, func() {
-				app.Quit()
-			})
-			systray.SetMenu(trayMenu)
+			return
 		}
-		refreshTrayMenu()
-		systray.OnRightClick(func() {
-			refreshTrayMenu()
-			systray.OpenMenu()
-		})
-		systray.OnClick(func() {
-			if !mainWindow.IsVisible() {
-				showMainWindow(true)
-				return
-			}
-			if !mainWindow.IsFocused() {
-				focusMainWindow()
-			}
-		})
-	}
+		if !mainWindow.IsFocused() {
+			focusMainWindow()
+		}
+	})
 
 	appservice.SetApp(app)
 
@@ -1106,88 +1126,4 @@ func handleDockVisibility(service *dock.DockService, show bool) {
 	} else {
 		service.HideAppIcon()
 	}
-}
-
-const (
-	trayWindowWidth      = 360
-	trayWindowMinHeight  = 120
-	trayWindowMaxHeight  = 420
-	trayProgressBarWidth = 28
-)
-
-func getTrayUsage(logService *services.LogService, appSettings *services.AppSettingsService) (float64, float64) {
-	used := 0.0
-	total := 0.0
-	adjustment := 0.0
-	if logService != nil {
-		stats, err := logService.StatsSince("")
-		if err == nil {
-			used = stats.CostTotal
-		}
-	}
-	if appSettings != nil {
-		settings, err := appSettings.GetAppSettings()
-		if err == nil {
-			total = settings.BudgetTotal
-			adjustment = settings.BudgetUsedAdjustment
-		}
-	}
-	used += adjustment
-	if used < 0 {
-		used = 0
-	}
-	if total < 0 {
-		total = 0
-	}
-	return used, total
-}
-
-func buildUsageTrayMenu(used float64, total float64, onShow func(), onQuit func()) *application.Menu {
-	menu := application.NewMenu()
-	menu.Add(trayUsageLabel(used, total)).SetEnabled(false)
-	menu.Add(trayProgressLabel(used, total)).SetEnabled(false)
-	menu.AddSeparator()
-	menu.Add("显示主窗口").OnClick(func(ctx *application.Context) {
-		onShow()
-	})
-	menu.Add("退出").OnClick(func(ctx *application.Context) {
-		onQuit()
-	})
-	return menu
-}
-
-func trayUsageLabel(used float64, total float64) string {
-	usedLabel := formatCurrency(used)
-	if total <= 0 {
-		return fmt.Sprintf("今日已用 %s / 未设置", usedLabel)
-	}
-	return fmt.Sprintf("今日已用 %s / %s", usedLabel, formatCurrency(total))
-}
-
-func trayProgressLabel(used float64, total float64) string {
-	bar := strings.Repeat("-", trayProgressBarWidth)
-	if total <= 0 {
-		return fmt.Sprintf("进度 [%s] --%%", bar)
-	}
-	ratio := used / total
-	if ratio < 0 {
-		ratio = 0
-	}
-	if ratio > 1 {
-		ratio = 1
-	}
-	filled := int(math.Round(ratio * float64(trayProgressBarWidth)))
-	if filled < 0 {
-		filled = 0
-	}
-	if filled > trayProgressBarWidth {
-		filled = trayProgressBarWidth
-	}
-	bar = strings.Repeat("#", filled) + strings.Repeat("-", trayProgressBarWidth-filled)
-	percent := int(math.Round(ratio * 100))
-	return fmt.Sprintf("进度 [%s] %d%%", bar, percent)
-}
-
-func formatCurrency(value float64) string {
-	return fmt.Sprintf("$%.2f", value)
 }

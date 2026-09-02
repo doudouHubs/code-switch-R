@@ -17,10 +17,6 @@ export function SetApp(app: application$0.App | null): $CancellablePromise<void>
     return $Call.ByID(3487267257, app);
 }
 
-export function SetTrayWindowHeight(height: number): $CancellablePromise<void> {
-    return $Call.ByID(3935785145, height);
-}
-
 /**
  * ShowMainWindow 供独立桌宠窗唤起主窗口；设置和 Studio 属于主应用页面，
  * 不能在透明桌宠窗里再挂一套路由，否则会重新引入主布局和焦点冲突。

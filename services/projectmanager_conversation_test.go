@@ -1,10 +1,12 @@
 package services
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseProjectManagerConversationMessageSupportsLegacyAndResponseItems(t *testing.T) {
@@ -151,5 +153,160 @@ func TestScanProjectManagerCodexSessionFileSupportsSessionIDAndResponseUser(t *t
 	}
 	if latestUserMessage != "new question" {
 		t.Fatalf("latest user message = %q, want new question", latestUserMessage)
+	}
+}
+
+func TestBuildProjectManagerConversationPrunePlanBeforeUsesUserTimestamp(t *testing.T) {
+	cutoffAt := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC).UnixMilli()
+	items := []SessionConversationItem{
+		{ID: "user-old", Role: "user", Timestamp: cutoffAt - 1},
+		{ID: "agent-old", Role: "agent", Timestamp: cutoffAt - 1, ReplyFor: "user-old"},
+		{ID: "user-boundary", Role: "user", Timestamp: cutoffAt},
+		{ID: "agent-boundary", Role: "agent", Timestamp: cutoffAt, ReplyFor: "user-boundary"},
+		{ID: "user-new", Role: "user", Timestamp: cutoffAt + 1},
+		{ID: "agent-new", Role: "agent", Timestamp: cutoffAt + 1, ReplyFor: "user-new"},
+		{ID: "user-unknown", Role: "user", Timestamp: 0},
+		{ID: "agent-unknown", Role: "agent", Timestamp: 0, ReplyFor: "user-unknown"},
+	}
+
+	plan, matched, err := buildProjectManagerConversationPrunePlanBefore("session-1", items, cutoffAt)
+	if err != nil {
+		t.Fatalf("build time prune plan: %v", err)
+	}
+	if !matched {
+		t.Fatal("time prune plan did not match the old turn")
+	}
+
+	if len(plan.TargetUserIDs) != 1 || len(plan.TargetAgentIDs) != 1 || len(plan.TargetIDs) != 2 {
+		t.Fatalf("target counts = users:%d agents:%d items:%d, want 1/1/2", len(plan.TargetUserIDs), len(plan.TargetAgentIDs), len(plan.TargetIDs))
+	}
+	for _, id := range []string{"user-old", "agent-old"} {
+		if _, ok := plan.TargetIDs[id]; !ok {
+			t.Fatalf("old conversation item %q was not selected", id)
+		}
+	}
+	for _, id := range []string{"user-boundary", "agent-boundary", "user-new", "agent-new", "user-unknown", "agent-unknown"} {
+		if _, ok := plan.TargetIDs[id]; ok {
+			t.Fatalf("conversation item %q should be retained", id)
+		}
+	}
+}
+
+func TestBuildProjectManagerConversationPrunePlanBeforeReportsNoMatch(t *testing.T) {
+	cutoffAt := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC).UnixMilli()
+	items := []SessionConversationItem{{
+		ID:        "user-recent",
+		Role:      "user",
+		Timestamp: cutoffAt + 1,
+	}}
+
+	plan, matched, err := buildProjectManagerConversationPrunePlanBefore("session-1", items, cutoffAt)
+	if err != nil {
+		t.Fatalf("build no-match time prune plan: %v", err)
+	}
+	if matched {
+		t.Fatal("recent-only conversation unexpectedly matched")
+	}
+	if len(plan.TargetIDs) != 0 || len(plan.TargetUserIDs) != 0 || len(plan.TargetAgentIDs) != 0 {
+		t.Fatalf("no-match plan contains targets: %#v", plan)
+	}
+}
+
+func TestProjectManagerSessionDeleteRangeDuration(t *testing.T) {
+	tests := []struct {
+		rangeKey string
+		want     time.Duration
+	}{
+		{rangeKey: projectManagerSessionDeleteRangeOneWeek, want: 7 * 24 * time.Hour},
+		{rangeKey: projectManagerSessionDeleteRangeThreeWeeks, want: 21 * 24 * time.Hour},
+		{rangeKey: projectManagerSessionDeleteRangeOneMonth, want: 30 * 24 * time.Hour},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.rangeKey, func(t *testing.T) {
+			got, err := projectManagerSessionDeleteRangeDuration(tt.rangeKey)
+			if err != nil {
+				t.Fatalf("resolve duration: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("duration = %s, want %s", got, tt.want)
+			}
+		})
+	}
+
+	if _, err := projectManagerSessionDeleteRangeDuration(projectManagerSessionDeleteRangeAll); err == nil {
+		t.Fatal("all range should not be accepted by the detail prune endpoint")
+	}
+}
+
+func TestPruneSessionConversationsByRangeContinuesAfterSessionFailure(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("USERPROFILE", tmpHome)
+
+	sessionID := "11111111-1111-4111-8111-111111111111"
+	projectPath := filepath.Join(tmpHome, "workspace")
+	sessionPath := filepath.Join(tmpHome, ".codex", "sessions", "2026", "08", "31", "session.jsonl")
+	if err := os.MkdirAll(filepath.Dir(sessionPath), 0o755); err != nil {
+		t.Fatalf("create session directory: %v", err)
+	}
+
+	now := time.Now()
+	oldAt := now.Add(-8 * 24 * time.Hour)
+	recentAt := now.Add(-24 * time.Hour)
+	lines := []string{
+		fmt.Sprintf(`{"type":"session_meta","timestamp":%q,"payload":{"id":%q,"cwd":%q}}`, oldAt.Format(time.RFC3339Nano), sessionID, projectPath),
+		fmt.Sprintf(`{"type":"event_msg","timestamp":%q,"payload":{"type":"user_message","message":"old question"}}`, oldAt.Format(time.RFC3339Nano)),
+		fmt.Sprintf(`{"type":"event_msg","timestamp":%q,"payload":{"type":"agent_message","message":"old answer"}}`, oldAt.Add(time.Second).Format(time.RFC3339Nano)),
+		fmt.Sprintf(`{"type":"event_msg","timestamp":%q,"payload":{"type":"user_message","message":"recent question"}}`, recentAt.Format(time.RFC3339Nano)),
+		fmt.Sprintf(`{"type":"event_msg","timestamp":%q,"payload":{"type":"agent_message","message":"recent answer"}}`, recentAt.Add(time.Second).Format(time.RFC3339Nano)),
+	}
+	if err := os.WriteFile(sessionPath, []byte(strings.Join(lines, "\n")), 0o600); err != nil {
+		t.Fatalf("write session fixture: %v", err)
+	}
+
+	service := NewProjectManagerService()
+	result, err := service.PruneSessionConversationsByRange(
+		[]string{"missing-session", sessionID},
+		projectManagerSessionDeleteRangeOneWeek,
+	)
+	if err != nil {
+		t.Fatalf("batch time prune: %v", err)
+	}
+	if len(result.Results) != 2 {
+		t.Fatalf("batch result count = %d, want 2", len(result.Results))
+	}
+	if result.Results[0].Error == "" {
+		t.Fatal("missing session did not report an item error")
+	}
+	if result.Results[1].Error != "" || result.Results[1].DeletedTurns != 1 || result.Results[1].DeletedItems != 2 {
+		t.Fatalf("valid session result = %#v, want one turn and two items", result.Results[1])
+	}
+
+	data, err := os.ReadFile(sessionPath)
+	if err != nil {
+		t.Fatalf("read pruned session: %v", err)
+	}
+	content := string(data)
+	if strings.Contains(content, "old question") || strings.Contains(content, "old answer") {
+		t.Fatalf("old conversation remains after prune: %s", content)
+	}
+	if !strings.Contains(content, "recent question") || !strings.Contains(content, "recent answer") {
+		t.Fatalf("recent conversation was removed: %s", content)
+	}
+
+	snapshot, err := service.GetSnapshot()
+	if err != nil {
+		t.Fatalf("load snapshot after prune: %v", err)
+	}
+	found := false
+	for _, session := range snapshot.Sessions {
+		if session.ID == sessionID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("time pruning removed the session from the snapshot")
 	}
 }

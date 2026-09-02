@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	channelSchemaVersion       = "3"
+	channelSchemaVersion       = "5"
 	openCoworkImportMarker     = "opencowork-plugins-v1"
 	builtinConsolidationMarker = "builtin-instances-v2"
 	openCoworkPluginsFileName  = "plugins.json"
@@ -62,6 +62,23 @@ func (s *Store) Path() string {
 		return ""
 	}
 	return s.path
+}
+
+// MediaRoot 返回频道入站媒体的受控目录。它和数据库放在同一应用目录下，
+// 这样媒体文件与频道数据天然属于同一份本地生命周期，Codex thread 恢复时
+// 不会因为临时目录清理而丢失图片引用。
+func (s *Store) MediaRoot() string {
+	if s == nil {
+		return ""
+	}
+	path := strings.TrimSpace(s.path)
+	if path == "" {
+		return ""
+	}
+	if absolute, err := filepath.Abs(path); err == nil {
+		path = absolute
+	}
+	return filepath.Join(filepath.Dir(path), "channel-media")
 }
 
 func (s *Store) configure() error {
@@ -124,6 +141,10 @@ func (s *Store) ensureSchema() error {
 			sender_name TEXT NOT NULL DEFAULT '',
 			project_id TEXT NOT NULL,
 			working_folder TEXT NOT NULL,
+			codex_thread_id TEXT NOT NULL DEFAULT '',
+			codex_persona_fingerprint TEXT NOT NULL DEFAULT '',
+			codex_tool_fingerprint TEXT NOT NULL DEFAULT '',
+			codex_protocol_version INTEGER NOT NULL DEFAULT 0,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY(instance_id) REFERENCES channel_instances(id) ON DELETE CASCADE,
@@ -174,12 +195,28 @@ func (s *Store) ensureSchema() error {
 	if err := s.ensureColumn("channel_instances", "provider_platform", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	// 归档字段用于收敛旧的项目副本，但不删除其会话和消息；旧数据库必须显式补列。
+	// archived 只作为旧数据库的兼容列保留；业务层不再读取或公开它，旧数据库仍必须显式补列。
 	if err := s.ensureColumn("channel_instances", "archived", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
-	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_channel_instances_archived ON channel_instances(archived, updated_at DESC)`); err != nil {
-		return fmt.Errorf("create archived channel index: %w", err)
+	// Codex thread 元数据与频道会话共存，旧数据库必须补齐这些内部列；
+	// 缺失时恢复会退回新 thread，但不能因此破坏既有消息历史。
+	for _, column := range []struct {
+		name       string
+		definition string
+	}{
+		{name: "codex_thread_id", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "codex_persona_fingerprint", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "codex_tool_fingerprint", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "codex_protocol_version", definition: "INTEGER NOT NULL DEFAULT 0"},
+	} {
+		if err := s.ensureColumn("channel_sessions", column.name, column.definition); err != nil {
+			return err
+		}
+	}
+	// 归档功能已退休，删除旧索引但保留兼容列，避免数据库继续携带已失效的查询路径。
+	if _, err := s.db.Exec(`DROP INDEX IF EXISTS idx_channel_instances_archived`); err != nil {
+		return fmt.Errorf("drop archived channel index: %w", err)
 	}
 	if _, err := s.db.Exec(`INSERT INTO channel_meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, "schema-version", channelSchemaVersion); err != nil {
 		return fmt.Errorf("save channel schema version: %w", err)
@@ -246,9 +283,6 @@ func upsertInstanceWithExec(exec sqlExecer, instance ChannelInstance) error {
 	if instance.Enabled && (instance.ProjectID == nil || strings.TrimSpace(*instance.ProjectID) == "") {
 		return errors.New("an enabled channel must be bound to a project")
 	}
-	if instance.Archived && (instance.Enabled || instance.Status == "running") {
-		return errors.New("an archived channel must remain stopped")
-	}
 	configJSON, err := json.Marshal(instance.Config)
 	if err != nil {
 		return fmt.Errorf("encode channel config: %w", err)
@@ -270,15 +304,15 @@ func upsertInstanceWithExec(exec sqlExecer, instance ChannelInstance) error {
 			id, type, name, enabled, builtin, archived, config_json, created_at, project_id,
 			provider_platform, provider_id, model, tools_json, features_json, permissions_json, status,
 			last_error, updated_at
-		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES(?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			type=excluded.type, name=excluded.name, enabled=excluded.enabled,
-			builtin=excluded.builtin, archived=excluded.archived, config_json=excluded.config_json,
+			builtin=excluded.builtin, archived=0, config_json=excluded.config_json,
 			project_id=excluded.project_id, provider_platform=excluded.provider_platform, provider_id=excluded.provider_id,
 			model=excluded.model, tools_json=excluded.tools_json,
 			features_json=excluded.features_json, permissions_json=excluded.permissions_json,
 			status=excluded.status, last_error=excluded.last_error, updated_at=excluded.updated_at`,
-		instance.ID, instance.Type, instance.Name, boolInt(instance.Enabled), boolInt(instance.Builtin), boolInt(instance.Archived),
+		instance.ID, instance.Type, instance.Name, boolInt(instance.Enabled), boolInt(instance.Builtin),
 		string(configJSON), instance.CreatedAt, nullableString(instance.ProjectID), instance.ProviderPlatform, nullableString(instance.ProviderID),
 		nullableString(instance.Model), string(toolsJSON), string(featuresJSON), string(permissionsJSON),
 		instance.Status, instance.LastError, instance.UpdatedAt,
@@ -296,16 +330,13 @@ func (s *Store) UpsertInstance(instance ChannelInstance) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.ensureMutableInstanceLocked(instance.ID); err != nil {
-		return err
-	}
 	return s.upsertInstanceLocked(instance)
 }
 
 func (s *Store) ListInstances() ([]ChannelInstance, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	rows, err := s.db.Query(`SELECT id,type,name,enabled,builtin,archived,config_json,created_at,project_id,provider_platform,provider_id,model,tools_json,features_json,permissions_json,status,last_error,updated_at FROM channel_instances ORDER BY archived ASC, builtin DESC, name ASC, id ASC`)
+	rows, err := s.db.Query(`SELECT id,type,name,enabled,builtin,config_json,created_at,project_id,provider_platform,provider_id,model,tools_json,features_json,permissions_json,status,last_error,updated_at FROM channel_instances WHERE archived=0 ORDER BY builtin DESC, name ASC, id ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -327,7 +358,7 @@ func (s *Store) ListInstances() ([]ChannelInstance, error) {
 func (s *Store) GetInstance(id string) (ChannelInstance, bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	row := s.db.QueryRow(`SELECT id,type,name,enabled,builtin,archived,config_json,created_at,project_id,provider_platform,provider_id,model,tools_json,features_json,permissions_json,status,last_error,updated_at FROM channel_instances WHERE id = ?`, strings.TrimSpace(id))
+	row := s.db.QueryRow(`SELECT id,type,name,enabled,builtin,config_json,created_at,project_id,provider_platform,provider_id,model,tools_json,features_json,permissions_json,status,last_error,updated_at FROM channel_instances WHERE id = ? AND archived=0`, strings.TrimSpace(id))
 	instance, err := scanInstance(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ChannelInstance{}, false, nil
@@ -341,9 +372,6 @@ func (s *Store) GetInstance(id string) (ChannelInstance, bool, error) {
 func (s *Store) DeleteInstance(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.ensureMutableInstanceLocked(id); err != nil {
-		return err
-	}
 	result, err := s.db.Exec(`DELETE FROM channel_instances WHERE id = ?`, strings.TrimSpace(id))
 	if err != nil {
 		return err
@@ -358,39 +386,20 @@ func (s *Store) DeleteInstance(id string) error {
 	return nil
 }
 
-// ensureMutableInstanceLocked 是持久化层最后一道只读边界。
-// API 和 Manager 都有对应的业务校验，但消息、媒体和测试替身也可能直接写 Store；
-// 在这里统一拦截 archived 实例，避免某个新调用方绕过上层又污染历史快照。
-func (s *Store) ensureMutableInstanceLocked(id string) error {
-	var archived int
-	err := s.db.QueryRow(`SELECT archived FROM channel_instances WHERE id = ?`, strings.TrimSpace(id)).Scan(&archived)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if archived != 0 {
-		return errors.New("archived channel is read-only")
-	}
-	return nil
-}
-
 type scanner interface{ Scan(dest ...any) error }
 
 func scanInstance(row scanner) (ChannelInstance, error) {
 	var (
 		instance                                             ChannelInstance
-		enabled, builtin, archived                           int
+		enabled, builtin                                     int
 		configJSON, toolsJSON, featuresJSON, permissionsJSON string
 		projectID, providerID, model                         sql.NullString
 	)
-	if err := row.Scan(&instance.ID, &instance.Type, &instance.Name, &enabled, &builtin, &archived, &configJSON, &instance.CreatedAt, &projectID, &instance.ProviderPlatform, &providerID, &model, &toolsJSON, &featuresJSON, &permissionsJSON, &instance.Status, &instance.LastError, &instance.UpdatedAt); err != nil {
+	if err := row.Scan(&instance.ID, &instance.Type, &instance.Name, &enabled, &builtin, &configJSON, &instance.CreatedAt, &projectID, &instance.ProviderPlatform, &providerID, &model, &toolsJSON, &featuresJSON, &permissionsJSON, &instance.Status, &instance.LastError, &instance.UpdatedAt); err != nil {
 		return ChannelInstance{}, err
 	}
 	instance.Enabled = enabled != 0
 	instance.Builtin = builtin != 0
-	instance.Archived = archived != 0
 	if projectID.Valid && projectID.String != "" {
 		value := projectID.String
 		instance.ProjectID = &value
@@ -433,26 +442,29 @@ func (s *Store) UpsertSession(session ChannelSession) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.ensureMutableInstanceLocked(session.InstanceID); err != nil {
-		return err
-	}
 	_, err := s.db.Exec(`
-		INSERT INTO channel_sessions(id,instance_id,chat_id,chat_name,sender_id,sender_name,project_id,working_folder,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?)
+		INSERT INTO channel_sessions(
+			id,instance_id,chat_id,chat_name,sender_id,sender_name,project_id,working_folder,
+			codex_thread_id,codex_persona_fingerprint,codex_tool_fingerprint,codex_protocol_version,
+			created_at,updated_at
+		)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(instance_id,chat_id) DO UPDATE SET
 			chat_name=excluded.chat_name,sender_id=excluded.sender_id,sender_name=excluded.sender_name,
 			project_id=excluded.project_id,working_folder=excluded.working_folder,updated_at=excluded.updated_at`,
 		session.ID, session.InstanceID, session.ChatID, session.ChatName, session.SenderID, session.SenderName,
-		session.ProjectID, session.WorkingFolder, session.CreatedAt, session.UpdatedAt)
+		session.ProjectID, session.WorkingFolder,
+		session.codexThreadID, session.codexPersonaFingerprint, session.codexToolFingerprint, session.codexProtocolVersion,
+		session.CreatedAt, session.UpdatedAt)
 	return err
 }
 
 func (s *Store) GetSession(instanceID, chatID string) (ChannelSession, bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	row := s.db.QueryRow(`SELECT id,instance_id,chat_id,chat_name,sender_id,sender_name,project_id,working_folder,created_at,updated_at FROM channel_sessions WHERE instance_id=? AND chat_id=?`, instanceID, chatID)
+	row := s.db.QueryRow(`SELECT id,instance_id,chat_id,chat_name,sender_id,sender_name,project_id,working_folder,codex_thread_id,codex_persona_fingerprint,codex_tool_fingerprint,codex_protocol_version,created_at,updated_at FROM channel_sessions WHERE instance_id=? AND chat_id=?`, instanceID, chatID)
 	var session ChannelSession
-	err := row.Scan(&session.ID, &session.InstanceID, &session.ChatID, &session.ChatName, &session.SenderID, &session.SenderName, &session.ProjectID, &session.WorkingFolder, &session.CreatedAt, &session.UpdatedAt)
+	err := row.Scan(&session.ID, &session.InstanceID, &session.ChatID, &session.ChatName, &session.SenderID, &session.SenderName, &session.ProjectID, &session.WorkingFolder, &session.codexThreadID, &session.codexPersonaFingerprint, &session.codexToolFingerprint, &session.codexProtocolVersion, &session.CreatedAt, &session.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ChannelSession{}, false, nil
 	}
@@ -465,7 +477,7 @@ func (s *Store) GetSession(instanceID, chatID string) (ChannelSession, bool, err
 func (s *Store) ListSessions(instanceID string) ([]ChannelSession, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	rows, err := s.db.Query(`SELECT id,instance_id,chat_id,chat_name,sender_id,sender_name,project_id,working_folder,created_at,updated_at FROM channel_sessions WHERE instance_id=? ORDER BY updated_at DESC`, instanceID)
+	rows, err := s.db.Query(`SELECT id,instance_id,chat_id,chat_name,sender_id,sender_name,project_id,working_folder,codex_thread_id,codex_persona_fingerprint,codex_tool_fingerprint,codex_protocol_version,created_at,updated_at FROM channel_sessions WHERE instance_id=? ORDER BY updated_at DESC`, instanceID)
 	if err != nil {
 		return nil, err
 	}
@@ -473,7 +485,7 @@ func (s *Store) ListSessions(instanceID string) ([]ChannelSession, error) {
 	result := make([]ChannelSession, 0)
 	for rows.Next() {
 		var session ChannelSession
-		if err := rows.Scan(&session.ID, &session.InstanceID, &session.ChatID, &session.ChatName, &session.SenderID, &session.SenderName, &session.ProjectID, &session.WorkingFolder, &session.CreatedAt, &session.UpdatedAt); err != nil {
+		if err := rows.Scan(&session.ID, &session.InstanceID, &session.ChatID, &session.ChatName, &session.SenderID, &session.SenderName, &session.ProjectID, &session.WorkingFolder, &session.codexThreadID, &session.codexPersonaFingerprint, &session.codexToolFingerprint, &session.codexProtocolVersion, &session.CreatedAt, &session.UpdatedAt); err != nil {
 			return nil, err
 		}
 		result = append(result, session)
@@ -516,9 +528,6 @@ func (s *Store) appendMessage(message ChannelMessage) (bool, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.ensureMutableInstanceLocked(message.InstanceID); err != nil {
-		return false, err
-	}
 	result, err := s.db.Exec(`
 		INSERT INTO channel_messages(id,instance_id,session_id,external_id,role,chat_id,sender_id,sender_name,content,images_json,audio_json,timestamp,raw,created_at)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
@@ -535,9 +544,9 @@ func (s *Store) appendMessage(message ChannelMessage) (bool, error) {
 func (s *Store) GetSessionByID(id string) (ChannelSession, bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	row := s.db.QueryRow(`SELECT id,instance_id,chat_id,chat_name,sender_id,sender_name,project_id,working_folder,created_at,updated_at FROM channel_sessions WHERE id=?`, strings.TrimSpace(id))
+	row := s.db.QueryRow(`SELECT id,instance_id,chat_id,chat_name,sender_id,sender_name,project_id,working_folder,codex_thread_id,codex_persona_fingerprint,codex_tool_fingerprint,codex_protocol_version,created_at,updated_at FROM channel_sessions WHERE id=?`, strings.TrimSpace(id))
 	var session ChannelSession
-	err := row.Scan(&session.ID, &session.InstanceID, &session.ChatID, &session.ChatName, &session.SenderID, &session.SenderName, &session.ProjectID, &session.WorkingFolder, &session.CreatedAt, &session.UpdatedAt)
+	err := row.Scan(&session.ID, &session.InstanceID, &session.ChatID, &session.ChatName, &session.SenderID, &session.SenderName, &session.ProjectID, &session.WorkingFolder, &session.codexThreadID, &session.codexPersonaFingerprint, &session.codexToolFingerprint, &session.codexProtocolVersion, &session.CreatedAt, &session.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ChannelSession{}, false, nil
 	}
@@ -584,14 +593,9 @@ func (s *Store) ListMessages(sessionID string, limit int) ([]ChannelMessage, err
 }
 
 func (s *Store) SaveMedia(messageID, instanceID string, media ChannelMedia) error {
-	if media.ID == "" {
-		media.ID = sessionKey(messageID, media.Kind, media.FileName)
-	}
+	media.ID = channelMediaStorageID(messageID, media)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.ensureMutableInstanceLocked(instanceID); err != nil {
-		return err
-	}
 	_, err := s.db.Exec(`INSERT INTO channel_media(id,message_id,instance_id,kind,media_type,file_name,data,created_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data,media_type=excluded.media_type,file_name=excluded.file_name`, media.ID, messageID, instanceID, media.Kind, media.MediaType, media.FileName, media.Data, nowMillis())
 	return err
 }

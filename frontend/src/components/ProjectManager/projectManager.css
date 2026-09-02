@@ -91,7 +91,7 @@
 
 .project-manager-page .toolbar-actions {
   display: grid;
-  grid-template-columns: minmax(280px, 460px) auto;
+  grid-template-columns: minmax(280px, 460px) auto auto;
   justify-content: end;
   gap: 12px;
   align-items: center;
@@ -156,6 +156,15 @@
   height: 48px;
   padding-top: 0;
   padding-bottom: 0;
+}
+
+.project-manager-page .selection-toggle-button {
+  gap: 8px;
+  min-width: max-content;
+}
+
+.project-manager-page .selection-toggle-button svg {
+  flex: 0 0 auto;
 }
 
 .project-manager-page .clear-btn {
@@ -395,6 +404,68 @@
 
 .project-manager-page .session-card.is-opening:hover {
   transform: none;
+}
+
+.project-manager-page .session-card.is-selection-mode {
+  cursor: pointer;
+}
+
+.project-manager-page .session-card.is-selection-mode:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--mac-accent) 58%, transparent);
+  outline-offset: 3px;
+}
+
+.project-manager-page .session-card.is-selection-mode .card-topline {
+  padding-left: 26px;
+}
+
+.project-manager-page .session-card.is-selection-mode .card-action-menu,
+.project-manager-page .session-card.is-selection-mode .card-footer-action {
+  opacity: 0.42;
+}
+
+.project-manager-page .session-card.is-selection-mode .card-footer-action {
+  cursor: not-allowed;
+}
+
+.project-manager-page .session-card.is-selected {
+  border-color: color-mix(in srgb, var(--mac-accent) 58%, transparent);
+  box-shadow: 0 22px 44px color-mix(in srgb, var(--mac-accent) 20%, transparent);
+}
+
+.project-manager-page .session-card.is-selected:hover {
+  border-color: color-mix(in srgb, var(--mac-accent) 72%, transparent);
+}
+
+.project-manager-page .session-selection-indicator {
+  position: absolute;
+  top: 22px;
+  left: 22px;
+  z-index: 1;
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid var(--mac-text-secondary);
+  border-radius: 6px;
+  color: #fff;
+  background: transparent;
+  transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+}
+
+.project-manager-page .session-selection-indicator.is-checked {
+  border-color: var(--mac-accent);
+  background: var(--mac-accent);
+  transform: scale(1.04);
+}
+
+.dark .project-manager-page .session-selection-indicator {
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.dark .project-manager-page .session-selection-indicator.is-checked {
+  border-color: var(--mac-accent);
 }
 
 .project-manager-page .project-card.is-deleting,
@@ -1478,6 +1549,192 @@
   margin: 20px 18px 0;
 }
 
+.project-manager-page .session-selection-dock {
+  position: sticky;
+  bottom: 12px;
+  z-index: 8;
+  display: grid;
+  grid-template-columns: minmax(150px, 0.7fr) minmax(0, 2fr);
+  align-items: center;
+  gap: 14px;
+  margin: 20px 18px 12px;
+  padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
+  border: 1px solid rgba(17, 28, 47, 0.08);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 20px 40px rgba(29, 40, 61, 0.14);
+  backdrop-filter: blur(18px);
+}
+
+.dark .project-manager-page .session-selection-dock {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(18, 25, 38, 0.96);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.32);
+}
+
+.project-manager-page .session-selection-summary {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.project-manager-page .session-selection-summary strong {
+  overflow: hidden;
+  color: var(--mac-text);
+  font-size: 0.9rem;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-manager-page .session-selection-summary span {
+  color: var(--mac-text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.25;
+}
+
+.project-manager-page .session-selection-actions {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(max-content, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.project-manager-page .session-selection-range {
+  position: relative;
+  min-width: max-content;
+}
+
+.project-manager-page .session-selection-range-trigger {
+  width: 100%;
+}
+
+.project-manager-page .session-selection-range-trigger svg:last-child {
+  flex: 0 0 auto;
+  transition: transform 0.18s ease;
+}
+
+.project-manager-page .session-selection-range-trigger svg:last-child.is-open {
+  transform: rotate(180deg);
+}
+
+.project-manager-page .session-selection-range-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 12;
+  display: grid;
+  width: max-content;
+  min-width: 100%;
+  max-width: min(260px, calc(100vw - 32px));
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid rgba(17, 28, 47, 0.1);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 18px 34px rgba(29, 40, 61, 0.18);
+  backdrop-filter: blur(18px);
+}
+
+.dark .project-manager-page .session-selection-range-menu {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(18, 25, 38, 0.98);
+  box-shadow: 0 18px 34px rgba(0, 0, 0, 0.36);
+}
+
+.project-manager-page .session-selection-range-option {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--mac-text);
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.project-manager-page .session-selection-range-option:hover,
+.project-manager-page .session-selection-range-option:focus-visible {
+  background: rgba(17, 28, 47, 0.06);
+}
+
+.dark .project-manager-page .session-selection-range-option:hover,
+.dark .project-manager-page .session-selection-range-option:focus-visible {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.project-manager-page .session-selection-range-option:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--mac-accent) 52%, transparent);
+  outline-offset: -2px;
+}
+
+.project-manager-page .session-selection-range-option:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.project-manager-page .session-selection-range-check {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+}
+
+.project-manager-page .session-selection-action {
+  display: inline-flex;
+  min-width: max-content;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--mac-text);
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  transition: background 0.18s ease, color 0.18s ease, opacity 0.18s ease;
+}
+
+.project-manager-page .session-selection-action:hover,
+.project-manager-page .session-selection-action:focus-visible {
+  background: rgba(17, 28, 47, 0.06);
+}
+
+.dark .project-manager-page .session-selection-action:hover,
+.dark .project-manager-page .session-selection-action:focus-visible {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.project-manager-page .session-selection-action:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--mac-accent) 52%, transparent);
+  outline-offset: 2px;
+}
+
+.project-manager-page .session-selection-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.project-manager-page .session-selection-action.danger {
+  color: #d14343;
+}
+
+.dark .project-manager-page .session-selection-action.danger {
+  color: #ff8b8b;
+}
+
 .project-manager-page .selection-dock {
   position: sticky;
   bottom: 12px;
@@ -2258,12 +2515,17 @@
   }
 
   .project-manager-page .toolbar-actions {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto auto;
     justify-content: stretch;
   }
 
   .project-manager-page .search-shell {
     min-width: 100%;
+  }
+
+  /* 中等宽度下摘要与五个操作项分行，给按钮文案保留完整的内容宽度。 */
+  .project-manager-page .session-selection-dock {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -2302,7 +2564,17 @@
   }
 
   .project-manager-page .toolbar-actions {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .project-manager-page .toolbar-actions .search-shell {
+    grid-column: 1 / -1;
+  }
+
+  .project-manager-page .toolbar-actions .selection-toggle-button,
+  .project-manager-page .toolbar-actions > .btn:last-child {
+    width: 100%;
   }
 
   .project-manager-page .project-detail-actions {
@@ -2330,6 +2602,19 @@
 
   .project-manager-page .selection-dock-actions {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .project-manager-page .session-selection-dock {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    margin-right: 14px;
+    margin-left: 14px;
+    bottom: 8px;
+    padding: 12px 10px calc(10px + env(safe-area-inset-bottom));
+  }
+
+  .project-manager-page .session-selection-actions {
+    grid-template-columns: repeat(2, minmax(max-content, 1fr));
   }
 
   .project-manager-page .message-entry {

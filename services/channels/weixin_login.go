@@ -91,9 +91,6 @@ func (s *ChannelService) getWeixinLoginInstance(instanceID string) (ChannelInsta
 	if instance.Type != ChannelTypeWeixin {
 		return ChannelInstance{}, errors.New("Weixin QR login requires a WeChat Official channel")
 	}
-	if instance.Archived {
-		return ChannelInstance{}, errors.New("archived channel is read-only")
-	}
 	return instance, nil
 }
 

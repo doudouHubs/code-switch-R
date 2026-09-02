@@ -81,6 +81,7 @@ const navItems: NavItem[] = [
   { path: '/logs', icon: 'bar-chart', labelKey: 'sidebar.logs' },
   { path: '/console', icon: 'terminal', labelKey: 'sidebar.console' },
   { path: '/radar', icon: 'activity', labelKey: 'sidebar.radar' },
+  { path: '/agent', icon: 'bot', labelKey: 'sidebar.agentManager' },
   { path: '/pet/settings', icon: 'paw', labelKey: 'sidebar.petSettings', isNew: true },
   { path: '/settings', icon: 'settings', labelKey: 'sidebar.settings' },
 ]
@@ -146,6 +147,15 @@ const navigate = (path: string) => {
           <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
         </svg>
 
+        <!-- Bot -->
+        <svg v-else-if="item.icon === 'bot'" class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="4" y="6" width="16" height="13" rx="3"></rect>
+          <path d="M12 2v4"></path>
+          <path d="M8 12h.01"></path>
+          <path d="M16 12h.01"></path>
+          <path d="M9 16h6"></path>
+        </svg>
+
         <!-- Zap -->
         <svg v-else-if="item.icon === 'zap'" class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
@@ -190,6 +200,12 @@ const navigate = (path: string) => {
           <path d="M17 7.5a2 2 0 1 0 3.5 1.5A2 2 0 0 0 17 7.5Z"></path>
           <path d="M11.25 12.75a2 2 0 1 1-2.5-3.1 2 2 0 0 1 2.5 3.1Z"></path>
           <path d="M13.25 12.75a2 2 0 1 0 2.5-3.1 2 2 0 0 0-2.5 3.1Z"></path>
+        </svg>
+
+        <!-- Heart Pulse -->
+        <svg v-else-if="item.icon === 'heart-pulse'" class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78Z"></path>
+          <polyline points="3 12 7 12 9 8 12 16 15 10 17 12 21 12"></polyline>
         </svg>
 
         <!-- Settings -->

@@ -426,7 +426,7 @@ let petPointerGesture: PetPointerGesture | null = null
 let windowModeBridgeUnavailable = false
 let requestedWindowMode: PetWindowMode = 'passive'
 let appliedWindowMode: PetWindowMode = 'passive'
-let windowModeQueue: Promise<void> = Promise.resolve()
+let windowModeSyncRunning = false
 let forceWindowModeSync = false
 let keyboardFocusGraceUntil = 0
 let keyboardFocusGraceTimer: number | undefined
@@ -1007,16 +1007,11 @@ async function callPetBridge<T>(method: string, ...args: unknown[]): Promise<T> 
   return (await Call.ByName(method, ...args)) as T
 }
 
-function requestPetWindowMode(mode: PetWindowMode, force = false): void {
-  if (windowModeBridgeUnavailable || (!force && mode === requestedWindowMode)) return
-  requestedWindowMode = mode
-  if (force) forceWindowModeSync = true
-
-  // SetMode 是增强能力；绑定缺失或平台不支持时只熔断这条桥，不阻断 Vue 内的聊天和动作按钮。
-  windowModeQueue = windowModeQueue.then(async () => {
+async function flushPetWindowMode(): Promise<void> {
+  try {
     // pointer/DOM 事件可能在同一帧内产生 passive -> interactive -> passive；
-    // 每次原生调用完成后重新读取最新目标，直到 requested 与 applied 收敛，
-    // 避免旧请求完成后把“最新 passive”误判成已应用，留下 interactive 拦截桌面。
+    // 同一时间只允许一个原生调用在飞，完成后直接读取最新目标，避免旧请求
+    // 排队占住 Wails 主线程，把菜单打开延迟放大成肉眼可见的卡顿。
     while (!windowModeBridgeUnavailable) {
       const targetMode = requestedWindowMode
       const shouldForce = forceWindowModeSync
@@ -1038,10 +1033,31 @@ function requestPetWindowMode(mode: PetWindowMode, force = false): void {
           requestedWindowMode = appliedWindowMode
           return
         }
-        continue
       }
     }
-  })
+  } finally {
+    windowModeSyncRunning = false
+    // 最新目标可能恰好在最后一次 bridge 调用完成后才写入；重新检查一次，
+    // 避免把这类竞态留成“requested 已更新但没有新的 flush”死状态。
+    if (
+      !windowModeBridgeUnavailable &&
+      (forceWindowModeSync || requestedWindowMode !== appliedWindowMode)
+    ) {
+      windowModeSyncRunning = true
+      void flushPetWindowMode()
+    }
+  }
+}
+
+function requestPetWindowMode(mode: PetWindowMode, force = false): void {
+  if (windowModeBridgeUnavailable || (!force && mode === requestedWindowMode)) return
+  requestedWindowMode = mode
+  if (force) forceWindowModeSync = true
+
+  // SetMode 是增强能力；绑定缺失或平台不支持时只熔断这条桥，不阻断 Vue 内的聊天和动作按钮。
+  if (windowModeSyncRunning) return
+  windowModeSyncRunning = true
+  void flushPetWindowMode()
 }
 
 function isKeyboardTarget(value: EventTarget | null): boolean {

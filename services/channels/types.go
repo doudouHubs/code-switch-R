@@ -49,20 +49,20 @@ type ProviderDescriptor struct {
 }
 
 const (
-	ChannelToolFeishuSendImage          = "FeishuSendImage"
-	ChannelToolFeishuSendFile           = "FeishuSendFile"
-	ChannelToolFeishuListChatMembers    = "FeishuListChatMembers"
-	ChannelToolFeishuAtMember           = "FeishuAtMember"
-	ChannelToolFeishuSendUrgent         = "FeishuSendUrgent"
-	ChannelToolFeishuBitableListApps    = "FeishuBitableListApps"
-	ChannelToolFeishuBitableListTables  = "FeishuBitableListTables"
-	ChannelToolFeishuBitableListFields  = "FeishuBitableListFields"
-	ChannelToolFeishuBitableGetRecords  = "FeishuBitableGetRecords"
-	ChannelToolFeishuBitableCreate      = "FeishuBitableCreateRecords"
-	ChannelToolFeishuBitableUpdate      = "FeishuBitableUpdateRecords"
-	ChannelToolFeishuBitableDelete      = "FeishuBitableDeleteRecords"
-	ChannelToolWeixinSendImage          = "WeixinSendImage"
-	ChannelToolWeixinSendFile           = "WeixinSendFile"
+	ChannelToolFeishuSendImage         = "FeishuSendImage"
+	ChannelToolFeishuSendFile          = "FeishuSendFile"
+	ChannelToolFeishuListChatMembers   = "FeishuListChatMembers"
+	ChannelToolFeishuAtMember          = "FeishuAtMember"
+	ChannelToolFeishuSendUrgent        = "FeishuSendUrgent"
+	ChannelToolFeishuBitableListApps   = "FeishuBitableListApps"
+	ChannelToolFeishuBitableListTables = "FeishuBitableListTables"
+	ChannelToolFeishuBitableListFields = "FeishuBitableListFields"
+	ChannelToolFeishuBitableGetRecords = "FeishuBitableGetRecords"
+	ChannelToolFeishuBitableCreate     = "FeishuBitableCreateRecords"
+	ChannelToolFeishuBitableUpdate     = "FeishuBitableUpdateRecords"
+	ChannelToolFeishuBitableDelete     = "FeishuBitableDeleteRecords"
+	ChannelToolWeixinSendImage         = "WeixinSendImage"
+	ChannelToolWeixinSendFile          = "WeixinSendFile"
 )
 
 // FeishuChatMemberPage 保留飞书分页响应中的成员字段，同时把未知字段放入 Raw，
@@ -121,7 +121,6 @@ type ChannelInstance struct {
 	Name             string             `json:"name"`
 	Enabled          bool               `json:"enabled"`
 	Builtin          bool               `json:"builtin"`
-	Archived         bool               `json:"archived,omitempty"`
 	Config           map[string]string  `json:"config"`
 	CreatedAt        int64              `json:"createdAt"`
 	ProjectID        *string            `json:"projectId,omitempty"`
@@ -175,6 +174,13 @@ type ChannelSession struct {
 	WorkingFolder string `json:"workingFolder"`
 	CreatedAt     int64  `json:"createdAt"`
 	UpdatedAt     int64  `json:"updatedAt"`
+
+	// Codex 元数据属于频道内部持久化，不进入前端 JSON；频道页面看到的仍然
+	// 只是平台会话和消息，Agent thread 则由 runtime 依据这些字段恢复。
+	codexThreadID           string
+	codexPersonaFingerprint string
+	codexToolFingerprint    string
+	codexProtocolVersion    int
 }
 
 type ChannelMessage struct {

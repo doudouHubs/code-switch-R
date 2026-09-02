@@ -28,6 +28,13 @@ type PetRepository interface {
 	ListExpLog(context.Context, string, int, int) (PetExpLogPage, error)
 }
 
+// PetSettingsSnapshotRepository 是设置页可选的轻量读取能力。
+// 它不塞进 PetRepository 主契约，避免已有内存仓库和第三方实现被迫同步新增方法；
+// 不支持该能力的仓库会由服务层回退到完整快照，兼容边界仍只有这一处。
+type PetSettingsSnapshotRepository interface {
+	LoadSettingsSnapshot(context.Context, string) (PetMigrationSnapshot, error)
+}
+
 // PetStore 是兼容旧命名的接口别名，避免调用方因为 repository/store 命名差异
 // 被迫引入第二套契约。
 type PetStore interface {
@@ -70,6 +77,32 @@ func (s *PetService) Load() (PetMigrationSnapshot, error) {
 	defer s.mu.Unlock()
 
 	return s.loadSnapshotLocked(context.Background(), petNow(nil))
+}
+
+// LoadSettingsSnapshot 只读取设置页需要的状态、配置和皮肤元数据，不读取历史记录。
+// 轻量能力由 DAO 自己决定查询边界；旧仓库仍走完整快照，避免破坏现有实现。
+func (s *PetService) LoadSettingsSnapshot() (PetMigrationSnapshot, error) {
+	if err := s.validate(); err != nil {
+		return PetMigrationSnapshot{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	ctx := context.Background()
+	var (
+		snapshot PetMigrationSnapshot
+		err      error
+	)
+	if reader, ok := s.repository.(PetSettingsSnapshotRepository); ok {
+		snapshot, err = reader.LoadSettingsSnapshot(ctx, s.petID)
+	} else {
+		// 兼容旧 repository；这条路径只在宿主未实现轻量读取时触发。
+		snapshot, err = s.repository.LoadSnapshot(ctx, s.petID)
+	}
+	if err != nil {
+		return PetMigrationSnapshot{}, fmt.Errorf("读取宠物设置快照 %q 失败: %w", s.petID, err)
+	}
+	return normalizePetSnapshot(snapshot, s.petID, petNow(nil)), nil
 }
 
 // GetState 返回当前已经应用默认值和异常值归一化的宠物状态。

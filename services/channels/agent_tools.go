@@ -145,9 +145,6 @@ func (e *channelAgentToolExecutor) Execute(ctx context.Context, call services.Pe
 	if err != nil {
 		return channelToolError(result, services.PetAgentToolErrorExecution, err.Error()), nil
 	}
-	if instance.Archived {
-		return channelToolError(result, services.PetAgentToolErrorExecution, "archived channel is read-only"), nil
-	}
 	if !instance.Enabled {
 		return channelToolError(result, services.PetAgentToolErrorExecution, "channel is disabled"), nil
 	}
@@ -1082,9 +1079,6 @@ func withinChannelRoot(root, candidate string) bool {
 // channelToolDefinitionsForInstance 只返回当前实例可见的工具，权限检查仍在 executor
 // 再做一次。定义过滤负责减少模型误调用，执行时复核负责覆盖配置热更新和伪造参数。
 func channelToolDefinitionsForInstance(instance ChannelInstance) []services.PetAgentToolDefinition {
-	if instance.Archived {
-		return nil
-	}
 	definitions := make([]services.PetAgentToolDefinition, 0, 16)
 	for _, definition := range services.PetAgentToolDefinitions() {
 		if channelToolEnabled(instance, definition.Name) {

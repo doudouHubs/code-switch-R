@@ -58,13 +58,67 @@ func (api *PetAIAPIService) CancelChat(requestID string) error {
 // GetChatHistory 只把历史读取转发给支持该能力的聊天 runtime；旧适配器不实现
 // 这个可选接口时返回结构化依赖错误，不在 API 层伪造一份与 Codex thread 脱节的历史。
 func (api *PetAIAPIService) GetChatHistory(request PetChatHistoryRequest) (PetChatHistoryResult, error) {
+	return api.getChatHistory(context.Background(), request)
+}
+
+func (api *PetAIAPIService) getChatHistory(ctx context.Context, request PetChatHistoryRequest) (PetChatHistoryResult, error) {
 	if runtime := api.getChatRuntime(); runtime != nil {
 		if historyRuntime, ok := runtime.(PetChatHistoryRuntime); ok {
-			return historyRuntime.GetChatHistory(context.Background(), request)
+			return historyRuntime.GetChatHistory(ctx, request)
 		}
 		return PetChatHistoryResult{}, newPetAIError(PET_AI_DEPENDENCY_UNAVAILABLE, 0, nil)
 	}
 	return PetChatHistoryResult{}, newPetAIError(PET_AI_DEPENDENCY_UNAVAILABLE, 0, nil)
+}
+
+// ListSkills、ListModels、ExecuteCommand 和 ResolveInteraction 共享同一个
+// chatRuntime；API 层不保存 skill、model 或 pending interaction 的第二份状态。
+func (api *PetAIAPIService) ListSkills(request AgentCommandRequest) (AgentSkillListResult, error) {
+	return api.listSkills(context.Background(), request)
+}
+
+func (api *PetAIAPIService) listSkills(ctx context.Context, request AgentCommandRequest) (AgentSkillListResult, error) {
+	runtime, err := api.getCommandRuntime()
+	if err != nil {
+		return AgentSkillListResult{}, err
+	}
+	return runtime.ListSkills(ctx, request)
+}
+
+func (api *PetAIAPIService) ListModels(request AgentCommandRequest) (AgentModelListResult, error) {
+	return api.listModels(context.Background(), request)
+}
+
+func (api *PetAIAPIService) listModels(ctx context.Context, request AgentCommandRequest) (AgentModelListResult, error) {
+	runtime, err := api.getCommandRuntime()
+	if err != nil {
+		return AgentModelListResult{}, err
+	}
+	return runtime.ListModels(ctx, request)
+}
+
+func (api *PetAIAPIService) ExecuteCommand(request AgentCommandRequest) (AgentCommandResult, error) {
+	return api.executeCommand(context.Background(), request)
+}
+
+func (api *PetAIAPIService) executeCommand(ctx context.Context, request AgentCommandRequest) (AgentCommandResult, error) {
+	runtime, err := api.getCommandRuntime()
+	if err != nil {
+		return AgentCommandResult{}, err
+	}
+	return runtime.ExecuteCommand(ctx, request)
+}
+
+func (api *PetAIAPIService) ResolveInteraction(request ResolveInteractionRequest) error {
+	return api.resolveInteraction(context.Background(), request)
+}
+
+func (api *PetAIAPIService) resolveInteraction(ctx context.Context, request ResolveInteractionRequest) error {
+	runtime, err := api.getCommandRuntime()
+	if err != nil {
+		return err
+	}
+	return runtime.ResolveInteraction(ctx, request)
 }
 
 // GenerateDreamText 转发同步梦境文本请求，网络和 provider 解析仍由核心服务负责。
@@ -135,4 +189,13 @@ func (api *PetAIAPIService) getChatRuntime() PetChatRuntime {
 		return nil
 	}
 	return api.chatRuntime
+}
+
+func (api *PetAIAPIService) getCommandRuntime() (PetCodexCommandRuntime, error) {
+	if runtime := api.getChatRuntime(); runtime != nil {
+		if commandRuntime, ok := runtime.(PetCodexCommandRuntime); ok {
+			return commandRuntime, nil
+		}
+	}
+	return nil, newPetAIError(PET_AI_DEPENDENCY_UNAVAILABLE, 0, nil)
 }

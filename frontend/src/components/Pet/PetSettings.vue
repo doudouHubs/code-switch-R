@@ -8,9 +8,9 @@ import {
   Bot,
   Brain,
   FolderOpen,
+  HeartPulse,
   Images,
   LayoutDashboard,
-  MessageSquareText,
   Monitor,
   Moon,
   PawPrint,
@@ -23,7 +23,7 @@ import { fetchProjectManagerSnapshot, refreshProjectManagerSnapshot, type Projec
 import { petApi } from './petApi'
 import PetAtlasFrame from './PetAtlasFrame.vue'
 import PetDreamHistoryPanel from './PetDreamHistoryPanel.vue'
-import PetChatHistoryPanel from './PetChatHistoryPanel.vue'
+import PetHeartbeat from './PetHeartbeat.vue'
 import PetMemoryPanel from './PetMemoryPanel.vue'
 import PetStudio from './PetStudio.vue'
 import { PetAudioPlayer } from './petAudio'
@@ -50,6 +50,7 @@ import {
   type PetAgentConfig,
   type PetAtlasAsset,
   type PetReasoningEffort,
+  type PetSettingsSnapshot,
   type PetSettingsForm,
   type PetSkinRecord,
   type PetSnapshot
@@ -97,7 +98,7 @@ const PET_BUILTIN_AGENT_PROMPT = `你是 {{name}}，一只住在用户电脑桌�
 // 与 PetWindow 的默认梦境入口保持同一文案，用户编辑页展示的是空配置实际会使用的内容。
 const PET_BUILTIN_DREAM_PROMPT = '你正在睡觉并处于梦境中，这不是主人发来的消息。请以宠物的第一人称做一个具体、完整的随机短梦。梦境可以温暖、有趣、荒诞、紧张或偶尔令人害怕，但不要每次都做噩梦。'
 
-type PetTab = 'overview' | 'stats' | 'agent' | 'sleep' | 'skins' | 'memory' | 'dream-history' | 'chat-history' | 'studio'
+type PetTab = 'overview' | 'stats' | 'agent' | 'heartbeat' | 'sleep' | 'skins' | 'memory' | 'dream-history' | 'studio'
 
 const PET_TABS: ReadonlyArray<{ id: PetTab; icon: Component }> = [
   { id: 'overview', icon: LayoutDashboard },
@@ -106,9 +107,9 @@ const PET_TABS: ReadonlyArray<{ id: PetTab; icon: Component }> = [
   { id: 'skins', icon: PawPrint },
   { id: 'memory', icon: Brain },
   { id: 'agent', icon: Bot },
+  { id: 'heartbeat', icon: HeartPulse },
   { id: 'sleep', icon: Moon },
   { id: 'dream-history', icon: Images },
-  { id: 'chat-history', icon: MessageSquareText }
 ]
 
 interface PetExperienceLogEntry {
@@ -149,6 +150,13 @@ interface PetProviderModelLoadResult {
   options: PetProviderModelOption[]
   errors: string[]
 }
+
+const PET_PROVIDER_OPTIONS_CACHE_TTL_MS = 2 * 60_000
+const petProviderOptionsCache = new Map<string, { result: PetProviderModelLoadResult; expiresAt: number }>()
+const petProviderOptionsRequests = new Map<string, Promise<PetProviderModelLoadResult>>()
+const petSkinPreviewCache = new Map<string, PetAtlasAsset>()
+const petSkinPreviewRequests = new Map<string, Promise<PetAtlasAsset>>()
+let petStudioRootCache: string | null = null
 
 type PetProjectOption = ProjectSummary
 
@@ -261,7 +269,7 @@ const nameDraft = ref('')
 const renaming = ref(false)
 const errorMessage = ref('')
 const activeTab = ref<PetTab>('overview')
-const snapshot = ref<PetSnapshot | null>(null)
+const snapshot = ref<PetSettingsSnapshot | null>(null)
 const providerOptions = ref<PetProviderModelOption[]>([])
 const providerLoading = ref(false)
 const providerError = ref('')
@@ -604,31 +612,53 @@ async function loadProviderOptions(): Promise<void> {
       form.agent.providerPlatform?.trim().toLowerCase() ?? '',
       form.dream.imageProviderPlatform?.trim().toLowerCase() ?? ''
     ].filter(Boolean)))
-    const errors: string[] = []
-    const loaded = await Promise.all(platforms.map(async (platform): Promise<PetProviderModelLoadResult> => {
-      try {
-        if (platform === 'gemini') {
+    const key = platforms.join(',')
+    const cached = petProviderOptionsCache.get(key)
+    const result = cached && cached.expiresAt > Date.now()
+      ? cached.result
+      : await (async () => {
+        const existing = petProviderOptionsRequests.get(key)
+        if (existing) return existing
+        const request = (async (): Promise<PetProviderModelLoadResult> => {
+          const loaded = await Promise.all(platforms.map(async (platform): Promise<PetProviderModelLoadResult> => {
+            try {
+              if (platform === 'gemini') {
+                return {
+                  options: geminiModelOptions(await Call.ByName('codeswitch/services.GeminiService.GetProviders') as GeminiProvider[]),
+                  errors: []
+                }
+              }
+              return providerModelOptions(
+                platform,
+                await Call.ByName('codeswitch/services.ProviderService.LoadProviders', platform) as Provider[]
+              )
+            } catch (error) {
+              return {
+                options: [],
+                errors: [`${platform}: ${error instanceof Error ? error.message : String(error)}`]
+              }
+            }
+          }))
           return {
-            options: geminiModelOptions(await Call.ByName('codeswitch/services.GeminiService.GetProviders') as GeminiProvider[]),
-            errors: []
+            options: loaded.flatMap((item) => item.options),
+            errors: loaded.flatMap((item) => item.errors)
           }
+        })()
+        petProviderOptionsRequests.set(key, request)
+        try {
+          const loaded = await request
+          petProviderOptionsCache.set(key, {
+            result: loaded,
+            expiresAt: Date.now() + PET_PROVIDER_OPTIONS_CACHE_TTL_MS
+          })
+          return loaded
+        } finally {
+          if (petProviderOptionsRequests.get(key) === request) petProviderOptionsRequests.delete(key)
         }
-        return providerModelOptions(
-              platform,
-              await Call.ByName('codeswitch/services.ProviderService.LoadProviders', platform) as Provider[]
-            )
-      } catch (error) {
-        return {
-          options: [],
-          errors: [`${platform}: ${error instanceof Error ? error.message : String(error)}`]
-        }
-      }
-    }))
-    const options = loaded.flatMap((result) => result.options)
-    errors.push(...loaded.flatMap((result) => result.errors))
+      })()
     if (generation !== providerRequestGeneration) return
-    providerOptions.value = options
-    providerError.value = errors.length > 0 ? errors.join('; ') : ''
+    providerOptions.value = result.options
+    providerError.value = result.errors.length > 0 ? result.errors.join('; ') : ''
   } catch (error) {
     if (generation !== providerRequestGeneration) return
     providerOptions.value = []
@@ -654,30 +684,63 @@ async function loadProjectOptions(refresh = false): Promise<void> {
   }
 }
 
+function petSkinPreviewCacheKey(petId: string, source: 'default' | { skinId: string }): string {
+  const skinId = typeof source === 'string' ? source : source.skinId
+  return `${petId}:${skinId}`
+}
+
+async function loadCachedPetSkinPreview(
+  petId: string,
+  source: 'default' | { skinId: string }
+): Promise<PetAtlasAsset> {
+  const key = petSkinPreviewCacheKey(petId, source)
+  const cached = petSkinPreviewCache.get(key)
+  if (cached) return cached
+  const existing = petSkinPreviewRequests.get(key)
+  if (existing) return existing
+
+  const request = readPetStudioAtlas(petId, source).then((result) => result.atlas)
+  petSkinPreviewRequests.set(key, request)
+  try {
+    const atlas = await request
+    petSkinPreviewCache.set(key, atlas)
+    return atlas
+  } finally {
+    if (petSkinPreviewRequests.get(key) === request) petSkinPreviewRequests.delete(key)
+  }
+}
+
+function invalidatePetSkinPreviewCache(petId: string): void {
+  const prefix = `${petId}:`
+  for (const key of petSkinPreviewCache.keys()) {
+    if (key.startsWith(prefix)) petSkinPreviewCache.delete(key)
+  }
+  for (const key of petSkinPreviewRequests.keys()) {
+    if (key.startsWith(prefix)) petSkinPreviewRequests.delete(key)
+  }
+}
+
 async function loadSkinPreviews(records = skins.value): Promise<void> {
   const generation = ++skinPreviewGeneration
-  const next: Record<string, PetAtlasAsset> = {}
-  skinPreviewLoading.value = {}
-  try {
-    const result = await readPetStudioAtlas(props.petId, 'default')
-    if (generation !== skinPreviewGeneration) return
-    defaultAtlas.value = result.atlas
-  } catch {
-    if (generation !== skinPreviewGeneration) return
-    defaultAtlas.value = null
-  }
-  if (snapshot.value?.atlas && snapshot.value.skinSelection.activeSkinId) {
-    next[snapshot.value.skinSelection.activeSkinId] = snapshot.value.atlas
-  }
-  skinPreviews.value = next
-  for (const skin of records.filter((item) => item.skinId !== 'capybara')) {
-    if (generation !== skinPreviewGeneration) return
-    if (next[skin.skinId]) continue
-    skinPreviewLoading.value = { ...skinPreviewLoading.value, [skin.skinId]: true }
+  const customSkins = records.filter((item) => item.skinId !== 'capybara')
+  skinPreviewLoading.value = Object.fromEntries(customSkins.map((skin) => [skin.skinId, true]))
+  skinPreviews.value = {}
+
+  // 预览图是可选资源，必须和首屏配置解耦；同一批皮肤并行读取，避免一个坏文件
+  // 或慢磁盘把后面的缩略图排成长队。单项失败只保留占位，不影响设置操作。
+  const defaultTask = loadCachedPetSkinPreview(props.petId, 'default')
+    .then((atlas) => {
+      if (generation === skinPreviewGeneration) defaultAtlas.value = atlas
+    })
+    .catch(() => {
+      if (generation === skinPreviewGeneration) defaultAtlas.value = null
+    })
+  const skinTasks = customSkins.map(async (skin) => {
     try {
-      const result = await readPetStudioAtlas(props.petId, { skinId: skin.skinId })
-      if (generation !== skinPreviewGeneration) return
-      skinPreviews.value = { ...skinPreviews.value, [skin.skinId]: result.atlas }
+      const atlas = await loadCachedPetSkinPreview(props.petId, { skinId: skin.skinId })
+      if (generation === skinPreviewGeneration) {
+        skinPreviews.value = { ...skinPreviews.value, [skin.skinId]: atlas }
+      }
     } catch {
       // 单个皮肤资源损坏时保留列表和绑定能力，缩略图退回占位，不阻断整个设置页。
     } finally {
@@ -687,12 +750,19 @@ async function loadSkinPreviews(records = skins.value): Promise<void> {
         skinPreviewLoading.value = state
       }
     }
-  }
+  })
+  await Promise.all([defaultTask, ...skinTasks])
 }
 
 async function loadSkinRoot(): Promise<void> {
+  if (petStudioRootCache) {
+    skinRoot.value = petStudioRootCache
+    return
+  }
   try {
-    skinRoot.value = await getPetStudioRoot()
+    const root = await getPetStudioRoot()
+    petStudioRootCache = root
+    skinRoot.value = root
   } catch {
     // 目录展示不是设置页的硬依赖；服务不可用时保留受控目录文案，避免阻断其他配置加载。
     skinRoot.value = ''
@@ -725,7 +795,8 @@ async function refreshSkins(): Promise<void> {
   if (skinRefreshing.value) return
   skinRefreshing.value = true
   try {
-    const next = await petApi.getSnapshot(props.petId)
+    invalidatePetSkinPreviewCache(props.petId)
+    const next = await petApi.getSettingsSnapshot(props.petId)
     snapshot.value = next
     skins.value = next.skins
     statsNow.value = Date.now()
@@ -825,9 +896,12 @@ async function refreshStats(): Promise<void> {
   statsNow.value = Date.now()
   try {
     // 统计刷新只更新独立快照，不回写 form，避免用户编辑未保存表单时被后台心跳覆盖。
-    const next = await petApi.getSnapshot(props.petId)
+    const next = await petApi.getRuntimeSnapshot(props.petId)
     if (generation !== statsRequestGeneration) return
-    snapshot.value = next
+    snapshot.value = {
+      ...next,
+      skins: snapshot.value?.skins ?? skins.value
+    }
     await loadExperienceLog(generation)
   } catch (error) {
     if (generation !== statsRequestGeneration) return
@@ -860,7 +934,7 @@ function assignForm(value: PetSettingsForm): void {
   Object.assign(form.skinSelection, value.skinSelection)
 }
 
-function toForm(snapshot: PetSnapshot): PetSettingsForm {
+function toForm(snapshot: PetSettingsSnapshot): PetSettingsForm {
   return {
     window: { ...snapshot.window },
     care: { ...snapshot.care },
@@ -944,19 +1018,19 @@ async function loadSettings(): Promise<void> {
   loading.value = true
   errorMessage.value = ''
   try {
-    const next = await petApi.getSnapshot(props.petId)
+    const next = await petApi.getSettingsSnapshot(props.petId)
     snapshot.value = next
     statsNow.value = Date.now()
     skins.value = next.skins
     nameDraft.value = next.state.name
     // 外部 v-model 是受控值；没有受控值时才用后端快照初始化表单。
     if (!props.modelValue) assignForm(toForm(next))
-    await Promise.all([
-      loadProviderOptions(),
-      loadProjectOptions(),
-      loadSkinPreviews(next.skins),
-      loadSkinRoot()
-    ])
+    // 模型目录、项目索引和皮肤资源都不是编辑配置的必要条件；首屏拿到轻量快照
+    // 后立即解除 loading，后台任务各自维护自己的 loading/error 状态。
+    void loadProviderOptions()
+    void loadProjectOptions()
+    void loadSkinPreviews(next.skins)
+    void loadSkinRoot()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : String(error)
     emit('error', error)
@@ -1011,21 +1085,29 @@ watch(
   { deep: true }
 )
 
-function consumeStudioQuery(): void {
-  if (route.query.studio !== '1') return
+function consumeSettingsQuery(): void {
+  let targetTab: PetTab | null = null
+  const query = { ...route.query }
+  if (route.query.studio === '1') {
+    targetTab = 'studio'
+    delete query.studio
+  } else if (route.query.tab === 'heartbeat') {
+    // 兼容历史心跳直达链接，同时把心跳的唯一用户入口收口到宠物设置页签。
+    targetTab = 'heartbeat'
+    delete query.tab
+  }
+  if (!targetTab) return
 
   // 设置页被 keep-alive 缓存时不会重新触发 onMounted；把 query 当作入口意图监听，
-  // 才能保证桌宠菜单从已打开的设置页再次进入 Studio 仍然生效。
-  selectTab('studio')
-  const query = { ...route.query }
-  delete query.studio
+  // 才能保证桌宠菜单或历史链接再次进入设置页时仍然切到目标页签。
+  selectTab(targetTab)
   void router.replace({ path: route.path, query })
 }
 
-watch(() => route.query.studio, consumeStudioQuery)
+watch(() => [route.query.studio, route.query.tab], consumeSettingsQuery)
 
 onMounted(() => {
-  consumeStudioQuery()
+  consumeSettingsQuery()
   void loadSettings()
 })
 
@@ -1354,13 +1436,13 @@ const companionDateLabel = computed(() => {
 })
 
 const overviewName = computed(() => snapshot.value?.state.name ?? nameDraft.value)
-const chatHistoryAgent = computed(() => snapshot.value?.agent ?? null)
-const chatHistoryPetName = computed(() => overviewName.value.trim() || 'Kapi')
 const proactiveDailyCap = computed(() => PET_PROACTIVE_DAILY_CAP[form.agent.proactiveFreq])
 
 onUnmounted(() => {
   stopStatsRefreshTimer()
   statsRequestGeneration += 1
+  providerRequestGeneration += 1
+  skinPreviewGeneration += 1
   voicePreviewPlayer.dispose()
 })
 </script>
@@ -2037,13 +2119,10 @@ onUnmounted(() => {
         <PetDreamHistoryPanel :pet-id="props.petId" />
       </div>
 
-      <div v-if="activeTab === 'chat-history'" class="pet-settings__wide-content">
-        <PetChatHistoryPanel
-          :pet-id="props.petId"
-          :pet-name="chatHistoryPetName"
-          :agent="chatHistoryAgent"
-        />
+      <div v-show="activeTab === 'heartbeat'" class="pet-settings__wide-content pet-settings__heartbeat">
+        <PetHeartbeat embedded />
       </div>
+
     </div>
   </div>
 </template>

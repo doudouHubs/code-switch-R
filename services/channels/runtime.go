@@ -2,13 +2,13 @@ package channels
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"codeswitch/services"
 	"github.com/google/uuid"
@@ -18,33 +18,44 @@ import (
 // runtime 不直接读取 ProjectManagerService，避免把项目扫描、缓存和频道会话耦合到一起。
 type ProjectWorkspaceResolver func(context.Context, string) (string, error)
 
-// ChannelProviderResolver 是频道 Agent 解析默认 provider 的窄接口。
-// OpenCowork 允许频道只保存 provider/model 覆盖项，真正的全局 provider 仍由宿主
-// 负责读取；runtime 只接收已经归一化的引用，不接触 provider 凭据或配置文件。
-type ChannelProviderResolver func(context.Context, ChannelInstance) (services.PetProviderReference, error)
+// AgentRuntimeOptions 是频道专用 Codex runtime 的进程配置。模型、认证和审批
+// 不在这里配置，Codex app-server 会直接继承当前客户端默认配置。
+type AgentRuntimeOptions struct {
+	Executable        string
+	CommandFactory    services.CodexAppServerCommandFactory
+	ResponseTimeout   time.Duration
+	ChatRuntime       services.PetChatRuntime
+	SharedChatRuntime bool
+}
 
-// AgentRuntime 把 provider 入站消息接到现有 PetAI 协议执行器。
-// 它使用独立 PetAIService 实例，因此频道的 request、事件和 workspace resolver 不会
-// 污染桌宠默认服务，也不会把频道事件误计入桌宠记忆或经验。
+// AgentRuntime 把 provider 入站消息接到宿主注入的项目 Agent Hub。
+// 频道不创建第二个 Codex runtime；入口权限仍通过当前频道的 execution scope
+// 隔离，而 projectId 决定与 Agent 管家共用的 Codex thread。
 type AgentRuntime struct {
-	store          *Store
-	manager        *Manager
-	projectResolve ProjectWorkspaceResolver
-	ai             *services.PetAIService
+	store           *Store
+	manager         *Manager
+	projectResolve  ProjectWorkspaceResolver
+	chatRuntime     services.PetChatRuntime
+	ownsChatRuntime bool
 
-	mu               sync.Mutex
-	runs             map[string]*channelAgentRun
-	chatLocks        map[string]*sync.Mutex
-	eventSink        EventSink
-	providerResolver ChannelProviderResolver
+	mu        sync.Mutex
+	runs      map[string]*channelAgentRun
+	chatLocks map[string]*sync.Mutex
+	// Hook 通知可能由状态轮询并发派发；发送前的幂等检查必须和平台发送、
+	// 本地落库处于同一个临界区，否则重复 Hook 会在数据库去重前先发出两条平台消息。
+	hookDeliveryMu sync.Mutex
+	eventSink      EventSink
 }
 
 type channelAgentRun struct {
-	requestID string
-	instance  ChannelInstance
-	session   ChannelSession
-	incoming  ChannelMessage
-	text      strings.Builder
+	requestID     string
+	instance      ChannelInstance
+	session       ChannelSession
+	incoming      ChannelMessage
+	textMu        sync.Mutex
+	text          strings.Builder
+	completedText string
+	completed     bool
 
 	streamMu sync.Mutex
 	stream   StreamingHandle
@@ -52,73 +63,29 @@ type channelAgentRun struct {
 	chatLock *sync.Mutex
 }
 
-// NewAgentRuntime 创建频道专用 Agent runtime。
-// ProviderReader 和 Transport 直接复用主进程已有实现，协议解析、SSE 和 continuation
-// 仍只有 PetAIService 一个 owner；频道只负责上下文路由与回复目标。
+// NewAgentRuntime 创建频道入口适配器。Codex runtime 必须由宿主注入共享 Hub；
+// 这里不再兜底创建独立 PetCodexRuntime，否则频道和 Agent 管家会重新分裂。
 func NewAgentRuntime(
 	store *Store,
 	manager *Manager,
 	projectResolve ProjectWorkspaceResolver,
-	providerReader services.PetAIProviderReader,
-	transport services.PetAIHTTPTransport,
 	eventSink EventSink,
-	providerResolvers ...ChannelProviderResolver,
+	options ...AgentRuntimeOptions,
 ) *AgentRuntime {
-	var providerResolver ChannelProviderResolver
-	if len(providerResolvers) > 0 {
-		providerResolver = providerResolvers[0]
+	var runtimeOptions AgentRuntimeOptions
+	if len(options) > 0 {
+		runtimeOptions = options[0]
 	}
 	runtime := &AgentRuntime{
-		store:            store,
-		manager:          manager,
-		projectResolve:   projectResolve,
-		runs:             make(map[string]*channelAgentRun),
-		chatLocks:        make(map[string]*sync.Mutex),
-		eventSink:        eventSink,
-		providerResolver: providerResolver,
+		store:          store,
+		manager:        manager,
+		projectResolve: projectResolve,
+		runs:           make(map[string]*channelAgentRun),
+		chatLocks:      make(map[string]*sync.Mutex),
+		eventSink:      eventSink,
 	}
-	runtime.ai = services.NewPetAIServiceWithDependencies(services.PetAIDependencies{
-		ProviderReader:    providerReader,
-		Transport:         transport,
-		WorkspaceResolver: runtime,
-		ToolDefinitions: func(scope string) []services.PetAgentToolDefinition {
-			instanceID, _, _, err := parseChannelToolScope(scope)
-			if err != nil || store == nil {
-				return nil
-			}
-			instance, found, getErr := store.GetInstance(instanceID)
-			if getErr != nil || !found || instance.Archived {
-				return nil
-			}
-			return channelToolDefinitionsForInstance(instance)
-		},
-		ToolExecutorFactory: func(ctx context.Context, scope, workspace string) (services.PetAgentToolRunner, error) {
-			instanceID, sessionID, chatID, err := parseChannelToolScope(scope)
-			if err != nil {
-				return nil, err
-			}
-			if store == nil {
-				return nil, errors.New("channel store is unavailable")
-			}
-			instance, found, err := store.GetInstance(instanceID)
-			if err != nil {
-				return nil, err
-			}
-			if !found {
-				return nil, errors.New("channel instance not found")
-			}
-			if instance.Archived {
-				return nil, errors.New("archived channel is read-only")
-			}
-			if sessionID == "" || chatID == "" {
-				return nil, errors.New("channel tool session scope is incomplete")
-			}
-			return newChannelAgentToolExecutor(store, manager, eventSink, instance, sessionID, chatID, workspace)
-		},
-		Emitter: services.PetAIEventEmitterFunc(func(event services.PetAIEvent) error {
-			return runtime.Emit(event)
-		}),
-	})
+	runtime.chatRuntime = runtimeOptions.ChatRuntime
+	runtime.ownsChatRuntime = runtime.chatRuntime != nil && !runtimeOptions.SharedChatRuntime
 	return runtime
 }
 
@@ -150,6 +117,15 @@ func (r *AgentRuntime) Resolve(ctx context.Context, sessionID string) (string, e
 	// ProjectSummary.ID 当前就是规范化项目路径；只有测试替身或旧数据没有 resolver
 	// 时才允许直接使用它，并且仍必须经过绝对路径、目录和 symlink 校验。
 	return normalizeWorkspace(ctx, projectID)
+}
+
+// Close 只关闭频道 runtime 自己创建的 Codex app-server；不会按进程名扫描或
+// 终止用户已有的 codex 进程，应用退出时由 main 负责在频道 store 前调用它。
+func (r *AgentRuntime) Close() error {
+	if r == nil || r.chatRuntime == nil || !r.ownsChatRuntime {
+		return nil
+	}
+	return r.chatRuntime.Close()
 }
 
 func normalizeWorkspace(ctx context.Context, value string, resolveErr ...error) (string, error) {
@@ -206,7 +182,7 @@ func (r *AgentRuntime) handleIncoming(message ChannelMessage) {
 		return
 	}
 	instance, found, err := r.store.GetInstance(message.InstanceID)
-	if err != nil || !found || instance.Archived || !instance.Enabled || !instance.Features.AutoReply {
+	if err != nil || !found || !instance.Enabled || !instance.Features.AutoReply {
 		return
 	}
 	if instance.ProjectID == nil || strings.TrimSpace(*instance.ProjectID) == "" {
@@ -255,24 +231,15 @@ func (r *AgentRuntime) handleIncoming(message ChannelMessage) {
 	// 入站事件先于 Agent 异步处理到达 UI；持久化完成后再补一条标准 message
 	// 事件，页面刷新历史时不会撞上尚未写入的竞态。
 	r.publish(ChannelEvent{Type: "message", InstanceID: instance.ID, PluginType: instance.Type, Data: message, At: nowMillis()})
-	for _, media := range message.Images {
-		_ = r.store.SaveMedia(message.ID, message.InstanceID, media)
-	}
-	if message.Audio != nil {
-		_ = r.store.SaveMedia(message.ID, message.InstanceID, *message.Audio)
+	localImages, err := r.persistIncomingMedia(message)
+	if err != nil {
+		// 消息正文已经入库且已通知 UI；媒体落盘失败时停止当前 turn，
+		// 避免模型收到一个看似成功但实际缺图的请求，同时保留用户消息供重试。
+		r.publishError(instance, err)
+		r.sendFailureMessage(instance, message.ChatID, string(services.PET_AI_INVALID_REQUEST))
+		return
 	}
 
-	history, err := r.historyForSession(session.ID, message.ID)
-	if err != nil {
-		r.publishError(instance, err)
-		return
-	}
-	provider, err := r.resolveProviderReference(context.Background(), instance)
-	if err != nil {
-		r.publishError(instance, err)
-		r.sendFailureMessage(instance, message.ChatID)
-		return
-	}
 	requestID := "channel-" + uuid.NewString()
 	run := &channelAgentRun{requestID: requestID, instance: instance, session: session, incoming: message, chatLock: chatLock}
 	r.mu.Lock()
@@ -280,20 +247,33 @@ func (r *AgentRuntime) handleIncoming(message ChannelMessage) {
 	r.mu.Unlock()
 	keepLock = true
 
-	_, err = r.ai.StartChat(context.Background(), services.PetChatRequest{
-		PetID:     session.ID,
+	if r.chatRuntime == nil {
+		r.finishRun(run)
+		r.publishError(instance, errors.New("channel Codex runtime is unavailable"))
+		r.sendFailureMessage(instance, message.ChatID, string(services.PET_AI_DEPENDENCY_UNAVAILABLE))
+		return
+	}
+	_, err = r.chatRuntime.StartChat(context.Background(), services.PetChatRequest{
+		// PetID 只代表统一的桌宠 Agent 外观；projectId 才决定 Codex
+		// thread owner，不能再把频道 session ID 当成一只“伪宠物”。
+		PetID:     services.DefaultPetID,
+		ProjectID: *instance.ProjectID,
 		RequestID: requestID,
-		Provider:  provider,
-		Persona:   strings.TrimSpace(instance.Config["systemPrompt"]),
-		UserText:  message.Content,
-		Images:    channelImages(message.Images),
-		History:   history,
-		ToolScope: channelToolScope(instance.ID, session.ID, message.ChatID),
+		// Persona 由 services.AgentConversationHub 从宠物设置统一解析；频道只能
+		// 提供消息与当前执行 scope，不能再通过配置创建第二个 Agent 人格 owner。
+		Persona:            "",
+		UserText:           message.Content,
+		LocalImages:        localImages,
+		ToolScope:          services.PetCodexProjectToolScope(*instance.ProjectID),
+		ToolExecutionScope: channelToolScope(instance.ID, session.ID, message.ChatID),
+		Source:             services.AgentConversationSourceChannel,
+		ChannelInstanceID:  instance.ID,
+		ChannelChatID:      message.ChatID,
 	})
 	if err != nil {
 		r.finishRun(run)
 		r.publishError(instance, err)
-		r.sendFailureMessage(instance, message.ChatID)
+		r.sendFailureMessage(instance, message.ChatID, channelPetAIErrorCode(err))
 		return
 	}
 }
@@ -345,50 +325,33 @@ func (r *AgentRuntime) ensureSession(instance ChannelInstance, message ChannelMe
 	return session, nil
 }
 
-func (r *AgentRuntime) historyForSession(sessionID, currentMessageID string) ([]services.PetAIMessage, error) {
-	messages, err := r.store.ListMessages(sessionID, 200)
-	if err != nil {
-		return nil, err
+func (r *AgentRuntime) persistIncomingMedia(message ChannelMessage) ([]services.PetAILocalImage, error) {
+	if r == nil || r.store == nil {
+		return nil, errors.New("channel media store is unavailable")
 	}
-	history := make([]services.PetAIMessage, 0, len(messages))
-	for _, message := range messages {
-		if message.ID == currentMessageID || (message.Role != "user" && message.Role != "assistant") || (strings.TrimSpace(message.Content) == "" && len(message.Images) == 0) {
-			continue
+	localImages := make([]services.PetAILocalImage, 0, len(message.Images))
+	for _, media := range message.Images {
+		if err := r.store.SaveMedia(message.ID, message.InstanceID, media); err != nil {
+			return nil, fmt.Errorf("save channel image: %w", err)
 		}
-		history = append(history, services.PetAIMessage{Role: message.Role, Content: message.Content, Images: channelImages(message.Images)})
-	}
-	return history, nil
-}
-
-func (r *AgentRuntime) resolveProviderReference(ctx context.Context, instance ChannelInstance) (services.PetProviderReference, error) {
-	if r == nil || r.providerResolver == nil {
-		return services.PetProviderReference{}, errors.New("channel default provider resolver is unavailable")
-	}
-	// 历史频道仍保留 providerPlatform/providerId/model 字段用于数据兼容，但这里故意
-	// 不读取它们。模型和 Provider 的唯一运行时 owner 是客户端默认 Codex reader + Relay。
-	reference, err := r.providerResolver(ctx, instance)
-	if err != nil {
-		return services.PetProviderReference{}, err
-	}
-	reference.Platform = strings.ToLower(strings.TrimSpace(reference.Platform))
-	reference.ProviderID = strings.TrimSpace(reference.ProviderID)
-	reference.Model = strings.TrimSpace(reference.Model)
-	if reference.Platform == "" || reference.ProviderID == "" || reference.Model == "" {
-		return services.PetProviderReference{}, errors.New("client default provider reference is incomplete")
-	}
-	reference.Capability = services.PetCapabilityChat
-	return reference, nil
-}
-
-func channelImages(images []ChannelMedia) []services.PetAIImage {
-	result := make([]services.PetAIImage, 0, len(images))
-	for _, image := range images {
-		if len(image.Data) == 0 || !strings.HasPrefix(strings.ToLower(image.MediaType), "image/") {
-			continue
+		path, err := r.store.MaterializeImage(message.ID, message.InstanceID, media)
+		if err != nil {
+			return nil, fmt.Errorf("materialize channel image: %w", err)
 		}
-		result = append(result, services.PetAIImage{Data: base64.StdEncoding.EncodeToString(image.Data), MediaType: strings.ToLower(image.MediaType)})
+		localImages = append(localImages, services.PetAILocalImage{
+			Path: path,
+			// 落盘校验允许带参数的 MIME，但 Codex/历史解析只需要规范化的
+			// image/* 类型；统一使用同一规范，避免 content-type 参数让视觉附件
+			// 在入站、turn/start 和历史回显之间产生不一致。
+			MediaType: normalizeChannelImageMediaType(media.MediaType),
+		})
 	}
-	return result
+	if message.Audio != nil {
+		if err := r.store.SaveMedia(message.ID, message.InstanceID, *message.Audio); err != nil {
+			return nil, fmt.Errorf("save channel audio: %w", err)
+		}
+	}
+	return localImages, nil
 }
 
 func (r *AgentRuntime) Emit(event services.PetAIEvent) error {
@@ -400,23 +363,107 @@ func (r *AgentRuntime) Emit(event services.PetAIEvent) error {
 	}
 	switch event.Type {
 	case services.PetAIEventDelta:
+		run.textMu.Lock()
 		run.text.WriteString(event.Delta)
-		r.updateStreaming(run, strings.TrimSpace(run.text.String()))
+		text := strings.TrimSpace(run.text.String())
+		run.textMu.Unlock()
+		r.updateStreaming(run, text)
 	case services.PetAIEventCompleted:
+		run.textMu.Lock()
 		finalText := strings.TrimSpace(event.Text)
 		if finalText == "" {
 			finalText = strings.TrimSpace(run.text.String())
 		}
-		externalID := r.finishStreamingOrSend(run, finalText)
-		r.saveAssistant(run, finalText, externalID)
-		r.finishRun(run)
+		run.completedText = finalText
+		run.completed = true
+		run.textMu.Unlock()
+		// 最终投递由 Hub 的 BroadcastProject 统一触发；这里保留 run 和聊天锁，
+		// 让 broadcaster 能把原频道作为一个目标完成 streaming，而不是重复发送。
 	case services.PetAIEventFailed:
+		errorCode := ""
+		if event.Error != nil {
+			errorCode = event.Error.Code
+		}
 		r.finishRun(run)
-		r.sendFailure(run)
+		r.sendFailure(run, errorCode)
 	case services.PetAIEventCancelled:
 		r.finishRun(run)
 	}
 	return nil
+}
+
+// BroadcastProject 是 Hub 的频道投递边界。原请求所在频道只完成一次原地
+// streaming/reply；其它实例只有显式配置 broadcastChatId 才会接收项目广播。
+func (r *AgentRuntime) BroadcastProject(ctx context.Context, projectID, text, requestID string) []services.AgentDeliveryResult {
+	if r == nil || r.store == nil || r.manager == nil {
+		return []services.AgentDeliveryResult{{ProjectID: strings.TrimSpace(projectID), Error: "channel broadcaster is unavailable"}}
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	projectID = strings.TrimSpace(projectID)
+	text = strings.TrimSpace(text)
+	requestID = strings.TrimSpace(requestID)
+	if projectID == "" || text == "" {
+		return []services.AgentDeliveryResult{{ProjectID: projectID, Error: "project broadcast requires project and text"}}
+	}
+
+	results := make([]services.AgentDeliveryResult, 0)
+	delivered := make(map[string]struct{})
+	var original *channelAgentRun
+	r.mu.Lock()
+	if run := r.runs[requestID]; run != nil {
+		original = run
+	}
+	r.mu.Unlock()
+	if original != nil {
+		original.textMu.Lock()
+		if strings.TrimSpace(original.completedText) != "" {
+			text = strings.TrimSpace(original.completedText)
+		}
+		original.textMu.Unlock()
+		externalID := r.finishStreamingOrSend(ctx, original, text)
+		r.saveAssistant(original, text, externalID)
+		result := services.AgentDeliveryResult{ProjectID: projectID, InstanceID: original.instance.ID, ChatID: original.incoming.ChatID, MessageID: externalID}
+		if strings.TrimSpace(externalID) == "" {
+			result.Error = "original channel reply did not return a message id"
+		}
+		results = append(results, result)
+		delivered[original.instance.ID+"\x00"+original.incoming.ChatID] = struct{}{}
+		r.finishRun(original)
+	}
+
+	instances, err := r.store.ListInstances()
+	if err != nil {
+		return append(results, services.AgentDeliveryResult{ProjectID: projectID, Error: err.Error()})
+	}
+	for _, instance := range instances {
+		if !instance.Enabled || instance.ProjectID == nil || strings.TrimSpace(*instance.ProjectID) != projectID {
+			continue
+		}
+		chatID := strings.TrimSpace(instance.Config["broadcastChatId"])
+		if chatID == "" {
+			continue
+		}
+		key := instance.ID + "\x00" + chatID
+		if _, exists := delivered[key]; exists {
+			continue
+		}
+		result := services.AgentDeliveryResult{ProjectID: projectID, InstanceID: instance.ID, ChatID: chatID}
+		messageID, sendErr := r.manager.SendMessage(ctx, instance.ID, chatID, text)
+		if sendErr != nil {
+			result.Error = sendErr.Error()
+			results = append(results, result)
+			continue
+		}
+		result.MessageID = messageID
+		if persistErr := appendChannelOutboundMessage(r.store, r.eventSink, instance, chatID, text, messageID); persistErr != nil {
+			result.Error = persistErr.Error()
+		}
+		results = append(results, result)
+		delivered[key] = struct{}{}
+	}
+	return results
 }
 
 func (r *AgentRuntime) updateStreaming(run *channelAgentRun, text string) {
@@ -441,7 +488,10 @@ func (r *AgentRuntime) updateStreaming(run *channelAgentRun, text string) {
 	}
 }
 
-func (r *AgentRuntime) finishStreamingOrSend(run *channelAgentRun, text string) string {
+func (r *AgentRuntime) finishStreamingOrSend(ctx context.Context, run *channelAgentRun, text string) string {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	run.streamMu.Lock()
 	stream := run.stream
 	run.stream = nil
@@ -451,14 +501,14 @@ func (r *AgentRuntime) finishStreamingOrSend(run *channelAgentRun, text string) 
 		if identified, ok := stream.(interface{ MessageID() string }); ok {
 			messageID = strings.TrimSpace(identified.MessageID())
 		}
-		if err := stream.Finish(context.Background(), text); err != nil {
+		if err := stream.Finish(ctx, text); err != nil {
 			r.publishError(run.instance, err)
 		}
 		return messageID
 	}
-	messageID, err := r.manager.ReplyMessage(context.Background(), run.instance.ID, run.incoming.ExternalID, text)
+	messageID, err := r.manager.ReplyMessage(ctx, run.instance.ID, run.incoming.ExternalID, text)
 	if err != nil {
-		messageID, err = r.manager.SendMessage(context.Background(), run.instance.ID, run.incoming.ChatID, text)
+		messageID, err = r.manager.SendMessage(ctx, run.instance.ID, run.incoming.ChatID, text)
 	}
 	if err != nil {
 		r.publishError(run.instance, err)
@@ -510,20 +560,68 @@ func (r *AgentRuntime) finishRun(run *channelAgentRun) {
 	}
 }
 
-func (r *AgentRuntime) sendFailure(run *channelAgentRun) {
+func (r *AgentRuntime) sendFailure(run *channelAgentRun, errorCode string) {
 	if run == nil {
 		return
 	}
-	r.sendFailureMessage(run.instance, run.incoming.ChatID)
+	r.sendFailureMessage(run.instance, run.incoming.ChatID, errorCode)
 }
 
-func (r *AgentRuntime) sendFailureMessage(instance ChannelInstance, chatID string) {
+func (r *AgentRuntime) sendFailureMessage(instance ChannelInstance, chatID, errorCode string) {
 	if r == nil || r.manager == nil {
 		return
 	}
-	_, err := r.manager.SendMessage(context.Background(), instance.ID, chatID, "处理消息失败，请检查客户端默认模型配置和 Relay 连接。")
+	message := channelFailureMessage(errorCode)
+	if message == "" {
+		return
+	}
+	_, err := r.manager.SendMessage(context.Background(), instance.ID, chatID, message)
 	if err != nil {
 		r.publishError(instance, err)
+	}
+}
+
+func channelPetAIErrorCode(err error) string {
+	if err == nil {
+		return string(services.PET_AI_UPSTREAM_ERROR)
+	}
+	if code := services.PetAIErrorCodeOf(err); code != "" {
+		return code
+	}
+	if errors.Is(err, context.Canceled) {
+		return string(services.PET_AI_REQUEST_CANCELLED)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return string(services.PET_AI_TIMEOUT)
+	}
+	return string(services.PET_AI_UPSTREAM_ERROR)
+}
+
+func channelFailureMessage(errorCode string) string {
+	switch strings.TrimSpace(errorCode) {
+	case string(services.PET_AI_REQUEST_CANCELLED):
+		// 取消是用户主动收口，不应再往频道里补一条看似失败的消息。
+		return ""
+	case string(services.PET_AI_DEPENDENCY_UNAVAILABLE):
+		return "Codex CLI 当前不可用，请确认 Codex CLI 已登录且项目绑定有效；频道会继承 Codex 默认配置。"
+	case string(services.PET_AI_TIMEOUT):
+		return "Codex CLI 响应超时，请确认 Codex CLI 进程仍在运行后重试。"
+	case string(services.PET_AI_REQUEST_IN_FLIGHT):
+		return "当前项目已有消息正在处理，请稍后再试。"
+	case string(services.PET_AI_QUEUE_FULL):
+		return "当前项目消息队列已满，请稍后再试。"
+	case string(services.PET_AI_INVALID_REQUEST), string(services.PET_AI_WORKSPACE_UNAVAILABLE):
+		return "频道请求无效，请检查项目绑定和工作目录。"
+	case string(services.PET_AI_EVENT_ERROR):
+		return "Codex 事件通道异常，请稍后重试并查看运行日志。"
+	case string(services.PET_AI_RESPONSE_INVALID):
+		return "Codex CLI 返回了无效响应，请查看运行日志。"
+	case string(services.PET_AI_REQUEST_TOO_LARGE), string(services.PET_AI_RESPONSE_TOO_LARGE):
+		return "消息内容超过 Codex 处理限制，请缩短后重试。"
+	case string(services.PET_AI_UPSTREAM_ERROR):
+		return "Codex CLI 返回了上游错误，请稍后重试并查看运行日志。"
+	default:
+		return "Codex CLI 处理消息失败，请稍后重试并查看运行日志。"
 	}
 }
 

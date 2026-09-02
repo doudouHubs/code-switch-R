@@ -168,6 +168,37 @@ export interface PetWindowConfig {
   enabled: boolean
 }
 
+/** 与 services/pet_heartbeat.go 的调度状态保持同一组稳定 wire value。 */
+export type PetHeartbeatPhase = 'disabled' | 'waiting' | 'waiting_for_idle' | 'running'
+export type PetHeartbeatRunStatus = 'none' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
+
+export interface PetHeartbeatConfig {
+  petId: string
+  enabled: boolean
+  intervalMinutes: number
+  prompt: string
+}
+
+export interface PetHeartbeatRuntime {
+  phase: PetHeartbeatPhase
+  nextRunAt: number
+  currentRequestId: string
+  lastStartedAt: number
+  lastFinishedAt: number
+  lastStatus: PetHeartbeatRunStatus
+  lastErrorCode: string
+}
+
+export interface PetHeartbeatSnapshot {
+  config: PetHeartbeatConfig
+  runtime: PetHeartbeatRuntime
+}
+
+export interface PetHeartbeatEvent {
+  type: string
+  snapshot: PetHeartbeatSnapshot
+}
+
 export interface PetAtlasMetadata {
   atlasVersion: number
   image: string
@@ -234,6 +265,11 @@ export interface PetRuntimeSnapshot {
   agent: PetAgentConfig
   dream: PetDreamConfig
   skinSelection: PetSkinSelection
+}
+
+/** 设置页首屏只需要配置和皮肤元数据，不应携带历史记录或 atlas 二进制。 */
+export interface PetSettingsSnapshot extends PetRuntimeSnapshot {
+  skins: PetSkinRecord[]
 }
 
 export interface PetActionResult {

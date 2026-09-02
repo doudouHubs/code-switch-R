@@ -292,17 +292,24 @@ func TestPetWindowModesControlMouseAndFocus(t *testing.T) {
 	if err := window.SetMode(PetWindowKeyboard); err != nil {
 		t.Fatalf("SetMode(keyboard) error = %v", err)
 	}
-	if driver.focusCalls != 1 || len(driver.ignoreMouseCalls) != 2 || driver.ignoreMouseCalls[1] {
+	if driver.focusCalls != 1 || len(driver.ignoreMouseCalls) != 1 {
 		t.Fatalf("keyboard calls = ignore:%v focus:%d", driver.ignoreMouseCalls, driver.focusCalls)
 	}
 	if state := window.State(); state.Mode != PetWindowKeyboard || state.ClickThrough || !state.Focused {
 		t.Fatalf("keyboard state = %#v", state)
 	}
 
+	if err := window.SetMode(PetWindowInteractive); err != nil {
+		t.Fatalf("SetMode(interactive) after keyboard error = %v", err)
+	}
+	if len(driver.ignoreMouseCalls) != 1 || driver.releaseFocusCalls != 1 {
+		t.Fatalf("interactive after keyboard should not rewrite mouse style: ignore:%v release:%d", driver.ignoreMouseCalls, driver.releaseFocusCalls)
+	}
+
 	if err := window.SetMode(PetWindowPassive); err != nil {
 		t.Fatalf("SetMode(passive) error = %v", err)
 	}
-	if len(driver.ignoreMouseCalls) != 3 || !driver.ignoreMouseCalls[2] {
+	if len(driver.ignoreMouseCalls) != 2 || !driver.ignoreMouseCalls[1] {
 		t.Fatalf("passive calls = %v", driver.ignoreMouseCalls)
 	}
 	if state := window.State(); state.Mode != PetWindowPassive || !state.ClickThrough || state.Focused {
@@ -338,6 +345,24 @@ func TestPetWindowPassiveModeStillAppliesClickThroughWhenReleaseFocusFails(t *te
 	}
 	if driver.releaseFocusCalls != 1 {
 		t.Fatalf("release focus calls = %d, want one best-effort release", driver.releaseFocusCalls)
+	}
+}
+
+func TestPetWindowKeyboardFocusFailureRestoresClickThrough(t *testing.T) {
+	window, driver := newTestPetWindow(t)
+	if err := window.Open(); err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+
+	driver.focusErr = errors.New("focus denied")
+	if err := window.SetMode(PetWindowKeyboard); err == nil {
+		t.Fatal("SetMode(keyboard) error = nil, want focus error")
+	}
+	if calls := driver.ignoreMouseCalls; len(calls) != 2 || calls[0] || !calls[1] {
+		t.Fatalf("focus failure mouse rollback calls = %v, want disable then restore click-through", calls)
+	}
+	if state := window.State(); state.Mode != PetWindowPassive || !state.ClickThrough {
+		t.Fatalf("state after focus failure = %#v, want passive click-through state", state)
 	}
 }
 

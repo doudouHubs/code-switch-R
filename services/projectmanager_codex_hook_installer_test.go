@@ -72,7 +72,7 @@ func TestMergeProjectManagerCodexHooksPreservesCustomHandlers(t *testing.T) {
 	}
 
 	hooks := merged["hooks"].(map[string]any)
-	for _, eventName := range []string{"SessionStart", "UserPromptSubmit", "Stop", "PermissionRequest", "PreToolUse", "PostToolUse", "SubagentStart", "SubagentStop"} {
+	for _, eventName := range []string{"SessionStart", "UserPromptSubmit", "Stop", "PermissionRequest", "PreToolUse", "PostToolUse", "SessionEnd", "SubagentStart", "SubagentStop"} {
 		if _, ok := hooks[eventName]; !ok {
 			t.Fatalf("缺少事件 %s", eventName)
 		}

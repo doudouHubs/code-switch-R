@@ -18,6 +18,7 @@ const (
 	migrationMarkerFile = ".migrated-from-codex-swtich" // 迁移标记文件
 )
 
+// AppSettings 的预算字段由旧托盘统计功能写入，保留 JSON 兼容性但不再参与托盘菜单运行路径。
 type AppSettings struct {
 	ShowHeatmap               bool    `json:"show_heatmap"`
 	ShowHomeTitle             bool    `json:"show_home_title"`

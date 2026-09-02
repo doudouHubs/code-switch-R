@@ -100,6 +100,67 @@ func TestPetMigrationDecodesBOMStringAndWrapperIdempotently(t *testing.T) {
 	}
 }
 
+func TestPetDAOLoadSettingsSnapshotSkipsHistoricalTables(t *testing.T) {
+	db := newPetMigrationTestDB(t)
+	dao := NewPetDAO(db)
+	ctx := context.Background()
+	imagePath := `C:\\Users\\X1\\AppData\\Local\\pet\\dream.png`
+
+	if err := dao.SaveSnapshot(ctx, PetMigrationSnapshot{
+		PetID:      DefaultPetID,
+		State:      &PetState{PetID: DefaultPetID, Name: "Kapi"},
+		Experience: &PetExperience{PetID: DefaultPetID, TotalTokens: 7},
+		Window:     &PetWindowConfig{PetID: DefaultPetID, Enabled: true},
+		Care:       &PetCareConfig{PetID: DefaultPetID},
+		Agent:      &PetAgentConfig{PetID: DefaultPetID},
+		DreamConfig: &PetDreamConfig{
+			PetID: DefaultPetID,
+		},
+		ExpLog:      []PetExpLogEntry{{PetID: DefaultPetID, ID: "exp-1", Exp: 1, At: 1}},
+		PlanRecords: []PetPlanRecord{{PetID: DefaultPetID, PlanID: "plan-1"}},
+		Dreams:      []PetDreamHistoryRecord{{PetID: DefaultPetID, ID: "dream-1", ImagePath: &imagePath}},
+		Memories:    []PetMemoryRecord{{PetID: DefaultPetID, ID: "memory-1", Text: "history"}},
+	}); err != nil {
+		t.Fatalf("SaveSnapshot() error = %v", err)
+	}
+
+	light, err := dao.LoadSettingsSnapshot(ctx, DefaultPetID)
+	if err != nil {
+		t.Fatalf("LoadSettingsSnapshot() error = %v", err)
+	}
+	if light.State == nil || light.State.Name != "Kapi" || light.Experience == nil || light.Experience.TotalTokens != 7 {
+		t.Fatalf("settings snapshot core = %#v/%#v, want persisted core", light.State, light.Experience)
+	}
+	if len(light.ExpLog) != 0 || len(light.PlanRecords) != 0 || len(light.Dreams) != 0 || len(light.Memories) != 0 {
+		t.Fatalf("settings snapshot loaded historical data: exp=%d plans=%d dreams=%d memories=%d", len(light.ExpLog), len(light.PlanRecords), len(light.Dreams), len(light.Memories))
+	}
+}
+
+func TestPetDAOLoadAgentPersonaIgnoresUnrelatedMalformedConfig(t *testing.T) {
+	db := newPetMigrationTestDB(t)
+	dao := NewPetDAO(db)
+	ctx := context.Background()
+	if err := dao.SaveSnapshot(ctx, PetMigrationSnapshot{
+		PetID: DefaultPetID,
+		State: &PetState{PetID: DefaultPetID, Name: "Mimi"},
+		Agent: &PetAgentConfig{PetID: DefaultPetID, SystemPrompt: "只读取 canonical persona"},
+	}); err != nil {
+		t.Fatalf("SaveSnapshot() error = %v", err)
+	}
+	// 梦境配置不属于人格投影；故意写入损坏 JSON，验证聊天启动不会被设置页其它表拖垮。
+	if _, err := db.Exec(`INSERT INTO pet_dream_config (pet_id, config_json, updated_at) VALUES (?, ?, ?)`, DefaultPetID, "{broken", 1); err != nil {
+		t.Fatalf("写入损坏梦境配置失败: %v", err)
+	}
+
+	persona, err := dao.LoadAgentPersona(ctx, DefaultPetID)
+	if err != nil {
+		t.Fatalf("LoadAgentPersona() error = %v", err)
+	}
+	if persona.SystemPrompt != "只读取 canonical persona" || persona.PetName != "Mimi" {
+		t.Fatalf("persona = %#v", persona)
+	}
+}
+
 func TestPetMigrationImportsDreamDBAndLegacyArchiveWithoutWritingSource(t *testing.T) {
 	source := t.TempDir()
 	archive := filepath.Join(source, petMigrationDreamsDir)

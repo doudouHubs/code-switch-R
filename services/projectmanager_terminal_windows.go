@@ -192,7 +192,16 @@ func (s *ProjectManagerService) runProjectManagerAICommit(projectPath string) er
 		return errors.New("当前项目没有可提交变更")
 	}
 
-	if err := startProjectManagerAICommitTerminal(projectPath); err != nil {
+	modelReference, err := s.loadProjectManagerAICommitModel()
+	if err != nil {
+		return err
+	}
+	modelID, err := validateProjectManagerAICommitModel(modelReference)
+	if err != nil {
+		return err
+	}
+
+	if err := startProjectManagerAICommitTerminal(projectPath, modelID); err != nil {
 		return fmt.Errorf("启动 AI-Commit 失败: %w", err)
 	}
 
@@ -581,12 +590,12 @@ func projectManagerHasCommittableChanges(projectPath string) (bool, error) {
 	return strings.TrimSpace(string(output)) != "", nil
 }
 
-func startProjectManagerAICommitTerminal(projectPath string) error {
+func startProjectManagerAICommitTerminal(projectPath string, modelID string) error {
 	return startProjectManagerProjectTaskTerminal(
 		projectPath,
 		"ai-commit",
 		projectManagerAICommitTabTitle(projectPath),
-		buildProjectManagerAICommitPowerShellCommand(projectPath),
+		buildProjectManagerAICommitPowerShellCommand(projectPath, modelID),
 		"AI-Commit",
 	)
 }
@@ -606,10 +615,16 @@ func startProjectManagerHiddenCommand(workingDir string, executable string, args
 	return nil
 }
 
-func buildProjectManagerAICommitPowerShellCommand(projectPath string) string {
+func buildProjectManagerAICommitPowerShellCommand(projectPath string, modelID string) string {
 	escapedProjectPath := escapeProjectManagerPowerShellSingleQuoted(projectPath)
 	commitPrompt := escapeProjectManagerPowerShellSingleQuoted(projectManagerAICommitPrompt)
 	failureMessage := escapeProjectManagerPowerShellSingleQuoted("AI-Commit 执行失败，按 Enter 关闭窗口")
+	trimmedModelID := strings.TrimSpace(modelID)
+	commitArgs := []string{"-p", "commit-fast", "exec", "--ephemeral"}
+	if trimmedModelID != "" {
+		commitArgs = append(commitArgs, "--model", fmt.Sprintf("'%s'", escapeProjectManagerPowerShellSingleQuoted(trimmedModelID)))
+	}
+	commitArgs = append(commitArgs, fmt.Sprintf("'%s'", commitPrompt))
 
 	// AI-Commit 是按钮触发的一次性任务，不能沿用交互式 $commit 在 ignored 文件上的确认流程。
 	// prompt 在任务入口一次性给出有限授权：安全源码可精确强制暂存，敏感或生成物必须跳过并继续，避免自动化停在无人值守窗口里。
@@ -628,9 +643,30 @@ func buildProjectManagerAICommitPowerShellCommand(projectPath string) string {
 		"%s; Set-Location -LiteralPath '%s'; %s; $__exitCode = $LASTEXITCODE; if ($__exitCode -eq 0) { exit 0 }; Write-Host '%s'; Read-Host | Out-Null; exit $__exitCode",
 		buildProjectManagerCodexResolverPowerShell(),
 		escapedProjectPath,
-		buildProjectManagerCodexCommand("-p", "commit-fast", "exec", "--ephemeral", fmt.Sprintf("'%s'", commitPrompt)),
+		buildProjectManagerCodexCommand(commitArgs...),
 		failureMessage,
 	)
+}
+
+func validateProjectManagerAICommitModel(reference PetAgentModelReference) (string, error) {
+	modelID := strings.TrimSpace(reference.ModelID)
+	if modelID == "" {
+		return "", nil
+	}
+
+	platform := strings.ToLower(strings.TrimSpace(reference.ProviderPlatform))
+	if platform != "codex" {
+		return "", fmt.Errorf("AI-Commit 不兼容宠物 Agent provider platform %q，仅支持 codex", platform)
+	}
+	// 模型 ID 会进入 PowerShell 单引号字符串；换行/NUL 会破坏脚本或底层进程，
+	// `*` 则不是一次性提交允许的明确模型选择，直接失败比静默扩大匹配范围可靠。
+	if strings.ContainsAny(modelID, "\x00\r\n") {
+		return "", errors.New("AI-Commit 模型 ID 不能包含 NUL 或换行")
+	}
+	if strings.ContainsRune(modelID, '*') {
+		return "", errors.New("AI-Commit 模型 ID 不能包含通配符 *")
+	}
+	return modelID, nil
 }
 
 func buildProjectManagerPowerShellLaunchCommand(

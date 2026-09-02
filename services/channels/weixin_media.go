@@ -16,9 +16,9 @@ import (
 
 type weixinUploadedMedia struct {
 	DownloadEncryptedQueryParam string
-	AESKeyHex                    string
-	RawSize                      int
-	CipherSize                   int
+	AESKeyHex                   string
+	RawSize                     int
+	CipherSize                  int
 }
 
 func weixinAESBlockSize(size int) int {
@@ -48,6 +48,32 @@ func encryptWeixinECB(data, key []byte) ([]byte, error) {
 	return result, nil
 }
 
+func decryptWeixinECB(data, key []byte) ([]byte, error) {
+	if len(data) == 0 || len(data)%aes.BlockSize != 0 {
+		return nil, errors.New("Weixin AES-ECB ciphertext has invalid size")
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	plaintext := make([]byte, len(data))
+	for offset := 0; offset < len(data); offset += aes.BlockSize {
+		block.Decrypt(plaintext[offset:offset+aes.BlockSize], data[offset:offset+aes.BlockSize])
+	}
+
+	// 微信 CDN 使用 PKCS#7 padding；逐字节校验，避免错误密钥被当成有效图片继续传递。
+	padding := int(plaintext[len(plaintext)-1])
+	if padding < 1 || padding > aes.BlockSize || padding > len(plaintext) {
+		return nil, errors.New("Weixin AES-ECB padding is invalid")
+	}
+	for _, value := range plaintext[len(plaintext)-padding:] {
+		if int(value) != padding {
+			return nil, errors.New("Weixin AES-ECB padding is invalid")
+		}
+	}
+	return plaintext[:len(plaintext)-padding], nil
+}
+
 func (p *weixinProvider) uploadWeixinMedia(ctx context.Context, chatID string, media ChannelMedia, mediaType int) (weixinUploadedMedia, error) {
 	if len(media.Data) == 0 {
 		return weixinUploadedMedia{}, errors.New("Weixin media is empty")
@@ -68,12 +94,12 @@ func (p *weixinProvider) uploadWeixinMedia(ctx context.Context, chatID string, m
 	checksum := md5.Sum(media.Data)
 	aesKeyHex := hex.EncodeToString(key)
 	var response struct {
-		Ret              int    `json:"ret"`
-		ErrCode          int    `json:"errcode"`
-		ErrMsg           string `json:"errmsg"`
-		UploadParam      string `json:"upload_param"`
-		UploadFullURL    string `json:"upload_full_url"`
-		Data             *struct {
+		Ret           int    `json:"ret"`
+		ErrCode       int    `json:"errcode"`
+		ErrMsg        string `json:"errmsg"`
+		UploadParam   string `json:"upload_param"`
+		UploadFullURL string `json:"upload_full_url"`
+		Data          *struct {
 			Ret           int    `json:"ret"`
 			ErrCode       int    `json:"errcode"`
 			ErrMsg        string `json:"errmsg"`
@@ -82,15 +108,15 @@ func (p *weixinProvider) uploadWeixinMedia(ctx context.Context, chatID string, m
 		} `json:"data"`
 	}
 	body := map[string]any{
-		"filekey":        fileKey,
-		"media_type":     mediaType,
-		"to_user_id":     chatID,
-		"rawsize":        len(media.Data),
-		"rawfilemd5":     hex.EncodeToString(checksum[:]),
-		"filesize":       len(ciphertext),
-		"no_need_thumb":  true,
-		"aeskey":         aesKeyHex,
-		"base_info":      map[string]string{"channel_version": "1.0.0"},
+		"filekey":       fileKey,
+		"media_type":    mediaType,
+		"to_user_id":    chatID,
+		"rawsize":       len(media.Data),
+		"rawfilemd5":    hex.EncodeToString(checksum[:]),
+		"filesize":      len(ciphertext),
+		"no_need_thumb": true,
+		"aeskey":        aesKeyHex,
+		"base_info":     map[string]string{"channel_version": "1.0.0"},
 	}
 	if err := p.post(ctx, "ilink/bot/getuploadurl", body, &response); err != nil {
 		return weixinUploadedMedia{}, err
@@ -222,7 +248,7 @@ func (p *weixinProvider) SendWeixinImage(ctx context.Context, chatID string, med
 		items = append(items, map[string]any{"type": 1, "text_item": map[string]string{"text": caption}})
 	}
 	items = append(items, map[string]any{"type": 2, "image_item": map[string]any{
-		"media": map[string]any{"encrypt_query_param": uploaded.DownloadEncryptedQueryParam, "aes_key": encodeWeixinAESKey(uploaded.AESKeyHex), "encrypt_type": 1},
+		"media":    map[string]any{"encrypt_query_param": uploaded.DownloadEncryptedQueryParam, "aes_key": encodeWeixinAESKey(uploaded.AESKeyHex), "encrypt_type": 1},
 		"mid_size": uploaded.CipherSize,
 	}})
 	return p.sendWeixinItems(ctx, chatID, p.contextToken(chatID), items)
@@ -245,7 +271,7 @@ func (p *weixinProvider) SendWeixinFile(ctx context.Context, chatID string, medi
 		items = append(items, map[string]any{"type": 1, "text_item": map[string]string{"text": caption}})
 	}
 	items = append(items, map[string]any{"type": 4, "file_item": map[string]any{
-		"media": map[string]any{"encrypt_query_param": uploaded.DownloadEncryptedQueryParam, "aes_key": encodeWeixinAESKey(uploaded.AESKeyHex), "encrypt_type": 1},
+		"media":     map[string]any{"encrypt_query_param": uploaded.DownloadEncryptedQueryParam, "aes_key": encodeWeixinAESKey(uploaded.AESKeyHex), "encrypt_type": 1},
 		"file_name": fileName,
 		"len":       fmt.Sprint(uploaded.RawSize),
 	}})

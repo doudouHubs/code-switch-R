@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -19,6 +20,21 @@ func TestPetAIAPIUnavailableReturnsStructuredError(t *testing.T) {
 		},
 		"CancelChat": func() error {
 			return api.CancelChat("request-1")
+		},
+		"ListSkills": func() error {
+			_, err := api.ListSkills(AgentCommandRequest{})
+			return err
+		},
+		"ListModels": func() error {
+			_, err := api.ListModels(AgentCommandRequest{})
+			return err
+		},
+		"ExecuteCommand": func() error {
+			_, err := api.ExecuteCommand(AgentCommandRequest{Command: "compact"})
+			return err
+		},
+		"ResolveInteraction": func() error {
+			return api.ResolveInteraction(ResolveInteractionRequest{InteractionID: "interaction-1"})
 		},
 		"GenerateDreamText": func() error {
 			_, err := api.GenerateDreamText(PetDreamTextRequest{})
@@ -192,6 +208,34 @@ func (s *petChatRuntimeStub) CancelChat(requestID string) error {
 
 func (s *petChatRuntimeStub) Close() error { return nil }
 
+type petCodexCommandRuntimeStub struct {
+	petChatRuntimeStub
+	skillsRequest  AgentCommandRequest
+	modelsRequest  AgentCommandRequest
+	commandRequest AgentCommandRequest
+	resolveRequest ResolveInteractionRequest
+}
+
+func (s *petCodexCommandRuntimeStub) ListSkills(_ context.Context, request AgentCommandRequest) (AgentSkillListResult, error) {
+	s.skillsRequest = request
+	return AgentSkillListResult{ProjectID: request.ProjectID, Skills: []AgentSkill{{Name: "fixture-skill", Path: `C:\fixture\SKILL.md`, Enabled: true}}}, nil
+}
+
+func (s *petCodexCommandRuntimeStub) ListModels(_ context.Context, request AgentCommandRequest) (AgentModelListResult, error) {
+	s.modelsRequest = request
+	return AgentModelListResult{ProjectID: request.ProjectID, Models: []AgentModel{{ID: "fixture-model", IsDefault: true}}}, nil
+}
+
+func (s *petCodexCommandRuntimeStub) ExecuteCommand(_ context.Context, request AgentCommandRequest) (AgentCommandResult, error) {
+	s.commandRequest = request
+	return AgentCommandResult{Command: request.Command, Accepted: true, ThreadID: "fixture-thread"}, nil
+}
+
+func (s *petCodexCommandRuntimeStub) ResolveInteraction(_ context.Context, request ResolveInteractionRequest) error {
+	s.resolveRequest = request
+	return nil
+}
+
 func TestPetAIAPIWithChatRuntimeRoutesOnlyMainChat(t *testing.T) {
 	runtime := &petChatRuntimeStub{}
 	api := NewPetAIAPIServiceWithChatRuntime(nil, runtime)
@@ -219,5 +263,45 @@ func TestPetAIAPIWithChatRuntimeRoutesOnlyMainChat(t *testing.T) {
 	// 梦境等旧能力仍要求核心 service；只有主聊天被切到独立 runtime。
 	if _, err := api.GenerateDreamText(PetDreamTextRequest{}); PetAIErrorCodeOf(err) != string(PET_AI_DEPENDENCY_UNAVAILABLE) {
 		t.Fatalf("GenerateDreamText() error code = %q", PetAIErrorCodeOf(err))
+	}
+}
+
+func TestPetAIAPIWithChatRuntimeRoutesCodexCommands(t *testing.T) {
+	runtime := &petCodexCommandRuntimeStub{}
+	api := NewPetAIAPIServiceWithChatRuntime(nil, runtime)
+
+	skillsRequest := AgentCommandRequest{ProjectID: "project-1", PetID: "pet-1", Command: "skills"}
+	skills, err := api.ListSkills(skillsRequest)
+	if err != nil {
+		t.Fatalf("ListSkills() error = %v", err)
+	}
+	if skills.ProjectID != skillsRequest.ProjectID || len(skills.Skills) != 1 || !reflect.DeepEqual(runtime.skillsRequest, skillsRequest) {
+		t.Fatalf("skills result/request = %#v / %#v", skills, runtime.skillsRequest)
+	}
+
+	modelsRequest := AgentCommandRequest{ProjectID: "project-1", PetID: "pet-1", Command: "models", IncludeHidden: true, Limit: 10}
+	models, err := api.ListModels(modelsRequest)
+	if err != nil {
+		t.Fatalf("ListModels() error = %v", err)
+	}
+	if models.ProjectID != modelsRequest.ProjectID || len(models.Models) != 1 || !reflect.DeepEqual(runtime.modelsRequest, modelsRequest) {
+		t.Fatalf("models result/request = %#v / %#v", models, runtime.modelsRequest)
+	}
+
+	commandRequest := AgentCommandRequest{ProjectID: "project-1", PetID: "pet-1", Command: "compact"}
+	command, err := api.ExecuteCommand(commandRequest)
+	if err != nil {
+		t.Fatalf("ExecuteCommand() error = %v", err)
+	}
+	if !command.Accepted || command.ThreadID != "fixture-thread" || !reflect.DeepEqual(runtime.commandRequest, commandRequest) {
+		t.Fatalf("command result/request = %#v / %#v", command, runtime.commandRequest)
+	}
+
+	resolveRequest := ResolveInteractionRequest{InteractionID: "interaction-1", Decision: "accept"}
+	if err := api.ResolveInteraction(resolveRequest); err != nil {
+		t.Fatalf("ResolveInteraction() error = %v", err)
+	}
+	if !reflect.DeepEqual(runtime.resolveRequest, resolveRequest) {
+		t.Fatalf("resolve request = %#v", runtime.resolveRequest)
 	}
 }

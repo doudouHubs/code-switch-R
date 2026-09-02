@@ -17,6 +17,7 @@ import ProjectManagerHeroPanel from "./ProjectManagerHeroPanel.vue";
 import ProjectManagerProjectGrid from "./ProjectManagerProjectGrid.vue";
 import ProjectManagerRenameModal from "./ProjectManagerRenameModal.vue";
 import ProjectManagerSessionGrid from "./ProjectManagerSessionGrid.vue";
+import ProjectManagerSessionSelectionDock from "./ProjectManagerSessionSelectionDock.vue";
 import ProjectManagerStatePanel from "./ProjectManagerStatePanel.vue";
 import "./projectManager.css";
 import {
@@ -33,6 +34,7 @@ import {
   refreshProjectManagerSnapshot,
   renameProject,
   renameSession,
+  pruneSessionConversationsByRange,
   searchProjectSessionConversations,
   saveProjectRunCommand,
   setProjectCodexProvider,
@@ -44,6 +46,7 @@ import {
   type CodexRuntimeState,
   type CodexRuntimeStatusSnapshot,
   type CodexSessionRuntimeStatus,
+  type SessionDeletionRange,
 } from "../../services/projectManager";
 import { LoadProviders } from "../../../bindings/codeswitch/services/providerservice";
 import type { Provider } from "../../../bindings/codeswitch/services/models";
@@ -68,6 +71,10 @@ const committingProjectId = ref("");
 const runningProjectCommandId = ref("");
 const deletingProjectIds = ref<string[]>([]);
 const deletingSessionIds = ref<string[]>([]);
+const sessionSelectionMode = ref(false);
+const selectedSessionIds = ref<string[]>([]);
+const batchDeletingSessions = ref(false);
+const sessionDeletionRange = ref<SessionDeletionRange>("all");
 const snapshotProjects = ref<ProjectSummary[]>([]);
 const snapshotSessions = ref<SessionSummary[]>([]);
 const codexRuntimeSnapshot = ref<CodexRuntimeStatusSnapshot>({
@@ -110,10 +117,16 @@ const runCommandModalState = reactive({
 });
 const deleteState = reactive({
   open: false,
-  targetType: "project" as "project" | "session",
+  targetType: "project" as
+    | "project"
+    | "session"
+    | "session-batch"
+    | "session-batch-prune",
   targetId: "",
+  targetIds: [] as string[],
   targetName: "",
   sessionCount: 0,
+  range: "all" as SessionDeletionRange,
 });
 
 const projectManagerOpenTimeoutMs = 5000;
@@ -377,6 +390,49 @@ const visibleSessions = computed(() =>
     : currentProjectSessions.value,
 );
 
+const canSelectProjectSessions = computed(
+  () => activeMode.value === "project" && !!selectedProjectId.value,
+);
+
+const selectedVisibleSessionIds = computed(() => {
+  const selectedIDs = new Set(selectedSessionIds.value);
+  return visibleSessions.value
+    .filter((session) => selectedIDs.has(session.id))
+    .map((session) => session.id);
+});
+
+const selectedSessionCount = computed(
+  () => selectedVisibleSessionIds.value.length,
+);
+
+const isSessionSelected = (sessionID: string) =>
+  selectedSessionIds.value.includes(sessionID);
+const isSessionDeleting = (sessionID: string) =>
+  deletingSessionIds.value.includes(sessionID);
+
+const allVisibleSessionsSelected = computed(
+  () =>
+    visibleSessions.value.length > 0 &&
+    selectedSessionCount.value === visibleSessions.value.length,
+);
+
+const sessionSelectionDockVisible = computed(
+  () => sessionSelectionMode.value && canSelectProjectSessions.value,
+);
+
+const sessionDeletionRangeLabel = computed(() => {
+  switch (sessionDeletionRange.value) {
+    case "one_week":
+      return t("components.projectManager.selection.rangeOneWeek");
+    case "three_weeks":
+      return t("components.projectManager.selection.rangeThreeWeeks");
+    case "one_month":
+      return t("components.projectManager.selection.rangeOneMonth");
+    default:
+      return t("components.projectManager.selection.rangeAll");
+  }
+});
+
 const emptyStateMessage = computed(() => {
   if (loading.value) {
     return "";
@@ -406,6 +462,95 @@ watch(activeMode, (mode) => {
     selectedProjectId.value = "";
   }
 });
+
+const resetSessionSelection = () => {
+  sessionSelectionMode.value = false;
+  selectedSessionIds.value = [];
+  sessionDeletionRange.value = "all";
+};
+
+const reconcileSessionSelection = () => {
+  if (!canSelectProjectSessions.value) {
+    resetSessionSelection();
+    return;
+  }
+
+  const visibleIDs = new Set(visibleSessions.value.map((session) => session.id));
+  const nextSelectedIDs = selectedSessionIds.value.filter((id) =>
+    visibleIDs.has(id),
+  );
+  if (nextSelectedIDs.length !== selectedSessionIds.value.length) {
+    // 搜索结果和刷新快照会改变可见集合，选中状态不能继续指向用户已经看不见的会话。
+    selectedSessionIds.value = nextSelectedIDs;
+  }
+};
+
+watch(
+  [activeMode, selectedProjectId],
+  ([mode, projectID], previous) => {
+    const previousProjectID = previous?.[1];
+    if (mode !== "project" || !projectID || projectID !== previousProjectID) {
+      resetSessionSelection();
+      return;
+    }
+    reconcileSessionSelection();
+  },
+);
+watch(visibleSessions, reconcileSessionSelection);
+
+const toggleSessionSelectionMode = () => {
+  if (!canSelectProjectSessions.value || batchDeletingSessions.value) {
+    return;
+  }
+  if (sessionSelectionMode.value) {
+    resetSessionSelection();
+    return;
+  }
+  sessionSelectionMode.value = true;
+  reconcileSessionSelection();
+};
+
+const exitSessionSelectionMode = () => {
+  if (batchDeletingSessions.value) {
+    return;
+  }
+  resetSessionSelection();
+};
+
+const toggleSessionSelection = (sessionID: string) => {
+  if (
+    !sessionSelectionMode.value ||
+    batchDeletingSessions.value ||
+    isSessionDeleting(sessionID)
+  ) {
+    return;
+  }
+
+  if (selectedSessionIds.value.includes(sessionID)) {
+    selectedSessionIds.value = selectedSessionIds.value.filter(
+      (id) => id !== sessionID,
+    );
+    return;
+  }
+  selectedSessionIds.value = [...selectedSessionIds.value, sessionID];
+};
+
+const selectAllVisibleSessions = () => {
+  if (!sessionSelectionMode.value || batchDeletingSessions.value) {
+    return;
+  }
+  selectedSessionIds.value = visibleSessions.value.map((session) => session.id);
+};
+
+const invertVisibleSessionSelection = () => {
+  if (!sessionSelectionMode.value || batchDeletingSessions.value) {
+    return;
+  }
+  const selectedIDs = new Set(selectedSessionIds.value);
+  selectedSessionIds.value = visibleSessions.value
+    .filter((session) => !selectedIDs.has(session.id))
+    .map((session) => session.id);
+};
 
 const clearProjectSessionSearchTimer = () => {
   if (!projectSessionSearchTimer) {
@@ -501,8 +646,17 @@ const loadSnapshot = async (isRefresh = false) => {
 };
 
 const enterProject = (project: ProjectSummary) => {
+  resetSessionSelection();
   selectedProjectId.value = project.id;
   activeMode.value = "project";
+};
+
+const handleBackToProjects = () => {
+  if (batchDeletingSessions.value) {
+    return;
+  }
+  resetSessionSelection();
+  selectedProjectId.value = "";
 };
 
 const formatUpdatedAt = (timestamp: number) => {
@@ -595,6 +749,7 @@ const openDeleteModal = (
   }
   deleteState.targetType = type;
   deleteState.targetId = payload.id;
+  deleteState.targetIds = type === "session" ? [payload.id] : [];
   deleteState.targetName = payload.display_name;
   deleteState.sessionCount =
     type === "project"
@@ -602,6 +757,26 @@ const openDeleteModal = (
           (session) => session.project_id === payload.id,
         ).length
       : 0;
+  deleteState.range = "all";
+  deleteState.open = true;
+};
+
+const openBatchDeleteModal = () => {
+  if (
+    !sessionSelectionMode.value ||
+    batchDeletingSessions.value ||
+    selectedSessionCount.value === 0
+  ) {
+    return;
+  }
+
+  const range = sessionDeletionRange.value;
+  deleteState.targetType = range === "all" ? "session-batch" : "session-batch-prune";
+  deleteState.targetId = "";
+  deleteState.targetIds = [...selectedVisibleSessionIds.value];
+  deleteState.targetName = "";
+  deleteState.sessionCount = deleteState.targetIds.length;
+  deleteState.range = range;
   deleteState.open = true;
 };
 
@@ -797,8 +972,195 @@ const loadCodexRuntimeSnapshot = async () => {
   }
 };
 
+const removeSessionFromSnapshot = (session: SessionSummary) => {
+  snapshotSessions.value = snapshotSessions.value.filter(
+    (item) => item.id !== session.id,
+  );
+  snapshotProjects.value = snapshotProjects.value.map((project) => {
+    if (project.id !== session.project_id) {
+      return project;
+    }
+    return {
+      ...project,
+      session_count: Math.max(0, project.session_count - 1),
+    };
+  });
+  selectedSessionIds.value = selectedSessionIds.value.filter(
+    (id) => id !== session.id,
+  );
+};
+
+const confirmBatchSessionDelete = async () => {
+  const targetIDs = [...deleteState.targetIds];
+  const targetsByID = new Map(
+    snapshotSessions.value.map((session) => [session.id, session]),
+  );
+  deleteState.open = false;
+
+  if (targetIDs.length === 0) {
+    return;
+  }
+
+  batchDeletingSessions.value = true;
+  deletingSessionIds.value = Array.from(
+    new Set([...deletingSessionIds.value, ...targetIDs]),
+  );
+  let deletedCount = 0;
+  const failures: string[] = [];
+
+  try {
+    // Codex 索引和本地隐藏记录都属于共享文件状态，批量操作必须串行，避免并发写入互相覆盖。
+    for (const sessionID of targetIDs) {
+      const session = targetsByID.get(sessionID);
+      if (!session) {
+        failures.push(
+          `${sessionID}: ${t("components.projectManager.errors.sessionNotFound")}`,
+        );
+        continue;
+      }
+
+      try {
+        await deleteSession(session.id);
+        removeSessionFromSnapshot(session);
+        deletedCount += 1;
+      } catch (error) {
+        console.error("failed to delete session in batch", session.id, error);
+        failures.push(
+          `${session.display_name || session.id}: ${extractErrorMessage(error)}`,
+        );
+      }
+    }
+
+    if (failures.length === 0) {
+      showToast(
+        t("components.projectManager.delete.batchSessionDeleted", {
+          count: deletedCount,
+        }),
+        "success",
+      );
+    } else {
+      const summary = t(
+        deletedCount > 0
+          ? "components.projectManager.delete.batchSessionDeletePartial"
+          : "components.projectManager.delete.batchSessionDeleteFailed",
+        {
+          deleted: deletedCount,
+          failed: failures.length,
+          count: targetIDs.length,
+        },
+      );
+      const details = t(
+        "components.projectManager.delete.batchSessionDeleteFailureDetails",
+        { items: failures.join("; ") },
+      );
+      showToast(`${summary} ${details}`, deletedCount > 0 ? "warning" : "error");
+    }
+  } finally {
+    deletingSessionIds.value = deletingSessionIds.value.filter(
+      (id) => !targetIDs.includes(id),
+    );
+    batchDeletingSessions.value = false;
+    deleteState.targetIds = [];
+    reconcileSessionSelection();
+  }
+};
+
+const confirmBatchSessionConversationPrune = async () => {
+  const targetIDs = [...deleteState.targetIds];
+  const range = deleteState.range;
+  const targetsByID = new Map(
+    snapshotSessions.value.map((session) => [session.id, session]),
+  );
+  deleteState.open = false;
+
+  if (targetIDs.length === 0 || range === "all") {
+    return;
+  }
+
+  batchDeletingSessions.value = true;
+  deletingSessionIds.value = Array.from(
+    new Set([...deletingSessionIds.value, ...targetIDs]),
+  );
+
+  try {
+    const result = await pruneSessionConversationsByRange(targetIDs, range);
+    const failures = result.results.filter((item) => !!item.error);
+    const noMatchCount = result.results.filter(
+      (item) => !item.error && item.deleted_items === 0,
+    ).length;
+    const failureDetails = failures.map((item) => {
+      const session = targetsByID.get(item.session_id);
+      return `${session?.display_name || item.session_id}: ${item.error}`;
+    });
+
+    if (result.total_deleted_items > 0) {
+      // 详情剪枝不会移除会话卡片，但可能改变概要和更新时间，完成后重新读取快照保持列表一致。
+      await loadSnapshot(true);
+    }
+
+    if (failures.length === 0) {
+      if (result.total_deleted_items === 0) {
+        showToast(
+          t("components.projectManager.delete.batchSessionPruneNoMatch", {
+            count: noMatchCount,
+            range: sessionDeletionRangeLabel.value,
+          }),
+          "warning",
+        );
+      } else {
+        showToast(
+          t("components.projectManager.delete.batchSessionPruned", {
+            turns: result.total_deleted_turns,
+            items: result.total_deleted_items,
+            range: sessionDeletionRangeLabel.value,
+            empty: noMatchCount,
+          }),
+          "success",
+        );
+      }
+    } else {
+      const summary = t(
+        result.total_deleted_items > 0
+          ? "components.projectManager.delete.batchSessionPrunePartial"
+          : "components.projectManager.delete.batchSessionPruneFailed",
+        {
+          turns: result.total_deleted_turns,
+          items: result.total_deleted_items,
+          failed: failures.length,
+          count: targetIDs.length,
+          range: sessionDeletionRangeLabel.value,
+        },
+      );
+      const details = t(
+        "components.projectManager.delete.batchSessionPruneFailureDetails",
+        { items: failureDetails.join("; ") },
+      );
+      showToast(`${summary} ${details}`, result.total_deleted_items > 0 ? "warning" : "error");
+    }
+  } catch (error) {
+    console.error("failed to prune session conversations in batch", error);
+    showToast(extractErrorMessage(error), "error");
+  } finally {
+    deletingSessionIds.value = deletingSessionIds.value.filter(
+      (id) => !targetIDs.includes(id),
+    );
+    batchDeletingSessions.value = false;
+    deleteState.targetIds = [];
+    reconcileSessionSelection();
+  }
+};
+
 const confirmDelete = async () => {
   const targetType = deleteState.targetType;
+  if (targetType === "session-batch") {
+    await confirmBatchSessionDelete();
+    return;
+  }
+  if (targetType === "session-batch-prune") {
+    await confirmBatchSessionConversationPrune();
+    return;
+  }
+
   const targetId = deleteState.targetId;
   const targetName = deleteState.targetName;
   const projectTarget =
@@ -846,18 +1208,7 @@ const confirmDelete = async () => {
       );
     } else if (sessionTarget) {
       await deleteSession(sessionTarget.id);
-      snapshotSessions.value = snapshotSessions.value.filter(
-        (session) => session.id !== sessionTarget.id,
-      );
-      snapshotProjects.value = snapshotProjects.value.map((project) => {
-        if (project.id !== sessionTarget.project_id) {
-          return project;
-        }
-        return {
-          ...project,
-          session_count: Math.max(0, project.session_count - 1),
-        };
-      });
+      removeSessionFromSnapshot(sessionTarget);
       showToast(
         t("components.projectManager.delete.sessionDeleted"),
         "success",
@@ -1017,8 +1368,6 @@ const isProjectCommitting = (projectID: string) =>
   committingProjectId.value === projectID;
 const isProjectRunning = (projectID: string) =>
   runningProjectCommandId.value === projectID;
-const isSessionDeleting = (sessionID: string) =>
-  deletingSessionIds.value.includes(sessionID);
 
 const resolveSessionSummary = (session: SessionSummary) => {
   if (projectSessionSearchResolved.value) {
@@ -1074,9 +1423,13 @@ onBeforeUnmount(() => {
       :refreshing="refreshing"
       :searching="projectSessionSearchLoading"
       :conversation-search="isProjectSessionSearchScope"
+      :can-select-sessions="canSelectProjectSessions"
+      :selection-mode="sessionSelectionMode"
+      :selection-busy="batchDeletingSessions"
       @change-mode="activeMode = $event"
       @clear="searchKeyword = ''"
       @refresh="loadSnapshot(true)"
+      @toggle-selection="toggleSessionSelectionMode"
     />
 
     <ProjectManagerBreadcrumb
@@ -1084,7 +1437,7 @@ onBeforeUnmount(() => {
       :project="selectedProject"
       :opening-terminal="openingProjectTerminalId === selectedProject.id"
       :committing="committingProjectId === selectedProject.id"
-      @back="selectedProjectId = ''"
+      @back="handleBackToProjects"
       @open-terminal="handleOpenProjectTerminal(selectedProject)"
       @commit="handleRunProjectAICommit(selectedProject)"
     />
@@ -1132,12 +1485,29 @@ onBeforeUnmount(() => {
       :show-project-name-tag="activeMode === 'session'"
       :is-session-opening="isSessionOpening"
       :is-session-deleting="isSessionDeleting"
+      :selection-mode="sessionSelectionMode"
+      :is-session-selected="isSessionSelected"
       :codex-monitor="codexRuntimeSnapshot.monitor"
       :resolve-codex-session-status="resolveCodexSessionStatus"
       @delete="openDeleteModal('session', $event)"
       @rename="openRenameModal('session', $event)"
       @open-session="handleOpenSession"
       @open-detail="openSessionDetail"
+      @toggle-selection="toggleSessionSelection($event.id)"
+    />
+
+    <ProjectManagerSessionSelectionDock
+      v-if="sessionSelectionDockVisible"
+      :selected-count="selectedSessionCount"
+      :total-count="visibleSessions.length"
+      :all-selected="allVisibleSessionsSelected"
+      :busy="batchDeletingSessions"
+      :range="sessionDeletionRange"
+      @select-all="selectAllVisibleSessions"
+      @invert-selection="invertVisibleSessionSelection"
+      @update:range="sessionDeletionRange = $event"
+      @delete="openBatchDeleteModal"
+      @exit="exitSessionSelectionMode"
     />
 
     <ProjectManagerRenameModal
@@ -1286,7 +1656,11 @@ onBeforeUnmount(() => {
       :title="
         deleteState.targetType === 'project'
           ? t('components.projectManager.delete.projectTitle')
-          : t('components.projectManager.delete.sessionTitle')
+          : deleteState.targetType === 'session-batch'
+            ? t('components.projectManager.delete.batchSessionTitle')
+            : deleteState.targetType === 'session-batch-prune'
+              ? t('components.projectManager.delete.batchSessionPruneTitle')
+            : t('components.projectManager.delete.sessionTitle')
       "
       variant="confirm"
       @close="closeDeleteModal"
@@ -1301,6 +1675,21 @@ onBeforeUnmount(() => {
               })
             }}
           </p>
+          <p v-else-if="deleteState.targetType === 'session-batch'">
+            {{
+              t("components.projectManager.delete.batchSessionConfirm", {
+                count: deleteState.sessionCount,
+              })
+            }}
+          </p>
+          <p v-else-if="deleteState.targetType === 'session-batch-prune'">
+            {{
+              t("components.projectManager.delete.batchSessionPruneConfirm", {
+                count: deleteState.sessionCount,
+                range: sessionDeletionRangeLabel,
+              })
+            }}
+          </p>
           <p v-else>
             {{
               t("components.projectManager.delete.sessionConfirm", {
@@ -1309,7 +1698,11 @@ onBeforeUnmount(() => {
             }}
           </p>
           <p class="detail-delete-hint">
-            {{ t("components.projectManager.delete.hint") }}
+            {{
+              deleteState.targetType === 'session-batch-prune'
+                ? t("components.projectManager.delete.batchSessionPruneHint")
+                : t("components.projectManager.delete.hint")
+            }}
           </p>
         </div>
         <footer class="form-actions confirm-actions">

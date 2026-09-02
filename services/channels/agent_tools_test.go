@@ -14,12 +14,13 @@ import (
 )
 
 type channelToolTestProvider struct {
-	mu      sync.Mutex
-	sent    []string
-	replied []string
-	running bool
-	groups  []ChannelGroup
-	history []ChannelMessage
+	mu       sync.Mutex
+	sent     []string
+	replied  []string
+	running  bool
+	groups   []ChannelGroup
+	history  []ChannelMessage
+	restored []ChannelMessage
 }
 
 func (p *channelToolTestProvider) Start(context.Context) error {
@@ -67,6 +68,11 @@ func (p *channelToolTestProvider) SendMedia(context.Context, string, ChannelMedi
 func (p *channelToolTestProvider) SupportsStreaming() bool { return false }
 func (p *channelToolTestProvider) SendStreamingMessage(context.Context, string, string, string) (StreamingHandle, error) {
 	return nil, errors.New("streaming is not supported in test provider")
+}
+func (p *channelToolTestProvider) RestoreMessageContext(message ChannelMessage) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.restored = append(p.restored, message)
 }
 
 func newChannelToolFixture(t *testing.T) (*Store, *Manager, *channelAgentToolExecutor, ChannelInstance, ChannelSession, *channelToolTestProvider, *[]ChannelEvent) {

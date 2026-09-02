@@ -66,15 +66,9 @@ func (s *ChannelService) SaveInstance(instance ChannelInstance) error {
 	if instance.ID == "" || instance.Type == "" {
 		return errors.New("channel instance id and type are required")
 	}
-	if instance.Archived {
-		return errors.New("archived channel is read-only")
-	}
 	previous, found, err := s.store.GetInstance(instance.ID)
 	if err != nil {
 		return err
-	}
-	if found && previous.Archived {
-		return errors.New("archived channel is read-only")
 	}
 	wasRunning := found && s.manager.Status(instance.ID).State == "running"
 	if wasRunning {
@@ -97,8 +91,7 @@ func (s *ChannelService) SaveInstance(instance ChannelInstance) error {
 	return nil
 }
 
-// RemoveInstance 只删除用户创建的、仍处于活动生命周期的实例。
-// 内置实例是平台 canonical 配置入口，归档实例承载历史消息；两者都不能通过页面的 Remove 破坏数据边界。
+// RemoveInstance 只删除用户创建的实例；内置实例是平台 canonical 配置入口。
 func (s *ChannelService) RemoveInstance(id string) error {
 	if s == nil || s.store == nil || s.manager == nil {
 		return errors.New("channel service is unavailable")
@@ -113,9 +106,6 @@ func (s *ChannelService) RemoveInstance(id string) error {
 	}
 	if instance.Builtin {
 		return errors.New("builtin channel cannot be removed")
-	}
-	if instance.Archived {
-		return errors.New("archived channel is read-only")
 	}
 	// 先停 provider 再删记录，确保 WebSocket、轮询和事件回调不会继续引用已删除实例。
 	if err := s.manager.Stop(context.Background(), id); err != nil {
@@ -134,9 +124,6 @@ func (s *ChannelService) BindProject(id string, projectID *string) error {
 	}
 	if !found {
 		return errors.New("channel instance not found")
-	}
-	if instance.Archived {
-		return errors.New("archived channel is read-only")
 	}
 	if projectID != nil {
 		value := strings.TrimSpace(*projectID)
@@ -168,9 +155,6 @@ func (s *ChannelService) SetEnabled(id string, enabled bool) error {
 	}
 	if !found {
 		return errors.New("channel instance not found")
-	}
-	if instance.Archived {
-		return errors.New("archived channel is read-only")
 	}
 	if !enabled {
 		if err := s.manager.Stop(context.Background(), instance.ID); err != nil {

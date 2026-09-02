@@ -69,6 +69,13 @@ CREATE TABLE IF NOT EXISTS pet_window (
     updated_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS pet_heartbeat (
+    pet_id TEXT PRIMARY KEY,
+    config_json TEXT NOT NULL,
+    runtime_json TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS pet_plans (
     pet_id TEXT NOT NULL,
     plan_id TEXT NOT NULL,
@@ -134,6 +141,17 @@ CREATE TABLE IF NOT EXISTS pet_codex_session (
     thread_id TEXT NOT NULL,
     workspace TEXT NOT NULL,
     persona_fingerprint TEXT NOT NULL,
+    tool_fingerprint TEXT NOT NULL DEFAULT '',
+    protocol_version INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS agent_codex_session (
+    project_id TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL,
+    workspace TEXT NOT NULL,
+    persona_fingerprint TEXT NOT NULL,
+    tool_fingerprint TEXT NOT NULL DEFAULT '',
     protocol_version INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );
@@ -177,7 +195,45 @@ func ensurePetTablesWithDB(db *sql.DB) error {
 	if _, err := db.Exec(petSchemaSQL); err != nil {
 		return fmt.Errorf("create pet schema: %w", err)
 	}
+	// 旧版数据库的 CREATE TABLE IF NOT EXISTS 不会补列；工具权限指纹是
+	// thread 复用条件的一部分，缺列时必须显式迁移而不是静默丢失隔离信息。
+	if err := ensurePetColumnWithDB(db, "pet_codex_session", "tool_fingerprint", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	return nil
+}
+
+func ensurePetColumnWithDB(db *sql.DB, table, column, definition string) error {
+	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return fmt.Errorf("inspect pet schema: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, dataType string
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return fmt.Errorf("scan pet schema: %w", err)
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("read pet schema: %w", err)
+	}
+	if _, err := db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + column + ` ` + definition); err != nil {
+		return fmt.Errorf("migrate pet schema: %w", err)
+	}
+	return nil
+}
+
+// PetAgentPersona 是聊天启动阶段需要的最小人格投影；它刻意不携带 provider、
+// 历史记录或其它设置页字段，避免无关数据成为 Codex 启动依赖。
+type PetAgentPersona struct {
+	SystemPrompt string
+	PetName      string
 }
 
 // PetDAO 只负责宠物持久化，不承载动作规则。多表一致性由调用方传入的快照事务保证。
@@ -200,6 +256,38 @@ func (d *PetDAO) ensureSchema() error {
 		d.schemaErr = ensurePetTablesWithDB(d.db)
 	})
 	return d.schemaErr
+}
+
+// LoadAgentPersona 只读取 pet_state 和 pet_agent，供共享 Agent Hub 解析 canonical
+// persona。设置页的完整快照包含历史、皮肤等较重表，不能把它们放进每条消息的
+// 启动前置链路；缺少任一记录时返回空字段，由 BuildPetAgentPersona 补默认值。
+func (d *PetDAO) LoadAgentPersona(ctx context.Context, petID string) (PetAgentPersona, error) {
+	var persona PetAgentPersona
+	if err := d.ensureSchema(); err != nil {
+		return persona, err
+	}
+	petID = normalizePetID(petID)
+	ctx = petContext(ctx)
+	tx, err := d.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return persona, fmt.Errorf("begin pet persona read: %w", err)
+	}
+	defer rollbackPetTx(tx)
+
+	var state PetState
+	if found, err := scanPetJSON(tx.QueryRowContext(ctx, `SELECT state_json FROM pet_state WHERE pet_id = ?`, petID), &state); err != nil {
+		return persona, fmt.Errorf("load pet persona state: %w", err)
+	} else if found {
+		persona.PetName = strings.TrimSpace(state.Name)
+	}
+
+	var agent PetAgentConfig
+	if found, err := scanPetJSON(tx.QueryRowContext(ctx, `SELECT config_json FROM pet_agent WHERE pet_id = ?`, petID), &agent); err != nil {
+		return persona, fmt.Errorf("load pet persona agent: %w", err)
+	} else if found {
+		persona.SystemPrompt = strings.TrimSpace(agent.SystemPrompt)
+	}
+	return persona, nil
 }
 
 func petContext(ctx context.Context) context.Context {
@@ -827,6 +915,52 @@ func (d *PetDAO) LoadSnapshot(ctx context.Context, petID string) (PetMigrationSn
 	return snapshot, nil
 }
 
+// LoadSettingsSnapshot 只读取设置页首屏需要的表。
+// 历史记录和经验日志由对应页签按需分页读取，避免每次打开设置都解析整批 JSON。
+func (d *PetDAO) LoadSettingsSnapshot(ctx context.Context, petID string) (PetMigrationSnapshot, error) {
+	var snapshot PetMigrationSnapshot
+	if err := d.ensureSchema(); err != nil {
+		return snapshot, err
+	}
+	snapshot.PetID = normalizePetID(petID)
+	ctx = petContext(ctx)
+	tx, err := d.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return snapshot, fmt.Errorf("begin pet settings snapshot read: %w", err)
+	}
+	defer rollbackPetTx(tx)
+
+	if found, err := scanPetJSON(tx.QueryRowContext(ctx, `SELECT state_json FROM pet_state WHERE pet_id = ?`, snapshot.PetID), &snapshot.State); err != nil {
+		return snapshot, fmt.Errorf("load pet state: %w", err)
+	} else if found {
+		snapshot.State.PetID = snapshot.PetID
+	}
+	if found, err := scanPetJSON(tx.QueryRowContext(ctx, `SELECT experience_json FROM pet_experience WHERE pet_id = ?`, snapshot.PetID), &snapshot.Experience); err != nil {
+		return snapshot, fmt.Errorf("load pet experience: %w", err)
+	} else if found {
+		snapshot.Experience.PetID = snapshot.PetID
+	}
+	if snapshot.Care, err = loadPetJSONConfigTx[PetCareConfig](ctx, tx, "pet_care", snapshot.PetID); err != nil {
+		return snapshot, err
+	}
+	if snapshot.Agent, err = loadPetJSONConfigTx[PetAgentConfig](ctx, tx, "pet_agent", snapshot.PetID); err != nil {
+		return snapshot, err
+	}
+	if snapshot.DreamConfig, err = loadPetJSONConfigTx[PetDreamConfig](ctx, tx, "pet_dream_config", snapshot.PetID); err != nil {
+		return snapshot, err
+	}
+	if snapshot.Window, err = loadPetJSONConfigTx[PetWindowConfig](ctx, tx, "pet_window", snapshot.PetID); err != nil {
+		return snapshot, err
+	}
+	if snapshot.Skins, err = loadPetSkinsTx(ctx, tx, snapshot.PetID); err != nil {
+		return snapshot, err
+	}
+	if snapshot.SkinSelection, err = loadPetSkinSelectionTx(ctx, tx, snapshot.PetID); err != nil {
+		return snapshot, err
+	}
+	return snapshot, nil
+}
+
 func loadPetExpLogTx(ctx context.Context, tx *sql.Tx, petID string) ([]PetExpLogEntry, error) {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT entry_json FROM pet_exp_log WHERE pet_id = ? ORDER BY at DESC, id DESC
@@ -998,6 +1132,46 @@ func (d *PetDAO) LoadAgent(ctx context.Context, petID string) (*PetAgentConfig, 
 	return snapshot.Agent, err
 }
 
+// LoadAgentModelReference 只查询 pet_agent 的模型、平台和 reasoning 字段，不加载完整宠物快照。
+// 每次调用都从数据库取最新值，保证模型设置保存后不会被 runtime 内缓存遮住；
+// provider 凭据、权限和其它设置不进入这个投影，避免形成第二份 Codex 配置源。
+func (d *PetDAO) LoadAgentModelReference(ctx context.Context, petID string) (PetAgentModelReference, error) {
+	var reference PetAgentModelReference
+	if err := d.ensureSchema(); err != nil {
+		return reference, err
+	}
+
+	petID = normalizePetID(petID)
+	var payload string
+	err := d.db.QueryRowContext(
+		petContext(ctx),
+		`SELECT config_json FROM pet_agent WHERE pet_id = ?`,
+		petID,
+	).Scan(&payload)
+	if errors.Is(err, sql.ErrNoRows) {
+		return reference, nil
+	}
+	if err != nil {
+		return reference, fmt.Errorf("load pet agent model reference: %w", err)
+	}
+
+	// 这里故意使用局部投影而不是 PetAgentConfig；provider ID 和其它字段即使
+	// 后续扩展，也不能意外穿透到 Codex runtime 的请求参数。
+	var config struct {
+		ProviderPlatform string `json:"providerPlatform"`
+		ModelID          string `json:"modelId"`
+		ReasoningEffort  string `json:"reasoningEffort"`
+	}
+	if err := json.Unmarshal([]byte(payload), &config); err != nil {
+		return reference, fmt.Errorf("decode pet agent model reference: %w", err)
+	}
+
+	reference.ProviderPlatform = strings.ToLower(strings.TrimSpace(config.ProviderPlatform))
+	reference.ModelID = strings.TrimSpace(config.ModelID)
+	reference.ReasoningEffort = PetReasoningEffort(strings.ToLower(strings.TrimSpace(config.ReasoningEffort)))
+	return reference, nil
+}
+
 // Resolve 保留旧版仅按 projectFolder 读取的兼容入口；主聊天使用
 // NewPetProjectWorkspaceResolver 从 ProjectManagerService 校验 projectId 后再取路径。
 // 该方法仍只读取持久化数据，不接受调用方传入的路径。
@@ -1028,6 +1202,74 @@ func (d *PetDAO) SaveWindow(ctx context.Context, config PetWindowConfig) error {
 func (d *PetDAO) LoadWindow(ctx context.Context, petID string) (*PetWindowConfig, error) {
 	snapshot, err := d.LoadSnapshot(ctx, petID)
 	return snapshot.Window, err
+}
+
+// LoadHeartbeat 只读取心跳自己的配置和运行态，不把它混进完整宠物快照。
+// 首次读取返回默认关闭配置，让页面可以直接编辑；真正的 schema 初始化仍由 DAO
+// 统一负责，避免浏览器 bridge 和 Wails 入口各自维护一套建表逻辑。
+func (d *PetDAO) LoadHeartbeat(ctx context.Context, petID string) (PetHeartbeatSnapshot, error) {
+	if err := d.ensureSchema(); err != nil {
+		return PetHeartbeatSnapshot{}, err
+	}
+	petID = normalizePetID(petID)
+	var configPayload, runtimePayload string
+	err := d.db.QueryRowContext(
+		petContext(ctx),
+		`SELECT config_json, runtime_json FROM pet_heartbeat WHERE pet_id = ?`,
+		petID,
+	).Scan(&configPayload, &runtimePayload)
+	if errors.Is(err, sql.ErrNoRows) {
+		return defaultPetHeartbeatSnapshot(petID), nil
+	}
+	if err != nil {
+		return PetHeartbeatSnapshot{}, fmt.Errorf("load pet heartbeat: %w", err)
+	}
+
+	var snapshot PetHeartbeatSnapshot
+	if err := json.Unmarshal([]byte(configPayload), &snapshot.Config); err != nil {
+		return PetHeartbeatSnapshot{}, fmt.Errorf("decode pet heartbeat config: %w", err)
+	}
+	if err := json.Unmarshal([]byte(runtimePayload), &snapshot.Runtime); err != nil {
+		return PetHeartbeatSnapshot{}, fmt.Errorf("decode pet heartbeat runtime: %w", err)
+	}
+	snapshot.Config.PetID = petID
+	return snapshot, nil
+}
+
+// SaveHeartbeat 与完整宠物快照分开提交，避免保存心跳状态时覆盖 PetService
+// 刚刚推进的 hunger、away task 或 Agent 配置。这里只修正持久化分区 ID，不能调用
+// normalizePetHeartbeatSnapshot：关闭配置下仍可能存在一个正在收尾的 running 任务。
+func (d *PetDAO) SaveHeartbeat(ctx context.Context, snapshot PetHeartbeatSnapshot) error {
+	if err := d.ensureSchema(); err != nil {
+		return err
+	}
+	petID := normalizePetID(snapshot.Config.PetID)
+	snapshot.Config.PetID = petID
+	configPayload, err := marshalPetJSON(snapshot.Config)
+	if err != nil {
+		return err
+	}
+	runtimePayload, err := marshalPetJSON(snapshot.Runtime)
+	if err != nil {
+		return err
+	}
+
+	tx, err := beginPetTx(ctx, d.db)
+	if err != nil {
+		return err
+	}
+	defer rollbackPetTx(tx)
+	if _, err := tx.ExecContext(petContext(ctx), `
+		INSERT INTO pet_heartbeat (pet_id, config_json, runtime_json, updated_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(pet_id) DO UPDATE SET
+		  config_json = excluded.config_json,
+		  runtime_json = excluded.runtime_json,
+		  updated_at = excluded.updated_at
+	`, petID, configPayload, runtimePayload, currentPetTimestamp()); err != nil {
+		return fmt.Errorf("upsert pet heartbeat: %w", err)
+	}
+	return commitPetTx(tx)
 }
 
 func (d *PetDAO) UpsertPlan(ctx context.Context, record PetPlanRecord) error {
